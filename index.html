@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>夢幻西餐廳 — 復刻版</title>
+  <link rel="stylesheet" href="styles/reset.css">
+  <link rel="stylesheet" href="styles/ui.css">
+  <link rel="stylesheet" href="styles/game.css">
+</head>
+<body>
+  <div id="app">
+    <div id="topbar"></div>
+    <div id="stage">
+      <!-- 邏輯解析度由 src/render/iso.js 的 LOGICAL_W / LOGICAL_H 決定，main.js 會在啟動時覆寫 -->
+      <canvas id="view" width="960" height="600"></canvas>
+      <div id="stage-overlay"></div>
+    </div>
+    <div id="toolbar"></div>
+    <div id="hintbar"></div>
+  </div>
+
+  <div id="window-host"></div>
+  <div id="toast-host"></div>
+  <div id="curtain"></div>
+
+  <div id="boot">
+    <h1>夢幻西餐廳</h1>
+    <div class="sub">復刻版 · 1998 華藝國際《決戰全台灣》</div>
+    <div class="menu-btns" id="boot-buttons"></div>
+    <div class="credit">
+      零依賴網頁復刻 · 繁體中文 · 鍵盤與滑鼠操作<br>
+      起始地點：中壢新明夜市 · 目標：五星＋年度大獎
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

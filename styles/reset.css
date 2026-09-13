@@ -1,0 +1,43 @@
+/* 基本 reset — 90 年代瀏覽器不需要花俏的東西 */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #10141c;
+  color: #1b1b1b;
+  font-family: "PMingLiU", "MingLiU", "新細明體", "Microsoft JhengHei", "微軟正黑體", "Noto Sans TC", sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: none;
+  user-select: none;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+img { image-rendering: pixelated; }
+
+h1, h2, h3, h4, p, ul, ol, dl { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+
+canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+::-webkit-scrollbar { width: 15px; height: 15px; }
+::-webkit-scrollbar-track { background: #cfcabc; }
+::-webkit-scrollbar-thumb {
+  background: #d8d4c8;
+  border-top: 2px solid #fbfaf5;
+  border-left: 2px solid #fbfaf5;
+  border-right: 2px solid #6f6b5e;
+  border-bottom: 2px solid #6f6b5e;
+}
+::-webkit-scrollbar-corner { background: #cfcabc; }

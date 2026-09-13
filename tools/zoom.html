@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>PNG 局部放大檢視</title>
+<style>
+  html,body{margin:0;background:#101318;}
+  canvas{display:block;image-rendering:pixelated;}
+  #err{color:#f88;font:13px monospace;padding:8px}
+</style>
+</head>
+<body>
+<div id="err"></div>
+<canvas id="out"></canvas>
+<script>
+  // 用法: zoom.html?src=<file>&x=..&y=..&w=..&h=..&s=倍率
+  const q = new URLSearchParams(location.search);
+  const src = q.get('src');
+  const x = Number(q.get('x') || 0), y = Number(q.get('y') || 0);
+  const w = Number(q.get('w') || 240), h = Number(q.get('h') || 160);
+  const s = Number(q.get('s') || 3);
+  const out = document.getElementById('out');
+  out.width = w * s; out.height = h * s;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const img = new Image();
+  img.onload = () => {
+    ctx.fillStyle = '#101318';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(img, x, y, w, h, 0, 0, w * s, h * s);
+    // 棋盤格標尺：每 20px 一格，方便定位
+    ctx.strokeStyle = 'rgba(255,80,80,.35)';
+    ctx.lineWidth = 1;
+    for (let gx = 0; gx < w; gx += 20) { ctx.beginPath(); ctx.moveTo(gx * s, 0); ctx.lineTo(gx * s, out.height); ctx.stroke(); }
+    for (let gy = 0; gy < h; gy += 20) { ctx.beginPath(); ctx.moveTo(0, gy * s); ctx.lineTo(out.width, gy * s); ctx.stroke(); }
+  };
+  img.onerror = () => { document.getElementById('err').textContent = 'load failed: ' + src; };
+  img.src = src;
+</script>
+</body>
+</html>
