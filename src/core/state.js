@@ -5,7 +5,7 @@ import { DISHES, getDish } from '../data/dishes.js';
 import { STAFF_POOL, staffById, makeCandidateList } from '../data/staff.js';
 import { LOCATIONS, getLocation } from '../data/locations.js';
 import { FURNITURE, furnitureById } from '../data/furniture.js';
-import { defaultLayout, rebuildTables } from '../sim/build.js';
+import { defaultLayout, rebuildTables, findAutoPlace } from '../sim/build.js';
 import { makeRng, newSeed } from './rng.js';
 import { START_CASH, RATING_START, GRID_W, GRID_H, MENU_LIMIT, STAR_REQS } from './balance.js';
 
@@ -155,6 +155,26 @@ export function createNewGame(seed = newSeed(), opts = {}) {
       y: spot.y,
       w: spot.type.w || 1,
       h: spot.type.h || 1,
+      rot: 0,
+      durability: 100,
+      broken: false
+    });
+  }
+
+  // 開局基本裝潢：讓新店面看起來像間餐廳（燈具也會產生夜間光池）
+  const decorPlan = ['ceiling_lamp', 'ceiling_lamp', 'pot_plant', 'flower_stand', 'jukebox', 'aquarium', 'carpet_red'];
+  for (const id of decorPlan) {
+    const def = furnitureById(id) || FURNITURE.find((f) => f.category === 'decor' && !f.blocks);
+    if (!def) continue;
+    const spot = findAutoPlace(state.layout, def.id);
+    if (!spot) continue;
+    state.layout.items.push({
+      uid: nextUid(state),
+      typeId: def.id,
+      x: spot.x,
+      y: spot.y,
+      w: def.w || 1,
+      h: def.h || 1,
       rot: 0,
       durability: 100,
       broken: false

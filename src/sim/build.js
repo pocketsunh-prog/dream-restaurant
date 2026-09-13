@@ -427,10 +427,42 @@ export function findItem(layout, uid) {
   return layout.items.find((i) => i.uid === uid) || null;
 }
 
+/** 旋轉值 → 面向（與 render/sprites.js 的 rotToDir 一致） */
+const ROT_OF_DIR = { S: 0, E: 1, N: 2, W: 3 };
+
+/**
+ * 椅子自動轉向：面向相鄰的桌子（椅背朝外才自然）。
+ * 玩家手動旋轉過的椅子（rotManual）不覆蓋。
+ * 繪圖層請優先讀 `item.rotAuto ?? item.rot`。
+ */
+export function orientChairs(layout) {
+  const tableAt = (x, y) => layout.items.some((it) => {
+    const d = furnitureById(it.typeId);
+    if (d?.category !== 'table') return false;
+    const w = it.w || d.w || 1;
+    const h = it.h || d.h || 1;
+    return x >= it.x && x < it.x + w && y >= it.y && y < it.y + h;
+  });
+  const NEIGHBOURS = [
+    { dx: 0, dy: -1, dir: 'N' },
+    { dx: 0, dy: 1, dir: 'S' },
+    { dx: -1, dy: 0, dir: 'W' },
+    { dx: 1, dy: 0, dir: 'E' }
+  ];
+  for (const item of layout.items) {
+    const def = furnitureById(item.typeId);
+    if (def?.category !== 'chair' || item.rotManual) { delete item.rotAuto; continue; }
+    const hit = NEIGHBOURS.find((n) => tableAt(item.x + n.dx, item.y + n.dy));
+    if (hit) item.rotAuto = ROT_OF_DIR[hit.dir];
+    else delete item.rotAuto;
+  }
+}
+
 /** 重建 state.sim.tables（保留既有桌子的執行期狀態） */
 export function rebuildTables(state) {
   const layout = state.layout;
   recomputeReachability(layout);
+  orientChairs(layout);
   const next = computeTables(layout);
   const prev = new Map((state.sim?.tables || []).map((t) => [t.uid, t]));
   for (const t of next) {

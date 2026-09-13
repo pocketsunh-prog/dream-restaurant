@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>傢俱操作 UI 測試</title>
+<style>
+  body { margin: 0; background: #12151b; color: #ddd; font: 13px/1.55 "Consolas", monospace; }
+  #log { padding: 8px 12px; }
+  .pass { color: #7ee08a; }
+  .fail { color: #ff8080; font-weight: bold; }
+  .info { color: #9fb0c4; }
+  #summary { font-size: 15px; font-weight: bold; padding: 6px 12px; background: #1d2430; }
+  iframe { position: absolute; left: -4000px; top: 0; width: 1280px; height: 860px; border: 0; }
+</style>
+</head>
+<body>
+<div id="summary">執行中…</div>
+<div id="log"></div>
+<iframe id="game" src="/?autostart=1&open=1"></iframe>
+<script type="module">
+import { canPlace } from '/src/sim/build.js';
+
+const results = [];
+const logEl = document.getElementById('log');
+function ok(cond, label, detail = '') {
+  results.push({ cond: !!cond, label, detail });
+  const d = document.createElement('div');
+  d.className = cond ? 'pass' : 'fail';
+  d.textContent = `${cond ? 'PASS' : 'FAIL'}  ${label}${detail ? ' — ' + detail : ''}`;
+  logEl.appendChild(d);
+}
+function info(text) {
+  const d = document.createElement('div');
+  d.className = 'info';
+  d.textContent = text;
+  logEl.appendChild(d);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitFor(fn, timeout = 10000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    try { const v = fn(); if (v) return v; } catch { /* 還沒好 */ }
+    await sleep(60);
+  }
+  return null;
+}
+
+const findButton = (root, text) =>
+  root ? [...root.querySelectorAll('button, .btn')].find((b) => (b.textContent || '').trim().includes(text)) : null;
+
+async function run() {
+  const frame = document.getElementById('game');
+  await waitFor(() => frame.contentWindow && frame.contentWindow.DREAM && frame.contentWindow.DREAM.store);
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  const DREAM = win.DREAM;
+  // 把 iframe 內部的未捕捉錯誤撈出來，避免默默失敗
+  const iframeErrors = [];
+  win.addEventListener('error', (e) => iframeErrors.push(String(e.message)));
+  win.addEventListener('unhandledrejection', (e) => iframeErrors.push('rejection: ' + String(e.reason)));
+  if (!DREAM || !DREAM.store) { ok(false, '遊戲載入並暴露 window.DREAM'); return finish(); }
+
+  const store = DREAM.store;
+  const renderer = DREAM.renderer;
+  const canvas = doc.getElementById('view');
+  ok(!!renderer && !!canvas, '遊戲載入（DREAM / renderer / canvas 都在）');
+  store.dispatch({ type: 'SET_SPEED', value: 0 });
+
+  const st = () => store.getState();
+  const rect0 = canvas.getBoundingClientRect();
+  const scale = rect0.width / 960;
+  info(`canvas CSS ${Math.round(rect0.width)}×${Math.round(rect0.height)}・scale=${scale}`);
+
+  const clientOf = (tx, ty) => {
+    const p = renderer.tileToScreen(tx, ty);
+    const rect = canvas.getBoundingClientRect();
+    return { clientX: rect.left + (p.px ?? p.x) * scale, clientY: rect.top + (p.py ?? p.y) * scale };
+  };
+  const fire = (type, point) => {
+    canvas.dispatchEvent(new win.MouseEvent(type, {
+      bubbles: true, cancelable: true, view: win, button: 0,
+      buttons: type === 'mouseup' ? 0 : 1, ...point
+    }));
+    if (type === 'mouseup') win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true, ...point }));
+  };
+  const bar = () => doc.querySelector('.item-bar');
+  const itemByUid = (uid) => st().layout.items.find((i) => i.uid === uid);
+  const firstTable = () => st().layout.items.find((i) => i.typeId.startsWith('table_'));
+  const firstChair = () => st().layout.items.find((i) => i.typeId.startsWith('chair_'));
+
+  /** 用 App 自己的命中判定決定「畫面上那點是誰」，跟玩家看到的一致 */
+  function pickAt(tile) {
+    const p = clientOf(tile.x, tile.y);
+    const rect = canvas.getBoundingClientRect();
+    return renderer.hitTestItem((p.clientX - rect.left) / scale, (p.clientY - rect.top) / scale);
+  }
+  /** 用 sim 的 canPlace 找一個合法的目的地 */
+  function findFreeSpot(item, minDist = 3) {
+    const L = st().layout;
+    for (let y = 1; y < L.gridH - 1; y++) {
+      for (let x = 1; x < L.gridW - 1; x++) {
+        if (Math.abs(x - item.x) + Math.abs(y - item.y) < minDist) continue;
+        if (canPlace(L, item.typeId, x, y, item.uid).ok) return { x, y };
+      }
+    }
+    return null;
+  }
+
+  /* ---------- 1. 點選 ---------- */
+  const table = firstTable();
+  ok(!!table, '找到起始桌子', table ? `${table.typeId}@${table.x},${table.y}` : '');
+  const hit = pickAt(table);
+  ok(!!hit, '桌面上的點擊命中一件傢俱', hit ? `${hit.typeId}@${hit.x},${hit.y}` : '');
+
+  const sel = hit || table;
+  fire('mousedown', clientOf(sel.x, sel.y));
+  fire('mouseup', clientOf(sel.x, sel.y));
+  await sleep(100);
+  ok(!!bar(), '點擊傢俱後出現浮動工具列');
+  ok(DREAM.view.selectionUid === sel.uid, '選取狀態正確', `selectionUid=${DREAM.view.selectionUid} / 期待 ${sel.uid}`);
+
+  /* ---------- 2. 拖曳搬家 ---------- */
+  const spot = findFreeSpot(sel);
+  ok(!!spot, '找到合法的新位置', spot ? `(${spot.x},${spot.y})` : '找不到');
+  if (spot) {
+    const before = { x: sel.x, y: sel.y };
+    fire('mousedown', clientOf(sel.x, sel.y));
+    fire('mousemove', clientOf(spot.x, spot.y));
+    await sleep(40);
+    fire('mouseup', clientOf(spot.x, spot.y));
+    await sleep(140);
+    const after = itemByUid(sel.uid);
+    ok(after && after.x === spot.x && after.y === spot.y, '拖曳可以搬家',
+      after ? `(${before.x},${before.y}) → (${after.x},${after.y})` : '找不到傢俱');
+    ok(!!bar(), '搬家後工具列仍在（維持選取）');
+  }
+
+  /* ---------- 3. 工具列「移動」→ 點圖放置 ---------- */
+  const cur = itemByUid(sel.uid);
+  const spot2 = findFreeSpot(cur, 2);
+  const moveBtn = findButton(bar(), '移動');
+  ok(!!moveBtn, '工具列有「移動」按鈕');
+  if (moveBtn && spot2) {
+    moveBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await sleep(70);
+    fire('click', clientOf(spot2.x, spot2.y));
+    await sleep(140);
+    const after = itemByUid(sel.uid);
+    ok(after && after.x === spot2.x && after.y === spot2.y, '「移動」後點圖可放置',
+      after ? `現在 (${after.x},${after.y})，目標 (${spot2.x},${spot2.y})` : '');
+  }
+
+  /* ---------- 4. 旋轉（桌子） ---------- */
+  const r0 = itemByUid(sel.uid).rot | 0;
+  const rotBtn = findButton(bar(), '旋轉');
+  ok(!!rotBtn, '工具列有「旋轉」按鈕');
+  if (rotBtn) {
+    rotBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await sleep(100);
+    const r1 = itemByUid(sel.uid).rot | 0;
+    ok(r1 !== r0, '桌子可以旋轉', `${r0} → ${r1}`);
+  }
+
+  /* ---------- 5. 就地更換 ---------- */
+  const beforeType = itemByUid(sel.uid).typeId;
+  const repBtn = findButton(bar(), '更換');
+  ok(!!repBtn, '工具列有「更換」按鈕');
+  if (repBtn) {
+    repBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await sleep(180);
+    const modal = doc.querySelector('.modal-mask');
+    ok(!!modal, '更換視窗開啟');
+    if (modal) {
+      const cards = [...modal.querySelectorAll('.card.clickable')];
+      ok(cards.length > 0, '更換視窗列出可換的傢俱', `${cards.length} 項`);
+      if (cards.length) {
+        const label = (cards[0].querySelector('.card-title') || cards[0]).textContent.trim();
+        cards[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+        await sleep(180);
+        const afterType = itemByUid(sel.uid).typeId;
+        ok(afterType !== beforeType, '更換成功（種類改變）', `${beforeType} → ${afterType}（點了 ${label.split(' ')[0]}）`);
+        ok(!doc.querySelector('.modal-mask'), '更換後視窗關閉');
+        ok(!!bar(), '更換後工具列仍在');
+      }
+    }
+  }
+
+  /* ---------- 6. 椅子：選取 + 旋轉 ---------- */
+  const chair = firstChair();
+  ok(!!chair, '找到起始椅子', chair ? `${chair.typeId}@${chair.x},${chair.y}` : '');
+  if (chair) {
+    fire('mousedown', clientOf(chair.x, chair.y));
+    fire('mouseup', clientOf(chair.x, chair.y));
+    await sleep(100);
+    const selChair = DREAM.view.selectionUid;
+    ok(!!selChair && selChair.startsWith('u'), '點椅子可以選取', `selectionUid=${selChair}`);
+    const cRot = findButton(bar(), '旋轉');
+    if (cRot) {
+      const a0 = itemByUid(selChair)?.rot | 0;
+      cRot.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await sleep(100);
+      const a1 = itemByUid(selChair)?.rot | 0;
+      ok(a1 !== a0, '椅子可以旋轉（改面向）', `${a0} → ${a1}`);
+    }
+  }
+
+  /* ---------- 7. 拆除 ---------- */
+  const countBefore = st().layout.items.length;
+  const delBtn = findButton(bar(), '拆除');
+  ok(!!delBtn, '工具列有「拆除」按鈕');
+  if (delBtn) {
+    delBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await sleep(180);
+    const confirmWin = doc.querySelector('.modal-mask');
+    ok(!!confirmWin, '拆除前會確認');
+    const okBtn = findButton(confirmWin, '拆除並退款');
+    if (okBtn) okBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await sleep(180);
+    ok(st().layout.items.length === countBefore - 1, '確認後傢俱被拆除',
+      `${countBefore} → ${st().layout.items.length}`);
+  }
+
+  /* ---------- 8. Esc 取消選取 ---------- */
+  // 找一個「畫面上真的點得到」的物件（壁掛燈具畫在牆上，命中判定抓不到，跳過）
+  let escItem = null;
+  for (const it of st().layout.items) {
+    if (pickAt(it)) { escItem = it; break; }
+  }
+  ok(!!escItem, '找得到一個可以點選的傢俱');
+  if (escItem) {
+    const probe = clientOf(escItem.x, escItem.y);
+    const rect = canvas.getBoundingClientRect();
+    const logical = { x: (probe.clientX - rect.left) / scale, y: (probe.clientY - rect.top) / scale };
+    const hitNow = renderer.hitTestItem(logical.x, logical.y);
+    info(`Esc 測試：escItem=${escItem.typeId}@${escItem.x},${escItem.y} hitAt=${hitNow ? hitNow.typeId + '@' + hitNow.x + ',' + hitNow.y : 'null'} 邏輯點=(${logical.x.toFixed(1)},${logical.y.toFixed(1)})`);
+    const before = DREAM.view.selectionUid;
+    fire('mousedown', probe);
+    const rightAfter = DREAM.view.selectionUid;      // 同一個 tick 立刻讀
+    await sleep(90);
+    const hadBar = !!bar();
+    info(`mousedown 前=${before} 立刻後=${rightAfter} 90ms 後=${DREAM.view.selectionUid} bar=${hadBar} interaction=${JSON.stringify(DREAM.interaction)}`);
+    if (iframeErrors.length) info(`iframe 內部錯誤：${iframeErrors.join(' | ')}`);
+    win.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(130);
+    ok(hadBar && !bar() && !DREAM.view.selectionUid, 'Esc 可取消選取並關閉工具列',
+      hadBar ? '' : `點 (${escItem.x},${escItem.y}) 沒有選到東西`);
+  }
+
+  finish();
+}
+
+function finish() {
+  const pass = results.filter((r) => r.cond).length;
+  const fail = results.length - pass;
+  const el = document.getElementById('summary');
+  el.textContent = `${fail === 0 ? '✅ 全部通過' : '❌ 有失敗'}：${pass} PASS / ${fail} FAIL`;
+  el.style.color = fail === 0 ? '#7ee08a' : '#ff8080';
+  document.title = fail === 0 ? `ALL PASS (${pass})` : `FAIL (${fail})`;
+}
+
+run().catch((err) => {
+  ok(false, '測試執行例外', String(err && err.stack ? err.stack.split('\n').slice(0, 2).join(' | ') : err));
+  finish();
+});
+</script>
+</body>
+</html>

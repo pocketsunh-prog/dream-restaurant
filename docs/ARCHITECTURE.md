@@ -333,7 +333,9 @@ export const store = {
 | `SET_SHIFT` | `{uid, start, end}` | |
 | `SET_DUTY` | `{uid, duty, on}` | |
 | `PLACE_FURNITURE` | `{typeId, x, y, rot}` | |
-| `MOVE_FURNITURE` | `{uid, x, y}` | |
+| `MOVE_FURNITURE` | `{uid, x, y}` | 拖曳或用工具列的「移動」 |
+| `ROTATE_FURNITURE` | `{uid, rot?, swapFootprint?}` | 不給 `rot` 就轉一格（0=S,1=E,2=N,3=W）；矩形傢俱會一併換算佔地 |
+| `REPLACE_FURNITURE` | `{uid, typeId}` | 就地更換同類傢俱：舊品退 50%、只收差額、沿用 uid（桌上客人與髒污狀態不會斷） |
 | `REMOVE_FURNITURE` | `{uid}` | 退 50% |
 | `CLEAR_LAYOUT` | `{}` | 清空（退 50%） |
 | `SET_TILE` | `{x, y, tile}` | 僅限 wall/kitchen/pass/restroom 編輯（進階） |

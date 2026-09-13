@@ -13,13 +13,13 @@ import { createReportPanel } from './ui/panels/report.js';
 import { createSettingsPanel } from './ui/panels/settings.js';
 import { createSystemPanel } from './ui/panels/system.js';
 import { stepSimulation, restaurantSummary, availability } from './sim/simulation.js';
-import { seatCount, decorScore, findItem, canPlace } from './sim/build.js';
+import { seatCount, decorScore, findItem, canPlace, itemAt } from './sim/build.js';
 import { unitCost } from './sim/economy.js';
 import { setMusic, resumeMusic, sfx, initAudio } from './core/audio.js';
 import { hasAnySave, loadGame } from './core/save.js';
 import { getLocation, LOCATIONS } from './data/locations.js';
 import { getDish } from './data/dishes.js';
-import { furnitureById } from './data/furniture.js';
+import { furnitureById, FURNITURE } from './data/furniture.js';
 import { staffById } from './data/staff.js';
 import * as B from './core/balance.js';
 
@@ -296,7 +296,7 @@ function pendingPlacement() {
   if (!p || (p.mode && p.mode !== 'place') || !p.typeId) return null;
   return p;
 }
-function pendingMove() {
+function pendingMoveUid() {
   const panel = windows.panels.get('build');
   if (!panel) return null;
   if (typeof panel.getPendingMove === 'function') {
@@ -309,6 +309,183 @@ function pendingMove() {
   return null;
 }
 
+/* ------------------------------------------------------- 畫布上的傢俱操作 */
+
+/** 目前選取的傢俱（在平面圖上直接點選） */
+const selection = { uid: null };
+/** 拖曳狀態 */
+let dragState = null;
+/** 浮動工具列啟動的「點擊放置」模式 */
+let clickMoveUid = null;
+let suppressClick = false;
+let barEl = null;
+/** 更換傢俱對話框是否開著（避免重複開啟） */
+let replaceBusy = false;
+
+function selectedItem() {
+  if (!selection.uid) return null;
+  return findItem(store.getState().layout, selection.uid);
+}
+
+function clearSelection() {
+  selection.uid = null;
+  view.selectionUid = null;
+  clickMoveUid = null;
+  if (barEl) { barEl.remove(); barEl = null; }
+}
+
+function selectItem(uid) {
+  if (!uid || !findItem(store.getState().layout, uid)) return;   // 避免拿到過期的 uid
+  selection.uid = uid;
+  view.selectionUid = uid;
+  ensureBar();
+  rebuildBar();
+  positionBar();
+}
+
+function itemScreenPos(item) {
+  const def = furnitureById(item.typeId);
+  const w = item.w || def?.w || 1;
+  const h = item.h || def?.h || 1;
+  const p = renderer ? renderer.tileToScreen(item.x + (w - 1) / 2, item.y + (h - 1) / 2) : { px: 320, py: 200 };
+  return { x: (p.px ?? 320) * scale, y: (p.py ?? 200) * scale };
+}
+
+function ensureBar() {
+  if (barEl) return barEl;
+  barEl = W.h('div', { class: 'item-bar' });
+  document.getElementById('stage').appendChild(barEl);
+  return barEl;
+}
+
+function positionBar() {
+  const item = selectedItem();
+  if (!item) { if (barEl) { barEl.remove(); barEl = null; } return; }
+  ensureBar();
+  const pos = itemScreenPos(item);
+  const stageEl = document.getElementById('stage');
+  const barW = barEl.offsetWidth || 280;
+  barEl.style.left = `${Math.max(6, Math.min(stageEl.clientWidth - barW - 6, pos.x - barW / 2))}px`;
+  barEl.style.top = `${Math.max(6, pos.y - 30)}px`;
+}
+
+function rebuildBar() {
+  const item = selectedItem();
+  if (!item) { clearSelection(); return; }
+  const st = store.getState();
+  const def = furnitureById(item.typeId) || { name: item.typeId, seats: 0, decorScore: 0, category: 'decor', price: 0 };
+  const table = st.sim.tables.find((t) => t.uid === item.uid);
+  const info = table
+    ? `座位 ${table.seats.length}・${table.usable ? '可用' : '動線不良'}・${{ clean: '乾淨', dirty: '待收桌', occupied: '使用中' }[table.state] || ''}`
+    : `裝潢 ${def.decorScore || 0} 分`;
+
+  W.clear(barEl);
+  barEl.appendChild(W.h('span', { class: 'item-bar-title' },
+    `${def.name} (${item.x},${item.y})`, W.h('span', { class: 'item-bar-info' }, ` ${info}`)));
+
+  const moveOn = clickMoveUid === item.uid;
+  barEl.appendChild(W.button(moveOn ? '點圖放置…' : '移動', () => {
+    clickMoveUid = moveOn ? null : item.uid;
+    rebuildBar();
+    ui.toast(moveOn ? '已取消移動' : '請在平面圖上點擊新的位置（也可以直接拖曳傢俱）', 'info');
+  }, { small: true, kind: moveOn ? 'primary' : undefined }));
+
+  barEl.appendChild(W.button('旋轉', () => {
+    const res = store.dispatch({ type: 'ROTATE_FURNITURE', uid: item.uid });
+    ui.toast(res.ok ? (res.info || '已旋轉') : res.error, res.ok ? 'good' : 'bad');
+    rebuildBar();
+  }, { small: true, title: '改變朝向（快捷鍵 R）' }));
+
+  barEl.appendChild(W.button('更換', () => openReplacePicker(item), { small: true, title: '同類傢俱就地更換（舊品退 50%）' }));
+
+  barEl.appendChild(W.button('拆除', async () => {
+    const refund = Math.round((def.price || 0) / 2);
+    const ok = await ui.confirm({
+      title: '拆除傢俱',
+      message: `確定要拆除「${def.name}」嗎？\n當初花了 ${money(def.price)}，拆掉退回 50%（${money(refund)}）。`,
+      okLabel: '拆除並退款', cancelLabel: '保留'
+    });
+    if (!ok) return;
+    const res = store.dispatch({ type: 'REMOVE_FURNITURE', uid: item.uid });
+    ui.toast(res.ok ? (res.info || '已拆除') : res.error, res.ok ? 'good' : 'bad');
+    clearSelection();
+  }, { small: true, kind: 'danger' }));
+
+  barEl.appendChild(W.button('✕', () => clearSelection(), { small: true, title: '取消選取（Esc）' }));
+}
+
+/** 就地更換：列出同分類傢俱直接換掉（位置與朝向保留） */
+function openReplacePicker(item) {
+  if (replaceBusy) return;
+  const st = store.getState();
+  const def = furnitureById(item.typeId) || { category: 'decor', price: 0, name: item.typeId };
+  const sameCat = FURNITURE.filter((f) => f.category === def.category && f.id !== def.id);
+  const refund = Math.round((def.price || 0) / 2);
+
+  const list = W.h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '52vh', overflow: 'auto' } });
+  if (!sameCat.length) list.appendChild(W.emptyState('沒有其他同類傢俱可以更換。'));
+
+  const modal = W.h('div', { class: 'modal-mask' });
+  const close = (choice) => {
+    modal.remove();
+    replaceBusy = false;
+    document.removeEventListener('keydown', onKey);
+    if (!choice) return;
+    const res = store.dispatch({ type: 'REPLACE_FURNITURE', uid: item.uid, typeId: choice });
+    ui.toast(res.ok ? (res.info || '已更換') : res.error, res.ok ? 'good' : 'bad');
+    if (res.ok) { rebuildBar(); sfx('cash'); } else sfx('error');
+  };
+  const onKey = (ev) => { if (ev.key === 'Escape') close(null); };
+  document.addEventListener('keydown', onKey);
+
+  for (const f of sameCat) {
+    const cost = Math.max(0, (f.price || 0) - refund);
+    const fits = canPlace(st.layout, f.id, item.x, item.y, item.uid);
+    const row = W.h('div', { class: `card${fits.ok ? ' clickable' : ' disabled'}` },
+      W.h('div', { class: 'card-title' }, f.name,
+        W.h('span', { class: 'tagline' }, ` ${f.w}×${f.h}・座位 ${f.seats || 0}・裝潢 ${f.decorScore || 0}`)),
+      W.h('div', { class: 'muted' },
+        `價格 ${money(f.price)}　舊品退款 ${money(refund)}　`,
+        cost > 0 ? `需補 ${money(cost)}` : '不用補錢',
+        fits.ok ? '' : `　（這裡放不下：${fits.error}）`));
+    if (fits.ok) row.addEventListener('click', () => close(f.id));
+    list.appendChild(row);
+  }
+
+  const win = W.h('div', { class: 'win', style: { width: '470px' } },
+    W.h('div', { class: 'win-title' },
+      W.h('span', { class: 'win-icon' }, '🔁'),
+      W.h('span', { class: 'win-name' }, `更換傢俱：${def.name}`),
+      W.h('span', { class: 'win-btns' }, W.button('✕', () => close(null), { small: true }))),
+    W.h('div', { class: 'win-body' },
+      W.h('div', { class: 'hintbox' }, `就地換成同類傢俱：舊品退 50%（${money(refund)}），只收差額，位置與朝向都保留。`),
+      list));
+  modal.appendChild(win);
+  modal.addEventListener('mousedown', (ev) => { if (ev.target === modal) close(null); });
+  document.body.appendChild(modal);
+  replaceBusy = true;
+}
+
+/**
+ * 指標命中的傢俱。
+ * 繪圖層的命中列表是快取，可能在傢俱被移動／更換後慢一個 frame，
+ * 因此若命中的 uid 已經不在目前的 layout 裡，就退回用格座標查（含四鄰，因為桌椅圖會蓋到鄰格）。
+ */
+function itemAtPointer(p, tile) {
+  const hit = renderer && renderer.hitTestItem ? renderer.hitTestItem(p.x, p.y) : null;
+  const st = store.getState();
+  if (hit && findItem(st.layout, hit.uid)) return hit;
+  if (tile) {
+    const direct = itemAt(st.layout, tile.x, tile.y);
+    if (direct) return direct;
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+      const near = itemAt(st.layout, tile.x + dx, tile.y + dy);
+      if (near) return near;
+    }
+  }
+  return null;
+}
+
 function setupCanvasInput() {
   canvas.addEventListener('mousemove', (ev) => {
     const st = store.getState();
@@ -316,18 +493,72 @@ function setupCanvasInput() {
     const tile = renderer ? renderer.screenToTile(p.x, p.y) : null;
     view.hover = tile;
     const pend = pendingPlacement();
+    const mvUid = clickMoveUid || pendingMoveUid();
+
+    // 拖曳中：幽靈傢俱跟著游標
+    if (dragState) {
+      const item = findItem(st.layout, dragState.uid);
+      if (item && tile) {
+        const check = canPlace(st.layout, item.typeId, tile.x, tile.y, item.uid);
+        view.ghost = { typeId: item.typeId, x: tile.x, y: tile.y, valid: check.ok, rot: item.rot };
+        dragState.tile = tile;
+        dragState.moved = dragState.moved || tile.x !== dragState.startTile.x || tile.y !== dragState.startTile.y;
+      }
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+
     if (pend && tile) {
       const check = canPlace(st.layout, pend.typeId, tile.x, tile.y);
-      view.ghost = { typeId: pend.typeId, x: tile.x, y: tile.y, valid: check.ok };
+      view.ghost = { typeId: pend.typeId, x: tile.x, y: tile.y, valid: check.ok, rot: pend.rot };
+    } else if (mvUid && tile) {
+      const item = findItem(st.layout, mvUid);
+      if (item) {
+        const check = canPlace(st.layout, item.typeId, tile.x, tile.y, item.uid);
+        view.ghost = { typeId: item.typeId, x: tile.x, y: tile.y, valid: check.ok, rot: item.rot };
+      } else view.ghost = null;
     } else {
       view.ghost = null;
     }
+
     const cust = renderer && renderer.hitTestCustomer ? renderer.hitTestCustomer(p.x, p.y) : null;
     view.hoverCustomerUid = cust ? cust.uid : null;
-    canvas.style.cursor = (pend || pendingMove()) ? 'crosshair' : (cust ? 'pointer' : 'default');
+    const overItem = renderer && renderer.hitTestItem ? renderer.hitTestItem(p.x, p.y) : null;
+    canvas.style.cursor = (pend || mvUid) ? 'crosshair' : overItem ? 'grab' : (cust ? 'pointer' : 'default');
   });
 
   canvas.addEventListener('mouseleave', () => { view.hover = null; view.ghost = null; });
+
+  // 直接拖曳傢俱 = 搬家（最直覺的操作）
+  canvas.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (pendingPlacement() || clickMoveUid || pendingMoveUid()) return;   // 放置模式交給 click
+    const p = canvasPoint(ev);
+    const tile = renderer ? renderer.screenToTile(p.x, p.y) : null;
+    const item = itemAtPointer(p, tile);
+    if (!item) return;
+    selectItem(item.uid);
+    dragState = { uid: item.uid, startTile: tile, tile, moved: false };
+    ev.preventDefault();
+  });
+
+  // 滑鼠在視窗外放開（或視窗失焦）時，清掉拖曳狀態避免卡住
+  const cancelDrag = () => { dragState = null; view.ghost = null; };
+  window.addEventListener('blur', cancelDrag);
+  document.addEventListener('mouseleave', cancelDrag);
+
+  window.addEventListener('mouseup', () => {
+    if (!dragState) return;
+    const d = dragState;
+    dragState = null;
+    view.ghost = null;
+    if (!d.moved) return;                       // 只是點一下 → 當成選取
+    const res = store.dispatch({ type: 'MOVE_FURNITURE', uid: d.uid, x: d.tile.x, y: d.tile.y });
+    if (!res.ok) { ui.toast(res.error, 'bad'); sfx('error'); }
+    else { sfx('click'); ui.toast(`已搬到 (${d.tile.x},${d.tile.y})`, 'info'); rebuildBar(); positionBar(); }
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 80);
+  });
 
   canvas.addEventListener('click', (ev) => {
     const st = store.getState();
@@ -348,13 +579,18 @@ function setupCanvasInput() {
       }
       return;
     }
-    // 2) 移動傢俱
-    const mv = pendingMove();
-    if (mv) {
-      const res = store.dispatch({ type: 'MOVE_FURNITURE', uid: mv.uid, x: tile.x, y: tile.y });
+    // 2) 移動傢俱（裝潢面板或浮動工具列啟動的「點擊放置」）
+    const mvUid = clickMoveUid || pendingMoveUid();
+    if (mvUid) {
+      const res = store.dispatch({ type: 'MOVE_FURNITURE', uid: mvUid, x: tile.x, y: tile.y });
       if (!res.ok) ui.toast(res.error, 'bad');
-      else if (typeof windows.panels.get('build')?.clearPendingMove === 'function') {
-        windows.panels.get('build').clearPendingMove();
+      else {
+        ui.toast(`已搬到 (${tile.x},${tile.y})`, 'info');
+        clickMoveUid = null;
+        const panel = windows.panels.get('build');
+        if (typeof panel?.clearPendingMove === 'function') panel.clearPendingMove();
+        if (selection.uid === mvUid) { rebuildBar(); positionBar(); }
+        sfx('click');
       }
       return;
     }
@@ -366,27 +602,52 @@ function setupCanvasInput() {
       ui.toast(`${custTypeName(cust.type)}｜${label}｜心情 ${Math.round(cust.mood)}｜等 ${Math.round(cust.waitMin)} 分｜${order}`, cust.mood < 0 ? 'bad' : 'info');
       return;
     }
-    // 4) 點路人拉客
+    // 4) 點傢俱 → 選取，顯示 移動／旋轉／更換／拆除 工具列
+    const item = itemAtPointer(p, tile);
+    if (item) {
+      const isNew = selection.uid !== item.uid;
+      selectItem(item.uid);
+      if (isNew) ui.toast('已選取：可直接拖曳搬家、按 R 旋轉，或用工具列更換／拆除', 'info');
+      return;
+    }
+    // 5) 點路人拉客（店外走道）
     const walker = nearestWalker(st, tile);
-    if (walker) {
+    if (walker && !(tile && st.layout.items.some((it) => it.x === tile.x && it.y === tile.y))) {
       const res = store.dispatch({ type: 'LURE', walkerUid: walker.uid });
       ui.toast(res.ok ? res.info : res.error, res.ok ? 'good' : 'bad');
       return;
     }
-    // 5) 點桌子顯示資訊
-    const item = renderer && renderer.hitTestItem ? renderer.hitTestItem(p.x, p.y) : null;
-    if (item) {
-      const def = furnitureById(item.typeId);
-      const table = st.sim.tables.find((t) => t.uid === item.uid);
-      const info = table
-        ? `${def?.name}｜座位 ${table.seats.length}（可用 ${table.usable ? '是' : '否'}）｜狀態 ${{ clean: '乾淨', dirty: '待收桌', occupied: '使用中' }[table.state]}`
-        : `${def?.name}｜裝潢 ${def?.decorScore || 0} 分｜耐久 ${Math.round(item.durability ?? 100)}%`;
-      ui.toast(info, 'info');
-      return;
-    }
+    // 6) 點空白處 → 取消選取
+    if (selection.uid) { clearSelection(); return; }
     if (tile && view.showGrid) {
       const type = st.layout.tiles[tile.y * st.layout.gridW + tile.x];
-      ui.toast(`格 (${tile.x}, ${tile.y})：${type}`, 'info');
+      ui.toast('格 (' + tile.x + ', ' + tile.y + ')：' + type, 'info');
+    }
+  });
+
+  // 鍵盤：Esc 取消、R 旋轉、M 移動、Delete 拆除
+  window.addEventListener('keydown', (ev) => {
+    if (ev.target && /input|textarea|select/i.test(ev.target.tagName || '')) return;
+    if (ev.key === 'Escape') {
+      clearSelection();
+      const panel = windows.panels.get('build');
+      if (typeof panel?.clearPending === 'function') panel.clearPending();
+      return;
+    }
+    const item = selectedItem();
+    if (!item) return;
+    if (ev.key === 'r' || ev.key === 'R') {
+      const res = store.dispatch({ type: 'ROTATE_FURNITURE', uid: item.uid });
+      ui.toast(res.ok ? (res.info || '已旋轉') : res.error, res.ok ? 'good' : 'bad');
+      rebuildBar();
+    } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      ev.preventDefault();
+      store.dispatch({ type: 'REMOVE_FURNITURE', uid: item.uid });
+      clearSelection();
+    } else if (ev.key === 'm' || ev.key === 'M') {
+      clickMoveUid = item.uid;
+      rebuildBar();
+      ui.toast('請在平面圖上點擊新的位置', 'info');
     }
   });
 }
@@ -671,7 +932,21 @@ function main() {
   requestAnimationFrame(loop);
 
   // 除錯用（開發者工具）
-  window.DREAM = { store, windows, view, renderer, ui, stepSimulation, restaurantSummary, seatCount, BALANCE: B };
+  window.DREAM = {
+    store, windows, view, renderer, ui, stepSimulation, restaurantSummary, seatCount, BALANCE: B,
+    // 給自動化測試讀取的互動狀態（唯讀）
+    get interaction() {
+      return {
+        selectionUid: selection.uid,
+        clickMoveUid,
+        dragging: !!dragState,
+        hasBar: !!barEl,
+        replaceOpen: replaceBusy,
+        pendingPlacement: !!pendingPlacement(),
+        pendingMove: pendingMoveUid()
+      };
+    }
+  };
 }
 
 main();

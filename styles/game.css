@@ -74,3 +74,34 @@
 .help-text { font-size: 12px; color: var(--ink-soft); line-height: 1.6; }
 .help-text b { color: #1d2b45; }
 .help-text ul { list-style: disc; padding-left: 18px; }
+
+/* 畫布上選取傢俱後的浮動工具列 */
+.item-bar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 460px;
+  padding: 3px 5px;
+  background: var(--face);
+  box-shadow: inset -1px -1px 0 var(--bevel-black), inset 1px 1px 0 var(--bevel-light),
+              inset -2px -2px 0 var(--bevel-dark), inset 2px 2px 0 var(--face-light),
+              2px 2px 0 rgba(0, 0, 0, .4);
+  z-index: 60;
+  pointer-events: auto;
+}
+.item-bar-title { font-weight: bold; font-size: 12px; color: #1d2b45; }
+.item-bar-info { font-weight: normal; color: var(--ink-soft); }
+.item-bar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  margin-left: -4px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid var(--bevel-dark);
+}

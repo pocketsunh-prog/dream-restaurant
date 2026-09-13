@@ -19,7 +19,9 @@ const fail = (error) => ({ ok: false, error });
 
 function withLayoutChange(state, fn) {
   const res = fn();
-  state.layout.rev = (state.layout.rev || 0) + 1;
+  // 換成新的 layout 物件：繪圖層以「物件參照 + rev」判斷快取是否失效，
+  // 若只是就地改 items，命中判定與繪製快取會停留在舊位置（按了傢俱卻點不到）。
+  state.layout = { ...state.layout, rev: (state.layout.rev || 0) + 1 };
   clearPathCache();
   rebuildTables(state);
   return res;
@@ -237,6 +239,60 @@ export function reduce(state, action) {
       item.x = x; item.y = y;
       return withLayoutChange(state, () => ok());
     }
+    case 'ROTATE_FURNITURE': {
+      const item = findItem(state.layout, action.uid);
+      if (!item) return fail('找不到這件傢俱');
+      const def = furnitureById(item.typeId);
+      if (!def) return fail('找不到這件傢俱');
+      // 只有「有方向性」的傢俱（椅子、部分裝飾）旋轉才有意義
+      const DIRECTIONAL = ['chair', 'table', 'counter', 'decor'];
+      if (!DIRECTIONAL.includes(def.category)) return fail(`${def.name} 沒有方向性，不需要旋轉`);
+      const next = action.rot !== undefined
+        ? ((Math.round(action.rot) % 4) + 4) % 4
+        : (((item.rot | 0) + 1) % 4);
+      // 矩形傢俱旋轉時佔地要跟著換（1×2 ↔ 2×1）
+      const swap = action.swapFootprint !== false && def.w !== def.h;
+      const w = swap ? (def.h || 1) : (item.w || def.w || 1);
+      const h = swap ? (def.w || 1) : (item.h || def.h || 1);
+      const check = canPlace(state.layout, item.typeId, item.x, item.y, item.uid);
+      if (!check.ok && (w !== (item.w || 1) || h !== (item.h || 1))) {
+        return fail('這裡空間不夠旋轉，先把傢俱移開一點');
+      }
+      item.rot = next;
+      item.rotManual = true;
+      if (swap) { item.w = w; item.h = h; }
+      return withLayoutChange(state, () => ok(`已旋轉（方向 ${['南', '東', '北', '西'][next]}）`));
+    }
+    case 'REPLACE_FURNITURE': {
+      const item = findItem(state.layout, action.uid);
+      if (!item) return fail('找不到這件傢俱');
+      const oldDef = furnitureById(item.typeId);
+      const newDef = furnitureById(action.typeId);
+      if (!newDef) return fail('沒有這件傢俱');
+      if (newDef.id === item.typeId) return fail('已經是同一件傢俱了');
+      const refund = Math.round((oldDef?.price || 0) * 0.5);
+      const cost = Math.max(0, (newDef.price || 0) - refund);
+      if (state.cash < cost) {
+        return fail(`更換需要 NT$ ${cost.toLocaleString('en-US')}（新傢俱 ${newDef.price.toLocaleString('en-US')} − 舊品退款 ${refund.toLocaleString('en-US')}）`);
+      }
+      const check = canPlace(state.layout, newDef.id, item.x, item.y, item.uid);
+      if (!check.ok) return fail(`這個位置放不下 ${newDef.name}：${check.error}`);
+      state.cash -= cost;
+      state.stats.today.spend += cost;
+      state.layout.items = state.layout.items.filter((i) => i.uid !== action.uid);
+      state.layout.items.push({
+        uid: action.uid,                 // 沿用 uid，桌子的執行期狀態（客人/髒污）不會斷掉
+        typeId: newDef.id,
+        x: item.x, y: item.y,
+        w: newDef.w || 1,
+        h: newDef.h || 1,
+        rot: item.rot || 0,
+        rotManual: item.rotManual || false,
+        durability: 100,
+        broken: false
+      });
+      return withLayoutChange(state, () => ok(`已更換為 ${newDef.name}${cost ? `（補差額 NT$ ${cost.toLocaleString('en-US')}）` : '（舊品退款足夠，不用補錢）'}`));
+    }
     case 'REMOVE_FURNITURE': {
       const item = findItem(state.layout, action.uid);
       if (!item) return fail('找不到這件傢俱');
@@ -406,7 +462,7 @@ export const ACTION_TYPES = [
   'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC',
   'MENU_ADD', 'MENU_REMOVE', 'MENU_UPDATE', 'MENU_TOGGLE', 'BUY_STOCK',
   'HIRE', 'FIRE', 'SET_WAGE', 'SET_SHIFT', 'SET_DUTY',
-  'PLACE_FURNITURE', 'MOVE_FURNITURE', 'REMOVE_FURNITURE', 'CLEAR_LAYOUT', 'SET_TILE',
+  'PLACE_FURNITURE', 'MOVE_FURNITURE', 'ROTATE_FURNITURE', 'REPLACE_FURNITURE', 'REMOVE_FURNITURE', 'CLEAR_LAYOUT', 'SET_TILE',
   'REPAIR', 'CLEAN',
   'START_DAY', 'END_DAY', 'NEXT_DAY', 'LURE', 'MOVE_LOCATION',
   'SAVE_GAME', 'LOAD_GAME', 'NEW_GAME',

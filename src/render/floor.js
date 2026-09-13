@@ -21,8 +21,9 @@ import {
   drawBubble, bubbleKind, appearanceFromSeed, spriteCacheInfo,
   DEFAULT_TILE_PAL, makeTilePalette, resolveFurnitureArt,
   drawLightPool, drawGlow, drawSteam, drawContactShadow, drawPuddle, drawBreath, drawSplash, drawNeonSpill,
-  drawStreetProp, drawWires,
+  drawStreetProp, drawWires, drawKitchenProp, drawAOOverlay,
 } from './sprites.js';
+import { getDish } from '../data/dishes.js';
 
 export {
   TILE_W, TILE_H, GRID_W, GRID_H, ORIGIN_X, ORIGIN_Y, LOGICAL_W, LOGICAL_H,
@@ -30,7 +31,12 @@ export {
 };
 
 /** 會發光的傢俱美術 key（決定地板光池位置）。 */
-const LAMP_ARTS = { lamp: 1, lantern_string: 1, neon_sign: 1, tv: 1 };
+const LAMP_ARTS = { lamp: 1, ceiling_lamp: 1, lantern_string: 1, neon_sign: 1, tv: 1 };
+/** 緊鄰牆壁時要改成「壁掛」的美術 key（裝飾品躺在地上的 bug）。 */
+const WALL_MOUNT_ARTS = {
+  painting: 1, neon_sign: 1, lantern_string: 1, clock: 1, banner: 1, mirror: 1,
+  menu_board: 1, tv: 1, infrared: 1, aircon: 1, cctv: 1, hand_dryer: 1, urinal: 1,
+};
 /** 坐姿／用餐姿勢對應的顧客狀態。 */
 const SEATED_POSE_STATES = { SEATED: 'seated', ORDERING: 'seated', WAITING_FOOD: 'seated', PAYING: 'seated', EATING: 'eat' };
 /** 端盤中的員工狀態關鍵字（沿用既有 state 欄位，不新增欄位）。 */
@@ -393,13 +399,18 @@ export class FloorRenderer {
     this._drawBackdrop(ctx, gw, gh, tod, skyline);
     // 0b) 雨天：騎樓水窪 + 漣漪
     if (weather === 'rain' || weather === 'storm') this._drawPavementPuddles(ctx, gw, gh, tick);
-    // 1) 地板（依地點配色）
+    // 1) 地板（依地點配色 + 污漬連動 + 周邊收邊帶）
     stage('floors');
-    this._drawFloors(ctx, L, gw, gh, frame, pal);
+    this._drawFloors(ctx, L, gw, gh, frame, pal, S);
     // 1b) 地板層燈光：光池 / 出餐口暖光 / 窗邊霓虹溢光（一律在牆與傢俱之前）
     stage('floorlights');
     this._drawFloorLights(ctx, L, gw, gh, tick, T, pal);
     stage('floorlights-end');
+    // 1c) 牆腳環境光遮蔽（AO）
+    stage('ao');
+    this._drawWallAO(ctx, L, gw, gh);
+    // 1d) 廚房固定道具（沒買設備也像廚房）
+    this._drawKitchenProps(ctx, L, gw, gh, tick, S);
     // 2) 牆面／門／出餐口
     stage('walls');
     this._drawWalls(ctx, L, gw, gh, tod, frame, pal, weather);
@@ -412,6 +423,8 @@ export class FloorRenderer {
     // 4) 時段氛圍（網點裁切在房間剪影內）
     stage('ambience');
     this._drawAmbience(ctx, L, gw, gh, tick, tod, T, pal);
+    // 4a) 室內氛圍：四角網點暗角 + 出餐口暖光 + 門口戶外光灑進來
+    this._drawInteriorMood(ctx, L, gw, gh, tick, T, pal);
     // 4b) 冷天吐氣、熱浪地面霧氣
     this._drawWeatherScene(ctx, S, gw, gh, tick, weather);
     // 5) 天氣全畫面覆蓋
@@ -492,9 +505,11 @@ export class FloorRenderer {
     // 夜晚：窗邊霓虹溢光（地點強調色）落在地板上，3 幀閃爍 + 偶發熄滅
     if (T.neon > 0) {
       const accent = pal.accent;
-      for (let y = 0; y < Math.min(gh, 4); y++) {
-        for (let x = 0; x < Math.min(gw, 4); x++) {
-          if (!(x === 0 || y === 0)) continue;
+      for (let y = 1; y < Math.min(gh, 4); y++) {
+        for (let x = 1; x < Math.min(gw, 4); x++) {
+          // 只畫在「緊鄰窗牆的室內地板格」，牆面本身不畫
+          if (!(x === 1 || y === 1)) continue;
+          if (this.tileAt(x, y) !== 'floor') continue;
           const c = this.tileToScreen(x, y);
           const seed = (x * 3 + y * 5) & 7;
           drawNeonSpill(ctx, c.px, c.py + 2, HALF_W * 0.85, HALF_H * 1.0, accent, T.neon, tick, seed);
@@ -579,11 +594,11 @@ export class FloorRenderer {
 
   _drawWeatherScene(ctx, S, gw, gh, tick, weather) {
     if (weather === 'heat') {
-      // 熱浪：夜間地面暖霧
+      // 熱浪：夜間只在地板層加一點暖霧（縮在房間中央，不蓋天空與街景）
       const tod = this._tod;
       if (tod === 'night' || tod === 'evening') {
         const c = this.footprintCenter(0, 0, gw, gh);
-        drawLightPool(ctx, c.px, c.py, (gw + gh) * HALF_W * 0.5, (gw + gh) * HALF_H * 0.5, 0.5, tick, { seed: 3 });
+        drawLightPool(ctx, c.px, c.py + 10, HALF_W * 3.2, HALF_H * 2.4, 0.3, tick, { seed: 3 });
       }
       return;
     }
@@ -764,9 +779,13 @@ export class FloorRenderer {
 
   // ── 地板 ────────────────────────────────────────────────────────────────
 
-  _drawFloors(ctx, L, gw, gh, frame, pal) {
+  _drawFloors(ctx, L, gw, gh, frame, pal, S) {
     const tiles = L.tiles;
     if (!tiles || !tiles.length) return;
+    const sim = S && isObj(S.sim) ? S.sim : null;
+    const dirt = sim && isObj(sim.dirt) ? sim.dirt : null;
+    const floorDirt = dirt ? Math.min(3, Math.floor(num(dirt.floor, 0) / 26)) : 0;
+    const rrDirt = dirt ? Math.min(3, Math.floor(num(dirt.restroom, 0) / 26)) : 0;
     for (let y = 0; y < gh; y++) {
       for (let x = 0; x < gw; x++) {
         const t = tiles[tileIndex(gw, x, y)];
@@ -774,10 +793,153 @@ export class FloorRenderer {
         const art = TILE_FLOOR_ART[t];
         if (!art) continue; // wall / pass / void 交給牆面 pass
         const p = this.tileToScreen(x, y);
-        const variant = (hashCode32(x * 73856093 ^ y * 19349663) >>> 3) & 3;
-        drawTile(ctx, art, p.px, p.py, { variant, frame, pal });
+        // 4 種木紋變體 + 靠牆格用收邊帶
+        const variant = (hashCode32(x * 73856093 ^ y * 19349663) >>> 3) & 7;
+        const edge = this._touchesWall(x, y) ? 1 : 0;
+        const d = t === 'restroom' ? rrDirt : floorDirt;
+        drawTile(ctx, art, p.px, p.py, { variant, frame, pal, dirt: d, edge });
       }
     }
+  }
+
+  /** 該格是否緊鄰牆（用來畫踢腳／收邊帶）。 */
+  _touchesWall(x, y) {
+    return this.tileAt(x - 1, y) === 'wall' || this.tileAt(x + 1, y) === 'wall'
+      || this.tileAt(x, y - 1) === 'wall' || this.tileAt(x, y + 1) === 'wall';
+  }
+
+  /**
+   * 牆腳環境光遮蔽（AO）：沿著牆與地板的交界畫 2–3px 網點暗帶
+   * （北／西側的內牆底面、南／東側矮牆的內緣），讓室內「有底」。
+   */
+  _drawWallAO(ctx, L, gw, gh) {
+    const tiles = L.tiles;
+    if (!tiles || !tiles.length) return;
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const t = tiles[tileIndex(gw, x, y)];
+        if (typeof t !== 'string' || t === 'wall' || t === 'void') continue;
+        let edges = 0;
+        if (this.tileAt(x, y - 1) === 'wall') edges |= 1;
+        if (this.tileAt(x - 1, y) === 'wall') edges |= 2;
+        if (this.tileAt(x, y + 1) === 'wall') edges |= 4;
+        if (this.tileAt(x + 1, y) === 'wall') edges |= 8;
+        if (!edges) continue;
+        const p = this.tileToScreen(x, y);
+        drawAOOverlay(ctx, p.px, p.py, edges);
+      }
+    }
+  }
+
+  /** 廚房固定道具：爐台＋抽油煙機＋掛架＋流理台＋冰箱＋工作檯＋菜單牌＋出餐口盤子。 */
+  _drawKitchenProps(ctx, L, gw, gh, tick, S) {
+    const tiles = L.tiles;
+    if (!tiles || !tiles.length) return;
+    let minX = 99;
+    let maxX = -1;
+    let minY = 99;
+    let maxY = -1;
+    let n = 0;
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        if (tiles[tileIndex(gw, x, y)] !== 'kitchen') continue;
+        n++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (n === 0) return;
+    const sim = S && isObj(S.sim) ? S.sim : null;
+    const kitchen = sim ? arr(sim.kitchen) : null;
+    const cooking = !!(kitchen && kitchen.length);
+    const eq = sim && isObj(sim.equipBroken) ? sim.equipBroken : null;
+    const frame = (tick >> 2) & 3;
+    // 工作流線：沿廚房最北一列擺爐台／流理台／工作檯
+    const row = minY;
+    const span = Math.max(1, maxX - minX + 1);
+    const at = (t, dy) => {
+      const p = this.tileToScreen(t, row);
+      return { x: p.px, y: p.py + (dy || 0) };
+    };
+    const slots = [];
+    for (let i = 0; i < Math.min(4, span); i++) slots.push(minX + Math.round((i * (span - 1)) / Math.max(1, Math.min(4, span) - 1)));
+    const kinds = ['fridge', 'stove_run', 'sink_counter', 'prep'];
+    for (let i = 0; i < slots.length; i++) {
+      const k = kinds[i % kinds.length];
+      const c = at(slots[i], 2);
+      drawKitchenProp(ctx, k, c.x, c.y, { frame, cooking: cooking && k === 'stove_run' && !(eq && eq.stove) });
+      if (k === 'stove_run') {
+        drawKitchenProp(ctx, 'hood', c.x, c.y - 34, { frame });
+        drawKitchenProp(ctx, 'rack', c.x, c.y - 52, { frame });
+      }
+    }
+    // 菜單牌掛在廚房最北牆面
+    const mb = at(Math.round((minX + maxX) / 2), 0);
+    drawKitchenProp(ctx, 'menu_board', mb.x, mb.y - 46, { frame });
+    // 出餐口旁堆疊的盤子
+    const pass = arr(L.passTiles);
+    if (pass) {
+      for (let i = 0; i < pass.length; i++) {
+        const p = pass[i];
+        if (!isObj(p)) continue;
+        const c = this.tileToScreen(num(p.x, 0), num(p.y, 0));
+        drawKitchenProp(ctx, 'plate_stack', c.px + (i ? 14 : -14), c.py - 4, { frame });
+      }
+    }
+  }
+
+  /**
+   * 室內氛圍：四角網點暗角 + 出餐口暖色提亮 + 門口戶外光灑進門內一格。
+   * （光池本體沿用 _drawFloorLights，這裡只補氛圍層。）
+   */
+  _drawInteriorMood(ctx, L, gw, gh, tick, T, pal) {
+    // 四角暗角（裁切在房間剪影內）
+    ctx.save();
+    this._roomPath(ctx, gw, gh);
+    ctx.clip();
+    const poly = roomSilhouette(gw, gh, this.wallHeight, this.originX, this.originY);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      if (poly[i].x < minX) minX = poly[i].x;
+      if (poly[i].x > maxX) maxX = poly[i].x;
+      if (poly[i].y < minY) minY = poly[i].y;
+      if (poly[i].y > maxY) maxY = poly[i].y;
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    const band = Math.round(Math.min(w, h) * 0.22);
+    // 上緣／下緣／左右緣（pattern 填色：1 次 fillRect／每條帶）
+    ditherPattern(ctx, minX, minY, w, band, 'shadow', 'clear', DITHER.b12);
+    ditherPattern(ctx, minX, maxY - band, w, band, 'shadow', 'clear', DITHER.b25);
+    ditherPattern(ctx, minX, minY, band, h, 'shadow', 'clear', DITHER.b25);
+    ditherPattern(ctx, maxX - band, minY, band, h, 'shadow', 'clear', DITHER.b12);
+    ctx.restore();
+    // 出餐口暖色提亮（沿用光池畫法，但畫在氛圍層，讓夜晚看得出熱源）
+    if (T.lamps > 0.3) {
+      const pass = arr(L.passTiles);
+      if (pass) {
+        for (let i = 0; i < pass.length; i++) {
+          const p = pass[i];
+          if (!isObj(p)) continue;
+          const c = this.tileToScreen(num(p.x, 0), num(p.y, 0));
+          drawLightPool(ctx, c.px, c.py + 6, HALF_W * 1.1, HALF_H * 1.3, T.lamps * 0.6, tick, { seed: 7 });
+        }
+      }
+    }
+    // 門口戶外光灑進門內一格（白天最明顯）
+    const ent = arr(L.entrances);
+    if (ent && ent[0] && isObj(ent[0])) {
+      const e0 = ent[0];
+      const c = this.tileToScreen(num(e0.x, 0), num(e0.y, 0));
+      const strength = T.lamps > 0.5 ? 0.35 : 0.75;
+      drawLightPool(ctx, c.px, c.py - HALF_H * 1.4, HALF_W * 1.25, HALF_H * 1.6, strength, tick, { seed: 11 });
+    }
+    void pal;
   }
 
   // ── 牆面 ────────────────────────────────────────────────────────────────
@@ -841,6 +1003,33 @@ export class FloorRenderer {
       }
     }
     this._occ = occ;
+    // 用餐中的客人：把他們點的菜對應到桌（itemUid → [category...]）
+    const dishMap = Object.create(null);
+    const customers = sim ? arr(sim.customers) : null;
+    if (customers) {
+      for (let i = 0; i < customers.length; i++) {
+        const cu = customers[i];
+        if (!isObj(cu) || !cu.tableUid) continue;
+        const st = typeof cu.state === 'string' ? cu.state.toUpperCase() : '';
+        if (st !== 'EATING' && st !== 'WAITING_FOOD') continue;
+        const order = arr(cu.order);
+        if (!order || !order.length) continue;
+        const list = dishMap[cu.tableUid] || (dishMap[cu.tableUid] = []);
+        for (let k = 0; k < order.length && list.length < 4; k++) {
+          const entry = order[k];
+          const id = isObj(entry) ? entry.dishId : entry;
+          let cat = null;
+          try {
+            const def = getDish(id);
+            cat = def && def.category ? def.category : null;
+          } catch (e) {
+            cat = null;
+          }
+          list.push(cat || 'side');
+        }
+      }
+    }
+    this._dishes = dishMap;
     const people = this._collectPeople(S, gw, gh, frame);
     const acc = pal ? pal.accent : null;
 
@@ -860,7 +1049,7 @@ export class FloorRenderer {
       const db = b.d;
       // 同深度時人物畫在傢俱之後（人疊在椅子上）
       if (da < db) {
-        this._drawItem(ctx, a, i, frame, acc);
+        this._drawItem(ctx, a, i, frame, acc, S);
         i++;
       } else {
         this._drawPersonEntry(ctx, b, j, frame);
@@ -868,7 +1057,7 @@ export class FloorRenderer {
       }
     }
     while (i < ni) {
-      this._drawItem(ctx, items[i], i, frame, acc);
+      this._drawItem(ctx, items[i], i, frame, acc, S);
       i++;
     }
     while (j < np) {
@@ -887,24 +1076,36 @@ export class FloorRenderer {
     return r;
   }
 
-  _drawItem(ctx, item, idx, frame, accent) {
+  _drawItem(ctx, item, idx, frame, accent, S) {
     const w = Math.max(1, Math.round(num(item.w, 1)));
     const h = Math.max(1, Math.round(num(item.h, 1)));
     const c = this.footprintCenter(num(item.x, 0), num(item.y, 0), w, h);
     const rec = this._rec(this._itemRecs, idx);
     const eq = this._equipBroken;
     const isStove = /stove|range|cook/i.test(String(item.typeId));
+    const key = resolveFurnitureArt(item.typeId, { seats: num(item.seats, 0) });
+    // 緊鄰牆壁的壁掛類裝飾品 → 改畫在牆面上（不要再躺在地上）
+    let wall = null;
+    if (WALL_MOUNT_ARTS[key]) {
+      if (this.tileAt(num(item.x, 0), num(item.y, 0) - 1) === 'wall') wall = 'N';
+      else if (this.tileAt(num(item.x, 0) - 1, num(item.y, 0)) === 'wall') wall = 'W';
+    }
+    const dishes = this._dishes ? this._dishes[item.uid] : null;
     const box = drawFurniture(ctx, item.typeId, c.px, c.py, {
       w, h,
-      rot: item.rot,
+      // 椅子優先用 sim 算好的 rotAuto 面向桌子；玩家手動轉過的不會有 rotAuto
+      rot: item.rotAuto != null ? item.rotAuto : item.rot,
       frame,
       broken: !!item.broken || (isStove && !!(eq && eq.stove)),
       seats: num(item.seats, 0),
       durability: num(item.durability, 100),
       occupied: this._occ ? (this._occ[item.uid] | 0) : 0,
+      dishes,
+      wall,
       accent,
       out: rec.box,
     });
+    void S;
     if (box && this._hitItemsN < 512) {
       rec.item = item;
       this._hitItems[this._hitItemsN] = rec;
