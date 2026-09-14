@@ -623,28 +623,44 @@ export class FloorRenderer {
     }
   }
 
-  // ── 氛圍（時段網點，裁切在房間剪影內） ─────────────────────────────────
+  // ── 氛圍（時段色調，只壓房間四周邊緣、中央保持清晰）─────────────────────
 
   _drawAmbience(ctx, L, gw, gh, tick, tod, T, pal) {
     if (!T.layers.length) return;
+    // 依據時段決定邊緣壓暗的強度。午間 = 0；傍晚／夜晚只壓最邊緣，中央保持清晰。
+    let pairs;
+    if (tod === 'morning') pairs = 1;
+    else if (tod === 'evening') pairs = 1;
+    else if (tod === 'night') pairs = 2;
+    else pairs = 0;
+    if (!pairs) return;
+
     ctx.save();
     this._roomPath(ctx, gw, gh);
     ctx.clip();
     const poly = roomSilhouette(gw, gh, this.wallHeight, this.originX, this.originY);
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (let i = 0; i < poly.length; i++) {
       if (poly[i].x < minX) minX = poly[i].x;
       if (poly[i].x > maxX) maxX = poly[i].x;
       if (poly[i].y < minY) minY = poly[i].y;
       if (poly[i].y > maxY) maxY = poly[i].y;
     }
+    const w = maxX - minX;
+    const h = maxY - minY;
+    // 每道邊緣頻帶的寬度（約房間短邊的 1/16，最小 4px）—— 只壓最邊緣，不褩中央
+    const bandW = Math.max(4, Math.round(Math.min(w, h) / 16));
     for (let i = 0; i < T.layers.length; i++) {
       const ly = T.layers[i];
-      // 時段色調是「大面積壓暗」→ 用 2×2 塊狀網點（同樣的平均明暗，但不會滿畫面細點）
-      ditherPattern(ctx, minX, minY, maxX - minX, maxY - minY, ly.c, 'clear', BLOCKY[ly.p] || ly.p);
+      // 用較輕的網點（b12）並只壓 1-2 道，維持邊緣氛圍但不影響閱讀
+      const pat = DITHER.b12;
+      for (let b = 0; b < pairs; b++) {
+        const bw = bandW;
+        ditherPattern(ctx, minX, minY + b * bw, w, bw, ly.c, 'clear', pat);
+        ditherPattern(ctx, minX, maxY - (b + 1) * bw, w, bw, ly.c, 'clear', pat);
+        ditherPattern(ctx, minX + b * bw, minY + b * bw, bw, h - 2 * b * bw, ly.c, 'clear', pat);
+        ditherPattern(ctx, maxX - (b + 1) * bw, minY + b * bw, bw, h - 2 * b * bw, ly.c, 'clear', pat);
+      }
     }
     ctx.restore();
   }
