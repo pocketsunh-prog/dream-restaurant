@@ -345,6 +345,24 @@ button kbd {
 .section-title { font-size: 11px; color: var(--kin); letter-spacing: 1px; margin: 10px 0 6px; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
 .section-title:first-child { margin-top: 0; }
 
+/* ── 設定列 ────────────────────────────────────────────────────── */
+.cfgrow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.cfgrow label { width: 78px; color: var(--muted); flex: 0 0 auto; }
+.cfgrow b { width: 56px; text-align: right; color: var(--kinari); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.cfgrow input[type=range] {
+  -webkit-appearance: none; appearance: none; flex: 1; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.16); outline: none; cursor: pointer;
+}
+.cfgrow input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--shu-2); border: 1px solid rgba(0,0,0,.4);
+}
+.cfgrow input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--shu-2); }
+.cfgrow select {
+  flex: 1; background: rgba(255,255,255,.06); color: var(--kinari);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font-family: var(--font-ui); font-size: 12px;
+}
+
 .menu-row {
   display: flex; align-items: center; gap: 8px;
   border: 1px solid rgba(255,255,255,.08);

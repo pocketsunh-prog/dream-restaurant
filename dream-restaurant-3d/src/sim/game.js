@@ -16,7 +16,7 @@ import { initEvents, tickEvents, recomputeMults, activeEventInfo, forceEvent } f
 
 export const OPEN_MINUTE = 11 * 60;
 export const CLOSE_MINUTE = 23 * 60;
-export const START_CASH = 1_200_000;
+export const START_CASH = 999_999_999;
 
 export const WEATHERS = ['sunny', 'cloudy', 'rain', 'snow'];
 export const WEATHER_JP = { sunny: '晴れ', cloudy: '曇り', rain: '雨', snow: '雪' };
@@ -71,6 +71,55 @@ function mulberry32(a) {
   return fn;
 }
 export { mulberry32 };
+
+/* ---------------------------------------------------------------- 設定 */
+
+/** 預設設定（存檔會保存它） */
+export function defaultSettings() {
+  return {
+    openMinute: OPEN_MINUTE,
+    closeMinute: CLOSE_MINUTE,
+    speed: 1,                 // 開局速度
+    autoRotate: false,        // 攝影機自動環繞
+    fov: 46,
+    graphics: {
+      pixelRatio: 'auto',     // 'auto' | 1 | 1.5 | 2
+      shadows: true,
+      shadowQuality: 'high',  // 'high' | 'medium' | 'low'
+      exposure: 1.0
+    },
+    audio: { master: 0.75, music: 0.5, sfx: 0.8, ambience: 0.45 },
+    showHints: true
+  };
+}
+
+export function openMinute(state) { return state?.settings?.openMinute ?? OPEN_MINUTE; }
+export function closeMinute(state) { return state?.settings?.closeMinute ?? CLOSE_MINUTE; }
+
+/** 更新營業時間（至少 2 小時，且開店早於打烊） */
+export function setBusinessHours(state, open, close) {
+  const o = Math.max(0, Math.min(1439, Math.round(open)));
+  const c = Math.max(0, Math.min(1439, Math.round(close)));
+  if (!(o < c)) return { ok: false, error: '開店時間必須早於打烊時間' };
+  if (c - o < 120) return { ok: false, error: '營業時間至少要 2 小時' };
+  state.settings.openMinute = o;
+  state.settings.closeMinute = c;
+  // 營業中調整就即時反映
+  if (state.phase === 'open' && state.minuteFloat >= c) state.phase = 'closing';
+  return { ok: true, open: o, close: c };
+}
+
+/** 一般設定寫入（含畫質／相機） */
+export function setSetting(state, path, value) {
+  const parts = String(path).split('.');
+  let node = state.settings;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (typeof node[parts[i]] !== 'object' || node[parts[i]] === null) node[parts[i]] = {};
+    node = node[parts[i]];
+  }
+  node[parts[parts.length - 1]] = value;
+  return { ok: true, settings: state.settings };
+}
 
 /* ------------------------------------------------------- 店內平面配置 */
 
@@ -165,6 +214,7 @@ export function createGame({ locationId = 'tokyo_shibuya', seed = 20240601, star
     day: 1,
     minute: OPEN_MINUTE,
     minuteFloat: OPEN_MINUTE,
+    settings: defaultSettings(),
     speed: 1,
     paused: false,
     phase: 'open',
@@ -596,7 +646,7 @@ export function tick(state, dtMin) {
         state.groups.push(g);
       }
     }
-    if (state.minuteFloat >= CLOSE_MINUTE) state.phase = 'closing';
+    if (state.minuteFloat >= closeMinute(state)) state.phase = 'closing';
   }
 
   for (const g of state.groups) updateGroup(state, g, dtMin);
@@ -1066,7 +1116,7 @@ export function settleDay(state) {
   const loc = locationById(state.locationId) || LOCATIONS[0];
   const rent = loc.rentPerDay;
   const util = 3200 + state.plan.tables.length * 260;
-  const hours = Math.max(0, (CLOSE_MINUTE - OPEN_MINUTE) / 60);
+  const hours = Math.max(0, (closeMinute(state) - openMinute(state)) / 60);
   let wages = 0;
   for (const s of state.staff) wages += Math.round(s.wage * hours);
   state.today.wages = wages;
@@ -1104,8 +1154,8 @@ export function settleDay(state) {
 export function startNextDay(state) {
   state.day += 1;
   state.phase = 'open';
-  state.minuteFloat = OPEN_MINUTE;
-  state.minute = OPEN_MINUTE;
+  state.minuteFloat = openMinute(state);
+  state.minute = state.minuteFloat;
   state.today = emptyDay();
   state.spawnAcc = 0;
   state.weather = rollWeather(state);

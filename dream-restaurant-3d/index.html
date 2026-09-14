@@ -56,6 +56,7 @@
     <button id="btn-locations">🗾 立地 <kbd>L</kbd></button>
     <button id="btn-menu">🍜 菜單 <kbd>M</kbd></button>
     <button id="btn-camera">🎥 視角 <kbd>C</kbd></button>
+    <button id="btn-settings">⚙ 設定 <kbd>O</kbd></button>
     <button id="btn-help">❔ 操作 <kbd>H</kbd></button>
   </div>
   <div class="audio">
@@ -121,6 +122,22 @@
   </div>
 </section>
 
+<!-- ── 面板：設定・存讀檔 ─────────────────────────────────────── -->
+<section class="panel" id="panel-settings" hidden>
+  <header class="panel-head">
+    <h2>設定<span>環境設定・存讀檔</span></h2>
+    <button class="panel-close" data-close="panel-settings">✕</button>
+  </header>
+  <div class="panel-body">
+    <nav class="tabs" id="settings-tabs">
+      <button data-stab="config" class="on">環境設定</button>
+      <button data-stab="saves">存讀檔</button>
+    </nav>
+    <div id="settings-config"></div>
+    <div id="settings-saves" hidden></div>
+  </div>
+</section>
+
 <!-- ── 面板：操作說明 ─────────────────────────────────────────── -->
 <section class="panel" id="panel-help" hidden>
   <header class="panel-head">
@@ -134,9 +151,11 @@
       <tr><td>右鍵拖曳 / 中鍵拖曳</td><td>平移視角</td></tr>
       <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></td><td>預設機位：全景／吧台／客席／廚房</td></tr>
       <tr><td><kbd>Space</kbd></td><td>暫停 / 繼續</td></tr>
-      <tr><td><kbd>L</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>H</kbd></td><td>立地 / 従業員 / 菜單 / 說明</td></tr>
+      <tr><td><kbd>L</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>O</kbd> <kbd>H</kbd></td><td>立地 / 従業員 / 菜單 / 設定 / 說明</td></tr>
       <tr><td><kbd>F</kbd></td><td>切換晝夜光影（快看夜晚燈籠）</td></tr>
       <tr><td><kbd>A</kbd></td><td>音效／BGM 開關（第一次互動後才會發聲，這是瀏覽器限制）</td></tr>
+      <tr><td><kbd>O</kbd></td><td>設定面板（營業時間・音量・畫質・存讀檔）</td></tr>
+      <tr><td>打烊結算</td><td>會自動存到「オートセーブ」槽位</td></tr>
     </table>
     <p class="muted">遊戲以秒為單位推進：1 倍速時 1 秒＝1 遊戲分鐘。顧客會自己進店、入座、點餐、用餐、結帳；打烊後結算當日營業額。</p>
     <p class="muted">音樂為即時合成（箏、尺八、太鼓，使用日本音階），會依<b>立地風格</b>與<b>晝夜</b>改變音階與速度；店內人聲、廚房聲與雨聲也會跟著實際狀況變化。</p>

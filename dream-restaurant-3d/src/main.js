@@ -7,11 +7,12 @@ import { OrbitCam } from './scene/controls.js';
 import { RestaurantView } from './scene/restaurant.js';
 import {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
-  clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents
+  clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting
 } from './sim/game.js';
 import { Hud, seatsOf } from './ui/hud.js';
 import { locationById } from './data/locations.js';
 import { AudioEngine, LOCALE_SCALE, SFX_NAMES } from './audio/audio.js';
+import { saveToSlot, loadFromSlot, autoSave } from './sim/save.js';
 
 const params = new URLSearchParams(location.search);
 const step = (t) => { const el = document.getElementById('loading-step'); if (el) el.textContent = t; };
@@ -47,7 +48,7 @@ step('光源と環境を準備中');
 const lighting = createLighting(scene, renderer);
 
 step('ゲーム状態を初期化中');
-const game = createGame({
+let game = createGame({
   locationId: params.get('loc') || 'tokyo_shibuya',
   seed: Number(params.get('seed') || 20240601)
 });
@@ -80,7 +81,32 @@ function gotoShot(i) {
 /* ------------------------------------------------------------ HUD */
 
 const hud = new Hud(game, {
-  onSpeed: (v) => { game.speed = v; game.paused = v === 0; },
+  onSpeed: (v) => { game.speed = v; game.paused = v === 0; game.settings.speed = v; },
+  onHours: (open, close) => {
+    const r = setBusinessHours(game, open, close);
+    if (!r.ok) hud.toast(r.error, 'bad');
+  },
+  onVolume: (bus, v) => {
+    audio.setVolume(bus, v);
+    prefs[bus] = v;
+    game.settings.audio[bus] = v;
+    saveAudioPrefs(prefs);
+  },
+  onGraphics: (patch) => {
+    Object.assign(game.settings.graphics, patch);
+    applyGraphics();
+  },
+  onCamera: (patch) => {
+    if (patch.fov) { camera.fov = patch.fov; camera.updateProjectionMatrix(); game.settings.fov = patch.fov; }
+    if (patch.autoRotate !== undefined) game.settings.autoRotate = patch.autoRotate;
+  },
+  onSave: (slot) => saveToSlot(game, slot),
+  onLoad: (slot) => {
+    const r = loadFromSlot(slot);
+    if (!r.ok) return r;
+    adoptState(r.state);
+    return { ok: true };
+  },
   onCycleCamera: () => gotoShot(shotIdx + 1),
   onNextDay: () => {
     startNextDay(game);
@@ -133,6 +159,7 @@ addEventListener('keydown', (e) => {
   if (k === 'l') hud.toggle('panel-locations');
   else if (k === 's') hud.toggle('panel-staff');
   else if (k === 'm') hud.toggle('panel-menu');
+  else if (k === 'o') hud.toggle('panel-settings');
   else if (k === 'h') hud.toggle('panel-help');
   else if (k === 'c') gotoShot(shotIdx + 1);
   else if (k === 'f') { forceNight = !forceNight; }
@@ -253,6 +280,61 @@ function handleSimEvent(ev) {
   audio.playSfx(name, { gain: 0.7 + Math.min(0.3, (ev.size || 1) * 0.05) });
 }
 
+/** 套用畫質設定（立即生效） */
+let forceExposure = 1.0;
+function applyGraphics() {
+  const gr = game.settings?.graphics || {};
+  const dpr = window.devicePixelRatio || 1;
+  const pr = (gr.pixelRatio === 'auto' || gr.pixelRatio === undefined) ? Math.min(dpr, 2) : Number(gr.pixelRatio);
+  renderer.setPixelRatio(Math.max(1, pr || 1));
+  renderer.setSize(innerWidth, innerHeight, false);
+  renderer.shadowMap.enabled = gr.shadows !== false;
+  const size = gr.shadowQuality === 'low' ? 512 : gr.shadowQuality === 'medium' ? 1024 : 2048;
+  const sun = lighting.sun;
+  if (sun) {
+    if (sun.shadow.mapSize.x !== size) {
+      sun.shadow.mapSize.set(size, size);
+      if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+    }
+    sun.castShadow = gr.shadows !== false;
+  }
+  forceExposure = gr.exposure ?? 1.0;
+}
+
+/** 換成另一份遊戲狀態（讀取存檔用）：重建場景並重新綁定 HUD */
+function adoptState(next) {
+  game = next;
+  hud.game = next;
+  restaurant.dispose();
+  const fresh = new RestaurantView(scene, game.plan);
+  Object.assign(restaurant, {
+    root: fresh.root,
+    groupMeshes: fresh.groupMeshes,
+    staffMeshes: fresh.staffMeshes,
+    staffGroup: fresh.staffGroup,
+    passDishes: fresh.passDishes,
+    dirtyMarks: fresh.dirtyMarks,
+    lampPointers: fresh.lampPointers,
+    tableProps: fresh.tableProps,
+    porchLight: fresh.porchLight,
+    floorY: fresh.floorY,
+    tatamiY: fresh.tatamiY,
+    shell: fresh.shell,
+    _clock: 0,
+    _passShown: -1,
+    _dirtyShown: ''
+  });
+  applyGraphics();
+  camera.fov = game.settings?.fov ?? 46;
+  camera.updateProjectionMatrix();
+  lighting.setWeather(game.weather);
+  lighting.setTimeOfDay(game.minute / 60);
+  audio.setMusicMood({ scale: LOCALE_SCALE[locationById(game.locationId)?.kind] || 'yo' });
+  gotoShot(0);
+  hud.update();
+  return game;
+}
+
 /* ------------------------------------------------------------ 主迴圈 */
 
 let last = performance.now();
@@ -273,6 +355,8 @@ function frame(now) {
     if (game.phase === 'settle') {
       const report = settleDay(game);
       hud.showSettle(report);
+      const asr = autoSave(game);
+      if (asr.ok) hud.toast('オートセーブしました', 'good');
       audio.playSfx('settle');
       if (report.net > 0) setTimeout(() => audio.playSfx('starup'), 700);
       game.speed = 0;
@@ -284,6 +368,7 @@ function frame(now) {
   const hour = forceNight ? 22 : game.minute / 60;
   lighting.setWeather(game.weather);
   lighting.setTimeOfDay(hour);
+  renderer.toneMappingExposure = (forceExposure || 1) * (game.__night ? 1.18 : 1.0);
   game.__night = hour < 6.4 || hour > 18.4;
 
   // 事件 → 音效／提示（每幀清空）
@@ -310,6 +395,7 @@ function frame(now) {
     });
   }
 
+  if (game.settings?.autoRotate) cam.orbit(-14 * dtRaw, 0);
   restaurant.update(dtRaw, game);
   cam.update(dtRaw);
   hud.update();
@@ -398,6 +484,8 @@ window.DREAM3D = {
       if (game.phase === 'settle') {
         const report = settleDay(game);
         hud.showSettle(report);
+        const asr = autoSave(game);
+        if (asr.ok) hud.toast('オートセーブしました', 'good');
         game.speed = 0; game.paused = true;
         settled = true;
         break;
@@ -407,6 +495,11 @@ window.DREAM3D = {
     return this.info;
   },
   setHour(h) { forceNight = false; game.minuteFloat = h * 60; game.minute = game.minuteFloat; return this.info; },
+  save(slot = '1') { return saveToSlot(game, slot); },
+  load(slot = '1') { const r = loadFromSlot(slot); if (r.ok) adoptState(r.state); return r.ok ? { ok: true, info: this.info } : r; },
+  autoSave() { return autoSave(game); },
+  setSetting(path, value) { return setSetting(game, path, value); },
+  applyGraphics,
   setStars(n) { setStars(game, n); hud.renderMenu(); return this.info; },
   openPanel(id) { hud.toggle(id); },
   locationName(id) { return locationById(id)?.name; }
@@ -414,6 +507,11 @@ window.DREAM3D = {
 
 /* ------------------------------------------------------------ 啟動 */
 
+applyGraphics();
+camera.fov = game.settings?.fov ?? 46;
+camera.updateProjectionMatrix();
+game.speed = game.settings?.speed ?? 1;
+game.paused = game.speed === 0;
 requestAnimationFrame(frame);
 
 // 測試用參數
@@ -430,6 +528,22 @@ if (params.get('stafftab')) {
     document.querySelectorAll('#staff-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === hud._staffTab));
     hud.renderStaff();
   } catch (e) { console.warn('stafftab failed', e); }
+}
+// ?loadslot=auto|1..5 → 啟動時直接讀取該槽位（測試用，會走完整 adoptState 重建流程）
+if (params.get('loadslot')) {
+  try {
+    const r = loadFromSlot(params.get('loadslot'));
+    if (r.ok) { adoptState(r.state); console.log('[DREAM3D] loaded slot', params.get('loadslot'), JSON.stringify(window.DREAM3D?.info)); }
+    else console.warn('[DREAM3D] load failed', r.error);
+  } catch (e) { console.warn('loadslot failed', e); }
+}
+// ?stab=config|saves → 設定面板直接開在指定分頁（測試用）
+if (params.get('stab')) {
+  try {
+    hud._settingsTab = params.get('stab');
+    document.querySelectorAll('#settings-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.stab === hud._settingsTab));
+    hud.renderSettings();
+  } catch (e) { console.warn('stab failed', e); }
 }
 if (params.get('shot')) gotoShot(Number(params.get('shot')));
 // ?audio=1 → 啟動時就直接開啟音訊（測試用；正常情況要等使用者手勢）

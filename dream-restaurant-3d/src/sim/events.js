@@ -25,7 +25,9 @@ export function initEvents(state) {
 /** 目前是否應該擲事件 */
 function shouldRoll(state) {
   if (state.phase !== 'open') return false;
-  return state.minute >= 11 * 60 && state.minute <= 22 * 60;
+  const open = state.settings?.openMinute ?? 11 * 60;
+  const close = state.settings?.closeMinute ?? 23 * 60;
+  return state.minute >= open && state.minute <= close - 60;
 }
 
 /**

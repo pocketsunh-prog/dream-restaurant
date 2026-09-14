@@ -9,6 +9,7 @@ import {
   EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
   activeEventInfo, TASK_KINDS
 } from '../sim/game.js';
+import { listSlots, deleteSlot, savedAtText, storageAvailable } from '../sim/save.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -38,6 +39,14 @@ export class Hud {
     $('btn-menu')?.addEventListener('click', () => this.toggle('panel-menu'));
     $('btn-help')?.addEventListener('click', () => this.toggle('panel-help'));
     $('btn-camera')?.addEventListener('click', () => this.hooks.onCycleCamera?.());
+    $('btn-settings')?.addEventListener('click', () => this.toggle('panel-settings'));
+    document.querySelectorAll('#settings-tabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this._settingsTab = b.dataset.stab;
+        document.querySelectorAll('#settings-tabs button').forEach((x) => x.classList.toggle('on', x === b));
+        this.renderSettings();
+      });
+    });
     document.querySelectorAll('[data-close]').forEach((b) => {
       b.addEventListener('click', () => this.close(b.dataset.close));
     });
@@ -79,6 +88,7 @@ export class Hud {
       if (id === 'panel-locations') this.renderLocations();
       if (id === 'panel-menu') this.renderMenu();
       if (id === 'panel-staff') this.renderStaff();
+      if (id === 'panel-settings') this.renderSettings();
     }
   }
 
@@ -87,6 +97,146 @@ export class Hud {
   anyPanelOpen() { return [...document.querySelectorAll('.panel')].some((p) => !p.hidden); }
 
   closeAll() { document.querySelectorAll('.panel').forEach((p) => { p.hidden = true; }); }
+
+  /* ── 設定・存讀檔 ───────────────────────────────────────────── */
+
+  renderSettings() {
+    const tab = this._settingsTab || 'config';
+    const cfg = $('settings-config');
+    const sav = $('settings-saves');
+    if (!cfg) return;
+    cfg.hidden = tab !== 'config';
+    sav.hidden = tab !== 'saves';
+    if (tab === 'config') this.renderConfig();
+    else this.renderSaves();
+  }
+
+  renderConfig() {
+    const host = $('settings-config');
+    if (!host) return;
+    const st = this.game;
+    const s = st.settings || {};
+    const g = s.graphics || {};
+    const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    const openM = s.openMinute ?? 660;
+    const closeM = s.closeMinute ?? 1380;
+    host.innerHTML = `
+      <div class="section-title">営業時間</div>
+      <div class="card">
+        <div class="cfgrow"><label>開店</label><input type="range" id="cfg-open" min="0" max="1380" step="30" value="${openM}"><b id="cfg-open-v">${hm(openM)}</b></div>
+        <div class="cfgrow"><label>打烊</label><input type="range" id="cfg-close" min="120" max="1439" step="30" value="${closeM}"><b id="cfg-close-v">${hm(closeM)}</b></div>
+        <div class="tagline">營業時數 ${((closeM - openM) / 60).toFixed(1)} 小時（至少 2 小時）。越長賺越多，但人件費與疲勞也越高。</div>
+      </div>
+
+      <div class="section-title">音量</div>
+      <div class="card">
+        <div class="cfgrow"><label>マスター</label><input type="range" id="cfg-vol-master" min="0" max="100" value="${Math.round((s.audio?.master ?? 0.75) * 100)}"><b id="cfg-vol-master-v">${Math.round((s.audio?.master ?? 0.75) * 100)}</b></div>
+        <div class="cfgrow"><label>音楽</label><input type="range" id="cfg-vol-music" min="0" max="100" value="${Math.round((s.audio?.music ?? 0.5) * 100)}"><b id="cfg-vol-music-v">${Math.round((s.audio?.music ?? 0.5) * 100)}</b></div>
+        <div class="cfgrow"><label>効果音</label><input type="range" id="cfg-vol-sfx" min="0" max="100" value="${Math.round((s.audio?.sfx ?? 0.8) * 100)}"><b id="cfg-vol-sfx-v">${Math.round((s.audio?.sfx ?? 0.8) * 100)}</b></div>
+      </div>
+
+      <div class="section-title">画質</div>
+      <div class="card">
+        <div class="cfgrow"><label>解像度</label>
+          <select id="cfg-pixel">
+            ${['auto', '1', '1.5', '2'].map((v) => `<option value="${v}" ${String(g.pixelRatio ?? 'auto') === v ? 'selected' : ''}>${v === 'auto' ? '自動（裝置比）' : v + '×'}</option>`).join('')}
+          </select><b></b></div>
+        <div class="cfgrow"><label>影</label>
+          <select id="cfg-shadows"><option value="1" ${g.shadows !== false ? 'selected' : ''}>オン</option><option value="0" ${g.shadows === false ? 'selected' : ''}>オフ</option></select><b></b></div>
+        <div class="cfgrow"><label>影の精度</label>
+          <select id="cfg-shadowq">
+            ${[['high', '高（2048）'], ['medium', '中（1024）'], ['low', '低（512）']].map(([v, label]) => `<option value="${v}" ${(g.shadowQuality ?? 'high') === v ? 'selected' : ''}>${label}</option>`).join('')}
+          </select><b></b></div>
+        <div class="tagline">畫質調低可以讓內顯或舊電腦更順。變更會立即生效。</div>
+      </div>
+
+      <div class="section-title">カメラ・ゲーム</div>
+      <div class="card">
+        <div class="cfgrow"><label>視野角</label><input type="range" id="cfg-fov" min="30" max="70" step="1" value="${s.fov ?? 46}"><b id="cfg-fov-v">${s.fov ?? 46}°</b></div>
+        <div class="cfgrow"><label>自動旋轉</label>
+          <select id="cfg-rotate"><option value="1" ${s.autoRotate ? 'selected' : ''}>オン</option><option value="0" ${!s.autoRotate ? 'selected' : ''}>オフ</option></select><b></b></div>
+        <div class="cfgrow"><label>開始速度</label>
+          <select id="cfg-speed">${[0, 1, 2, 4].map((v) => `<option value="${v}" ${(s.speed ?? 1) === v ? 'selected' : ''}>${v === 0 ? '停止' : v + '×'}</option>`).join('')}</select><b></b></div>
+      </div>`;
+
+    const on = (id, ev, fn) => $(id)?.addEventListener(ev, fn);
+    const num = (id) => Number($(id)?.value ?? 0);
+    const setHm = (id, v) => { const e = $(id); if (e) e.textContent = hm(v); };
+    on('cfg-open', 'input', () => { setHm('cfg-open-v', num('cfg-open')); this.hooks.onHours?.(num('cfg-open'), num('cfg-close')); });
+    on('cfg-close', 'input', () => { setHm('cfg-close-v', num('cfg-close')); this.hooks.onHours?.(num('cfg-open'), num('cfg-close')); });
+    for (const k of ['master', 'music', 'sfx']) {
+      on(`cfg-vol-${k}`, 'input', () => {
+        const v = num(`cfg-vol-${k}`) / 100;
+        const el = $(`cfg-vol-${k}-v`);
+        if (el) el.textContent = String(Math.round(v * 100));
+        this.hooks.onVolume?.(k, v);
+      });
+    }
+    on('cfg-pixel', 'change', () => this.hooks.onGraphics?.({ pixelRatio: $('cfg-pixel').value }));
+    on('cfg-shadows', 'change', () => this.hooks.onGraphics?.({ shadows: $('cfg-shadows').value === '1' }));
+    on('cfg-shadowq', 'change', () => this.hooks.onGraphics?.({ shadowQuality: $('cfg-shadowq').value }));
+    on('cfg-fov', 'input', () => { setHm('cfg-fov-v', num('cfg-fov')); $('cfg-fov-v').textContent = `${num('cfg-fov')}°`; this.hooks.onCamera?.({ fov: num('cfg-fov') }); });
+    on('cfg-rotate', 'change', () => this.hooks.onCamera?.({ autoRotate: $('cfg-rotate')?.value === '1' }));
+    on('cfg-speed', 'change', () => this.hooks.onSpeed?.(num('cfg-speed')));
+  }
+
+  renderSaves() {
+    const host = $('settings-saves');
+    if (!host) return;
+    const slots = listSlots();
+    const loc = (id) => LOCATIONS.find((l) => l.id === id)?.name || id || '—';
+    const here = this.game;
+    let html = `<div class="section-title">セーブデータ　（${storageAvailable() ? 'localStorage 利用可' : 'この環境では保存できません'}）</div>`;
+    for (const sl of slots) {
+      if (sl.empty) {
+        html += `
+        <div class="card">
+          <div class="card-head"><b>${esc(sl.label)}</b><span class="role">空き</span></div>
+          <div class="card-actions">
+            <button class="buy" data-save="${sl.id}">ここに保存</button>
+            <button data-del="${sl.id}" disabled>削除</button>
+          </div>
+        </div>`;
+      } else {
+        html += `
+        <div class="card">
+          <div class="card-head"><b>${esc(sl.label)}</b><span class="kana">${savedAtText(sl.savedAt)}</span>
+            <span class="role">${esc(loc(sl.locationId))}</span></div>
+          <div class="card-sub">
+            <span>${sl.day} 日目</span>
+            <span>所持金 <b>${money(sl.cash)}</b></span>
+            <span>★${sl.stars}</span>
+            <span>従業員 ${sl.staff} 人</span>
+            <span>人気 ${Math.round(sl.fame ?? 0)}</span>
+          </div>
+          <div class="card-actions">
+            <button class="buy" data-load="${sl.id}">読み込む</button>
+            <button data-save="${sl.id}">上書き保存</button>
+            <button data-del="${sl.id}">削除</button>
+          </div>
+        </div>`;
+      }
+    }
+    html += `<div class="tagline">※ 現在のプレイ：${here.day} 日目・${esc(loc(here.locationId))}・${money(here.cash)}。読み込むと店舗と従業員が再構築されます。</div>`;
+    host.innerHTML = html;
+
+    host.querySelectorAll('[data-save]').forEach((b) => b.addEventListener('click', () => {
+      const r = this.hooks.onSave?.(b.dataset.save);
+      if (r && r.ok) this.toast(`保存しました（${b.dataset.save === 'auto' ? 'オート' : 'スロット ' + b.dataset.save}）`, 'good');
+      else this.toast(r?.error || '保存に失敗しました', 'bad');
+      this.renderSaves();
+    }));
+    host.querySelectorAll('[data-load]').forEach((b) => b.addEventListener('click', () => {
+      const r = this.hooks.onLoad?.(b.dataset.load);
+      if (r && r.ok) { this.toast('読み込みました', 'good'); this.renderSaves(); }
+      else this.toast(r?.error || '読み込みに失敗しました', 'bad');
+    }));
+    host.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => {
+      const r = deleteSlot(b.dataset.del);
+      this.toast(r.ok ? '削除しました' : r.error, r.ok ? '' : 'bad');
+      this.renderSaves();
+    }));
+  }
 
   /* ── 員工面板 ───────────────────────────────────────────────── */
 

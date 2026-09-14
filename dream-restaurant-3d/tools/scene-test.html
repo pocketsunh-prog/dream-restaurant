@@ -277,6 +277,60 @@ say('=== [9] 事件 ===');
   check('可以修理故障設備', rep.ok === true && g5.equipBroken.fridge === false, rep.ok ? money(rep.cost) : rep.error);
 }
 
+/* ── 10. 設定與存讀檔 ─────────────────────────────────────── */
+say('');
+say('=== [10] 設定・存讀檔 ===');
+{
+  const { serializeGame, deserializeGame, saveToSlot, loadFromSlot, slotInfo, deleteSlot, listSlots, storageAvailable } = await import('../src/sim/save.js');
+  const { setBusinessHours, setSetting } = await import('../src/sim/game.js');
+  check('localStorage 可用', storageAvailable());
+
+  // 營業時間
+  const g6 = createGame({ locationId: 'tokyo_shibuya', seed: 77 });
+  const bad = setBusinessHours(g6, 20 * 60, 12 * 60);
+  check('拒絕「打烊早於開店」', bad.ok === false, bad.error);
+  const short = setBusinessHours(g6, 11 * 60, 12 * 60);
+  check('拒絕「營業不足 2 小時」', short.ok === false, short.error);
+  const good = setBusinessHours(g6, 10 * 60, 22 * 60);
+  check('可以設定營業時間', good.ok === true, `10:00 → 22:00`);
+  check('營業時間已寫入 state', g6.settings.openMinute === 600 && g6.settings.closeMinute === 1320);
+
+  // 一般設定
+  setSetting(g6, 'graphics.shadows', false);
+  setSetting(g6, 'graphics.pixelRatio', '1');
+  check('可以寫入畫質設定', g6.settings.graphics.shadows === false && g6.settings.graphics.pixelRatio === '1');
+
+  // 存檔 → 改動 → 讀檔 → 應該回到存檔當下
+  const rngBefore = g6.rng.state();
+  const snapDay = g6.day, snapCash = g6.cash, snapLoc = g6.locationId;
+  const sv = saveToSlot(g6, '1');
+  check('可以存檔', sv.ok === true, `savedAt ${sv.savedAt ? 'ok' : 'missing'}`);
+  const info = slotInfo('1');
+  check('槽位摘要正確', !info.empty && info.day === snapDay && info.locationId === snapLoc && Math.round(info.cash) === Math.round(snapCash),
+    `${info.day} 日目 / ${info.locationId} / ★${info.stars}`);
+  // 破壞現況
+  g6.cash = 12345; g6.day = 99; g6.locationId = 'kyoto_gion'; g6.staff.length = 0;
+  const ld = loadFromSlot('1');
+  check('可以讀檔', ld.ok === true, ld.error || '');
+  const g7 = ld.state;
+  check('讀檔還原日數與現金', g7.day === snapDay && Math.round(g7.cash) === Math.round(snapCash), `${g7.day} 日目 / ${money(g7.cash)}`);
+  check('讀檔還原地點', g7.locationId === snapLoc, g7.locationId);
+  check('讀檔還原員工', g7.staff.length === 2, `${g7.staff.length} 人`);
+  check('讀檔還原亂數狀態', typeof g7.rng?.state === 'function' && g7.rng.state() === rngBefore, `${g7.rng.state()}`);
+  check('讀檔後可繼續模擬', (() => { try { for (let i = 0; i < 30; i++) tick(g7, 1); return Number.isFinite(g7.cash); } catch { return false; } })(), `cash ${money(g7.cash)}`);
+  check('讀檔還原設定', g7.settings.openMinute === 600 && g7.settings.graphics.shadows === false);
+
+  // 刪除
+  const del = deleteSlot('1');
+  check('可以刪除存檔', del.ok && slotInfo('1').empty, '');
+  check('槽位清單 6 個', listSlots().length === 6, listSlots().map((s) => s.id).join(','));
+
+  // 自動存檔
+  const as = saveToSlot(g7, 'auto');
+  check('自動存檔槽可用', as.ok === true, 'auto');
+  deleteSlot('auto');
+}
+
 say('');
 say(fails === 0 ? '<span class="pass">SCENE TEST: ALL PASSED</span>' : `<span class="fail">SCENE TEST: ${fails} FAILED</span>`);
 out.innerHTML = L.join('\n');
