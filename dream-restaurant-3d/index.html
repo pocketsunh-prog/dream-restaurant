@@ -54,7 +54,12 @@
     <button id="btn-camera">🎥 視角 <kbd>C</kbd></button>
     <button id="btn-help">❔ 操作 <kbd>H</kbd></button>
   </div>
-  <div class="hint" id="hud-hint">拖曳＝旋轉視角　滾輪＝縮放　右鍵拖曳＝平移</div>
+  <div class="audio">
+    <button id="btn-audio" title="クリックで音を有効にします（A）">🔇 音 OFF</button>
+    <label class="vol" title="音楽の音量">♪<input id="vol-music" type="range" min="0" max="100" value="50"></label>
+    <label class="vol" title="効果音の音量">🔔<input id="vol-sfx" type="range" min="0" max="100" value="80"></label>
+  </div>
+  <div class="hint" id="hud-hint">拖曳＝旋轉視角　滾輪＝縮放　右鍵拖曳＝平移　按任一鍵開啟音效</div>
 </footer>
 
 <!-- ── 面板：立地選擇 ─────────────────────────────────────────── -->
@@ -109,8 +114,10 @@
       <tr><td><kbd>Space</kbd></td><td>暫停 / 繼續</td></tr>
       <tr><td><kbd>L</kbd> <kbd>M</kbd> <kbd>H</kbd></td><td>立地 / 菜單 / 說明</td></tr>
       <tr><td><kbd>F</kbd></td><td>切換晝夜光影（快看夜晚燈籠）</td></tr>
+      <tr><td><kbd>A</kbd></td><td>音效／BGM 開關（第一次互動後才會發聲，這是瀏覽器限制）</td></tr>
     </table>
     <p class="muted">遊戲以秒為單位推進：1 倍速時 1 秒＝1 遊戲分鐘。顧客會自己進店、入座、點餐、用餐、結帳；打烊後結算當日營業額。</p>
+    <p class="muted">音樂為即時合成（箏、尺八、太鼓，使用日本音階），會依<b>立地風格</b>與<b>晝夜</b>改變音階與速度；店內人聲、廚房聲與雨聲也會跟著實際狀況變化。</p>
   </div>
 </section>
 

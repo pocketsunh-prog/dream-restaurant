@@ -143,17 +143,59 @@ button kbd {
   margin-left: 4px;
 }
 
-.speeds { display: flex; gap: 4px; }
-.speeds button { min-width: 40px; }
+.speeds { display: flex; gap: 4px; flex: 0 0 auto; }
 
-.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.audio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.audio button { white-space: nowrap; padding: 6px 9px; }
+.audio .vol {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--kin);
+  cursor: pointer;
+}
+.audio input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 68px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,.16);
+  outline: none;
+  cursor: pointer;
+}
+.audio input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--shu-2);
+  border: 1px solid rgba(0,0,0,.4);
+}
+.audio input[type=range]::-moz-range-thumb {
+  width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--shu-2);
+}
+
+.actions { display: flex; gap: 6px; flex-wrap: nowrap; flex: 0 1 auto; }
+.actions button { white-space: nowrap; padding: 6px 9px; }
 
 .hint {
   margin-left: auto;
   font-size: 11px;
   color: var(--muted);
   text-align: right;
-  max-width: 44vw;
+  max-width: 30vw;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 面板 ───────────────────────────────────────────────────────── */

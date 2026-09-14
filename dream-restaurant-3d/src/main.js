@@ -19,6 +19,7 @@ const step = (t) => { const el = document.getElementById('loading-step'); if (el
 // 否則迴圈停止後緩衝區被清空，截圖會是一片黑。
 const STATIC_FRAMES = Math.max(0, Number(params.get('static') || 0));
 const NEED_PRESERVE = STATIC_FRAMES > 0 || params.has('ss');
+let audioTimer = 0;
 
 /* ------------------------------------------------------------ 渲染器 */
 
@@ -92,6 +93,7 @@ const hud = new Hud(game, {
     if (res.ok) {
       rebuildPlan();
       lighting.setTimeOfDay(game.minute / 60);
+      audio.playSfx('whoosh');
     }
     return res;
   }
@@ -128,6 +130,10 @@ addEventListener('keydown', (e) => {
   else if (k === 'h') hud.toggle('panel-help');
   else if (k === 'c') gotoShot(shotIdx + 1);
   else if (k === 'f') { forceNight = !forceNight; }
+  else if (k === 'a') {
+    if (!audio.ctx) armAudio();
+    else { const on = audio.toggle(); hud.toast(on ? '音を出します' : '音を止めました'); }
+  }
   else if (k === 'escape') hud.closeAll();
 });
 let forceNight = false;
@@ -194,6 +200,31 @@ function applyAudioPrefs() {
 addEventListener('pointerdown', armAudio, { once: false });
 addEventListener('keydown', armAudio, { once: false });
 
+/* 音量 UI */
+function bindAudioUi() {
+  document.getElementById('btn-audio')?.addEventListener('click', async () => {
+    if (!audio.ctx) { await armAudio(); return; }
+    const on = audio.toggle();
+    hud.toast(on ? '音を出します' : '音を止めました');
+    audio.playSfx(on ? 'click' : 'click');
+  });
+  const mv = document.getElementById('vol-music');
+  mv?.addEventListener('input', () => {
+    prefs.music = Number(mv.value) / 100;
+    audio.setVolume('music', prefs.music);
+    saveAudioPrefs(prefs);
+  });
+  const sv = document.getElementById('vol-sfx');
+  sv?.addEventListener('input', () => {
+    prefs.sfx = Number(sv.value) / 100;
+    audio.setVolume('sfx', prefs.sfx);
+    saveAudioPrefs(prefs);
+  });
+  sv?.addEventListener('change', () => audio.playSfx('clink'));
+  syncAudioUi(audio.state());
+}
+bindAudioUi();
+
 /* 事件 → 音效對照（模擬層只丟事件，這裡決定要播什麼） */
 const EVENT_SFX = {
   door: 'door', seat: 'seat', order: 'order', serve: 'serve',
@@ -220,6 +251,8 @@ function frame(now) {
     if (game.phase === 'settle') {
       const report = settleDay(game);
       hud.showSettle(report);
+      audio.playSfx('settle');
+      if (report.net > 0) setTimeout(() => audio.playSfx('starup'), 700);
       game.speed = 0;
       game.paused = true;
     }
@@ -241,15 +274,16 @@ function frame(now) {
     else audio.playSfx(name, { gain: 0.7 + Math.min(0.3, (ev.size || 1) * 0.05) });
   }
 
-  // 環境音與音樂性格（依地點、時段、來客數）
-  if (audio.enabled && (framesLeft === Infinity ? true : framesLeft % 12 === 0)) {
+  // 環境音與音樂性格（依地點、時段、來客數）——每 0.5 秒更新一次即可
+  audioTimer += dtRaw;
+  if (audio.enabled && audioTimer > 0.5) {
+    audioTimer = 0;
     const loc = locationById(game.locationId);
     const crowd = game.groups.length + game.queue.length * 0.6;
-    const kitchen = state2 => 0;
-    void kitchen;
+    const busyTables = game.plan.tables.filter((t) => t.occupied).length;
     audio.setAmbience({
       crowd,
-      kitchen: Math.min(3, game.plan.tables.filter((t) => t.occupied).length * 0.5),
+      kitchen: Math.min(3, busyTables * 0.5),
       rain: (game.weather === 'rain' ? 1 : game.weather === 'snow' ? 0.35 : 0),
       night: !!game.__night
     });
@@ -287,6 +321,7 @@ function frame(now) {
       meshes, vis,
       lights: scene.children.filter((o) => o.isLight).length,
       rig: scene.children.length,
+      audio: audio.state(),
       info: window.DREAM3D?.info
     }, null, 1);
     document.body.appendChild(dbg);
@@ -313,7 +348,7 @@ function frame(now) {
 /* ------------------------------------------------------------ 測試掛鉤 */
 
 window.DREAM3D = {
-  THREE, scene, camera, renderer, game, lighting, restaurant, cam, hud,
+  THREE, scene, camera, renderer, game, lighting, restaurant, cam, hud, audio,
   gotoShot,
   get info() {
     return {
@@ -373,6 +408,16 @@ if (params.get('stars')) setStars(game, Number(params.get('stars')));
 if (params.get('speed')) { game.speed = Number(params.get('speed')); game.paused = game.speed === 0; }
 if (params.get('panel')) { try { hud.toggle('panel-' + params.get('panel')); } catch (e) { console.warn('panel open failed', e); } }
 if (params.get('shot')) gotoShot(Number(params.get('shot')));
+// ?audio=1 → 啟動時就直接開啟音訊（測試用；正常情況要等使用者手勢）
+if (params.get('audio') === '1') {
+  armAudio().then(() => {
+    if (audio.enabled) {
+      audio.setMusicMood({ scale: 'yo' });
+      // 立刻丟幾個音效，讓無頭測試能觀察到真的在發聲
+      setTimeout(() => { for (const n of ['click', 'door', 'seat', 'serve', 'pay']) audio.playSfx(n, { gain: 1 }); }, 300);
+    }
+  });
+}
 
 step('準備完了');
 const loadingEl = document.getElementById('loading');

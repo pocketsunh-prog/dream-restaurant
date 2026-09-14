@@ -36,7 +36,13 @@ export const SFX_NAMES = [
 
 /* ------------------------------------------------------------ 工具 */
 
+const NOISE_CACHE = new WeakMap();   // ctx → { [seconds]: AudioBuffer }
+
 function noiseBuffer(ctx, seconds = 2) {
+  let per = NOISE_CACHE.get(ctx);
+  if (!per) { per = {}; NOISE_CACHE.set(ctx, per); }
+  const key = String(seconds);
+  if (per[key]) return per[key];
   const len = Math.floor(ctx.sampleRate * seconds);
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
   const d = buf.getChannelData(0);
@@ -46,6 +52,7 @@ function noiseBuffer(ctx, seconds = 2) {
     last = (last + 0.02 * w) / 1.02;   // 略帶棕色噪音，較不刺耳
     d[i] = w * 0.7 + last * 3.2;
   }
+  per[key] = buf;
   return buf;
 }
 
@@ -270,26 +277,28 @@ function kotoNote(ctx, dest, freq, t, dur, gain = 0.16) {
   }
 }
 
-/** 尺八風氣息長音 */
+/** 尺八風氣息長音（成本考量：不用 a-rate 顫音調變，改用兩個略微失諧的振盪器） */
 function shakuhachi(ctx, dest, freq, t, dur, gain = 0.07) {
-  const o = ctx.createOscillator();
-  o.type = 'sine';
-  o.frequency.value = freq;
-  const vib = ctx.createOscillator();
-  vib.frequency.value = 4.6;
-  const vibGain = ctx.createGain();
-  vibGain.gain.value = freq * 0.006;
-  vib.connect(vibGain); vibGain.connect(o.frequency);
-
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(gain, t + dur * 0.35);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   const lp = ctx.createBiquadFilter();
   lp.type = 'lowpass'; lp.frequency.value = 1800;
-  o.connect(lp); lp.connect(g); g.connect(dest);
+  lp.connect(g); g.connect(dest);
 
-  // 息遣い（噪音）
+  // 兩支略微失諧的正弦 → 自然的小幅度搖曳，且不需要 a-rate 調變
+  for (const [mult, amp] of [[1, 1], [1.004, 0.5]]) {
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.value = freq * mult;
+    const og = ctx.createGain();
+    og.gain.value = amp;
+    o.connect(og); og.connect(lp);
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+
+  // 息遣い（噪音）：共用快取的噪音緩衝
   const s = ctx.createBufferSource();
   s.buffer = noiseBuffer(ctx, 1.5);
   s.loop = true;
@@ -300,9 +309,6 @@ function shakuhachi(ctx, dest, freq, t, dur, gain = 0.07) {
   ng.gain.exponentialRampToValueAtTime(gain * 0.35, t + dur * 0.4);
   ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   s.connect(bp); bp.connect(ng); ng.connect(dest);
-
-  o.start(t); o.stop(t + dur + 0.02);
-  vib.start(t); vib.stop(t + dur + 0.02);
   s.start(t); s.stop(t + dur + 0.02);
 }
 
@@ -570,43 +576,60 @@ export class AudioEngine {
 /* ------------------------------------------------- 離線渲染（測試用） */
 
 /**
+ * 通用離線渲染：把 setup(ctx, dest) 排好的東西渲染成一個 Float32Array。
+ * 一次渲染可以排很多東西（例如把 14 個音效排在不同時間點），
+ * 這樣就不會一直建立 OfflineAudioContext（瀏覽器對 context 數量有上限）。
+ */
+export async function renderRaw(seconds, setup, sampleRate = 44100) {
+  const OAC = (typeof window !== 'undefined') && (window.OfflineAudioContext || window.webkitOfflineAudioContext);
+  if (!OAC) return null;
+  const ctx = new OAC(1, Math.ceil(sampleRate * seconds), sampleRate);
+  const dest = ctx.createGain();
+  dest.gain.value = 1;
+  dest.connect(ctx.destination);
+  setup(ctx, dest);
+  const buf = await ctx.startRendering();
+  const data = buf.getChannelData(0);
+  try { await ctx.close(); } catch { /* ignore */ }
+  return { data, sampleRate };
+}
+
+/** 取出某段時間窗的統計值（給測試用） */
+export function windowStats(data, sampleRate, from, to) {
+  const a = Math.max(0, Math.floor(from * sampleRate));
+  const b = Math.min(data.length, Math.ceil(to * sampleRate));
+  let peak = 0, sum = 0, nonZero = 0, clipped = 0;
+  for (let i = a; i < b; i++) {
+    const v = data[i];
+    const av = Math.abs(v);
+    if (av > peak) peak = av;
+    sum += v * v;
+    if (av > 0.0005) nonZero++;
+    if (av > 0.999) clipped++;
+  }
+  const n = Math.max(1, b - a);
+  return {
+    peak: +peak.toFixed(4),
+    rms: +Math.sqrt(sum / n).toFixed(4),
+    nonZeroRatio: +(nonZero / n).toFixed(4),
+    clipped,
+    silent: peak < 0.005
+  };
+}
+
+/**
  * 用 OfflineAudioContext 渲染一段聲音，回傳統計值。
  * 這是「音訊真的會發出聲音」的可驗證證據（不需要使用者手勢）。
  * @param {'music'|string} kind 'music' 或 SFX 名稱
  * @param {number} seconds
  */
 export async function renderOffline(kind, seconds = 1.2, opts = {}) {
-  const OAC = (typeof window !== 'undefined') && (window.OfflineAudioContext || window.webkitOfflineAudioContext);
-  if (!OAC) return { ok: false, error: 'no OfflineAudioContext' };
-  const sr = 44100;
-  const ctx = new OAC(1, Math.ceil(sr * seconds), sr);
-  const dest = ctx.createGain();
-  dest.gain.value = 1;
-  dest.connect(ctx.destination);
-
-  if (kind === 'music') scheduleMusic(ctx, dest, 0, seconds, opts);
-  else synthSfx(ctx, dest, kind, 0.01, opts);
-
-  const buf = await ctx.startRendering();
-  const d = buf.getChannelData(0);
-  let peak = 0, sum = 0, nonZero = 0, clipped = 0;
-  for (let i = 0; i < d.length; i++) {
-    const v = d[i];
-    const a = Math.abs(v);
-    if (a > peak) peak = a;
-    sum += v * v;
-    if (a > 0.0005) nonZero++;
-    if (a > 0.999) clipped++;
-  }
-  const rms = Math.sqrt(sum / d.length);
-  return {
-    ok: true, kind, seconds,
-    peak: +peak.toFixed(4),
-    rms: +rms.toFixed(4),
-    nonZeroRatio: +(nonZero / d.length).toFixed(4),
-    clipped,
-    silent: peak < 0.005
-  };
+  const raw = await renderRaw(seconds, (ctx, dest) => {
+    if (kind === 'music') scheduleMusic(ctx, dest, 0, seconds, opts);
+    else synthSfx(ctx, dest, kind, 0.01, opts);
+  });
+  if (!raw) return { ok: false, error: 'no OfflineAudioContext' };
+  return { ok: true, kind, seconds, ...windowStats(raw.data, raw.sampleRate, 0, seconds) };
 }
 
 export default AudioEngine;
