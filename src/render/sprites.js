@@ -3698,30 +3698,9 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
   }
   if (kind === 'rain' || kind === 'storm') {
     const storm = kind === 'storm';
-    // 大面積改用 2×2 塊狀網點（同覆蓋率但不會滿畫面細點）
+    // 靜態網點覆蓋（不再畫動態雨絲／水花）
     ditherPattern(ctx, 0, 0, W, H, storm ? 'outline_cool' : 'sky_lo', 'clear', storm ? DITHER.block25 : DITHER.block12);
-    const n = storm ? 210 : 120;
-    const light = storm ? 'sky_hi' : 'sky_md';
-    const dark = storm ? 'sky' : 'sky_lo';
-    for (let i = 0; i < n; i++) {
-      const sp = (storm ? 620 : 380) + hash1(i * 3 + 1) * 420;
-      const bx = hash1(i * 5 + 2) * (W + 140) - 70;
-      const len = storm ? 11 : 8;
-      const y = ((hash1(i * 7 + 3) * (H + 70) + t * sp * 0.016) % (H + 70)) - 35;
-      const x = bx + y * 0.22;
-      // 2px 寬的雨絲（乾淨的斜線筆觸，不是 1px 雜點）
-      ctx.fillStyle = color(i % 3 === 0 ? light : dark);
-      ctx.fillRect(Math.round(x), Math.round(y), 2, len);
-    }
-    // 地面水花
-    for (let i = 0; i < (storm ? 34 : 20); i++) {
-      const sx = (hash1(i * 13 + 4) * W + t * 0.6) % W;
-      const sy = H - 4 - hash1(i * 17 + 6) * 26;
-      const phase = (t * 0.25 + i) % 3 | 0;
-      ctx.fillStyle = color(phase === 0 ? 'sky_hi' : 'sky_md');
-      ctx.fillRect(Math.round(sx) - phase * 2, Math.round(sy), 4 + phase * 3, 2);
-    }
-    if (storm && t % 190 < 3) {
+    if (storm && tick % 190 < 3) {
       ditherPattern(ctx, 0, 0, W, H, 'white', 'sky_hi', DITHER.block50);
     }
     return;
@@ -3729,33 +3708,10 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
   if (kind === 'cold') {
     vignette(ctx, W, H, 'sky_lo', 'clear', 24);
     ditherPattern(ctx, 0, H * 0.5, W, H * 0.5, 'sky_hi', 'clear', DITHER.block12);
-    for (let i = 0; i < 30; i++) {
-      const x = (hash1(i * 9 + 2) * W + Math.sin(t * 0.01 + i) * 8) % W;
-      const y = (hash1(i * 15 + 8) * H + t * 0.22) % H;
-      // 空中飄雪只畫在畫面下半（天空帶保持乾淨）；2px 雪花（塊狀而非細點）
-      if (y < H * 0.28) continue;
-      ctx.fillStyle = color(i % 4 === 0 ? 'white' : 'sky_hi');
-      ctx.fillRect(Math.round(x), Math.round(y), 2, 2);
-    }
     return;
   }
-  // heat：只做「地面上方」的粗橫向熱氣帶 + 邊緣暖色暗角（不再整片覆蓋）
+  // heat：只有邊緣暖色暗角（不再畫動態熱氣帶）
   vignette(ctx, W, H, 'lamp_sh', 'clear', 24);
-  const yBase = Math.round(H * 0.55);
-  ditherPattern(ctx, 0, yBase, W, H - yBase, 'lamp_md', 'clear', DITHER.block12);
-  // 5 條 2px 粗熱氣帶（短段、間隔、低對比，底下的像素仍清楚）
-  for (let b = 0; b < 5; b++) {
-    const y = yBase + Math.round(((H - yBase) * b) / 5 + Math.sin(t * 0.08 + b * 1.3) * 2);
-    let x = -20 + ((b * 53 + (t >> 1)) % 60);
-    while (x < W) {
-      const seg = 34 + ((b * 17 + x) % 42);
-      ctx.fillStyle = color('lamp_hi');
-      ctx.fillRect(x, y, Math.min(seg, W - x), 2);
-      x += seg + 34 + ((b * 7) % 24);
-    }
-    ctx.fillStyle = color('lamp_sh');
-    ctx.fillRect(0, y + 4, W, 1);
-  }
 }
 
 // ===========================================================================
