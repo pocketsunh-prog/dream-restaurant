@@ -18,6 +18,7 @@
 | §3.5 廚師／服務生、時薪、職務指派、疲勞、離職 | `sim/staffai.js`、`ui/panels/staff.js` | ✅ |
 | §3.5 服務生負責桌數與出餐口距離相關 | `staffai.js#tableCapacityFor`、`#pickTask` | ✅ |
 | §3.6 顧客有限狀態機 | `sim/customer.js`、`sim/simulation.js#updateCustomers` | ✅ |
+| **一組客人多個人（1–8 人）＋ 排隊候位** | `core/balance.js#CUSTOMER_TYPES`、`sim/customer.js#seatParty`、`sim/simulation.js#queueSlotAt` | ✅ |
 | §3.7 社區／區外雙評價與五星門檻 | `sim/rating.js`、`core/balance.js#STAR_REQS` | ✅ |
 | §3.7 掉星機制 | `rating.js#checkDropStar` | ✅ |
 | §3.8 每週日 22:00 雜誌五榜排名 | `sim/magazine.js` | ✅ |
@@ -141,7 +142,7 @@
 ## 6. 已知取捨
 
 - **餐廳坪數固定 20×13**：六個地點用大門位置、廚房大小、隔間牆、廁所方位、色調與街景區分，而非改變網格尺寸（網格不變、只換色盤與格局；邏輯畫布 960×600 由 `render/iso.js` 統一決定）。
-- **客人以「一位」為單位**：家庭客用消費力與耐心反映人數，不繪製整組人，換取模擬穩定與畫面清爽。
+- **一組客人 = 一個 customer 物件**：物件帶 `partySize`（1–8 人）並佔用同桌多個座位；同桌成員由繪圖層依 `customer.members` 分別繪製。來客數、服務數、生氣數都改以「人」計，另外記錄「組」數。
 - **本機 `localStorage` 存檔**：沒有後端，換瀏覽器／清除資料即消失。
 - **雜誌對手是程序生成的**：19 家虛構餐廳，沒有跨局持久化的業界生態。
 - **音效為程序化合成**：不重現原作曲目（避免版權），提供 5 種可切換的曲風並影響顧客類型吸引力。

@@ -58,7 +58,7 @@ tests/smoke.mjs                無 DOM 7 天模擬煙霧測試（我）
 
 ## 1. 座標與幾何
 
-- 等角（isometric）菱形網格：`TILE_W = 42`、`TILE_H = 21`，邏輯畫布 `960 × 600`。
+- 等角（isometric）菱形網格：`TILE_W = 56`、`TILE_H = 28`，邏輯畫布 `1280 × 800`。
   （像素尺寸的單一來源是 `src/render/iso.js`；`src/core/balance.js` 鏡射一份，`main.js` 啟動時用常數覆寫 canvas 尺寸）
 - 網格尺寸 `20 × 13`（`GRID_W=20, GRID_H=13`）。
 - 螢幕座標換算（`src/render/iso.js` 概念，統一由 `floor.js` 出口提供）：

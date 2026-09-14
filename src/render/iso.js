@@ -7,28 +7,27 @@
 //   tileToScreen(x, y) => { px: ORIGIN_X + (x - y) * TILE_W / 2,
 //                           py: ORIGIN_Y + (x + y) * TILE_H / 2 }
 //   ORIGIN_X = LOGICAL_W / 2 - (GRID_W - GRID_H) * TILE_W / 4   // 置中
-//   ORIGIN_Y = 144
+//   ORIGIN_Y = 192
 //   screenToTile(px, py) => 上述反解，四捨五入。
 //
-// 解析度：邏輯畫布 960×600，tile 42×21（＝原 640×400 / 28×14 的整數 1.5 倍），
-// 因此所有「格」為單位的運算（足跡、排序、命中測試）與舊版完全等價。
+// 解析度：邏輯畫布 1280×800，tile 56×28（＝640×400 / 28×14 的整數 2 倍，
+// 也就是上一版 960×600 / 42×21 的 4/3 倍），因此所有「格」為單位的運算
+// （足跡、排序、命中測試）完全等價，而 TILE_W/2 = 28、TILE_H/2 = 14 皆為整數，
+// 使得整數格座標一律換算成整數像素（不會出現 .5 的半像素模糊）。
 
-export const TILE_W = 42;
-export const TILE_H = 21;
+export const TILE_W = 56;
+export const TILE_H = 28;
 
 export const GRID_W = 20;
 export const GRID_H = 13;
 
-export const LOGICAL_W = 960;
-export const LOGICAL_H = 600;
+export const LOGICAL_W = 1280;
+export const LOGICAL_H = 800;
 
-/**
- * 置中：480 - (20 - 13) * 42 / 4 = 406.5 → 取整 407 讓每個 tile 中心都落在整數像素上
- * （TILE_W/2 = 21 為整數，故 tileToScreen 對整數格恆為整數座標）。
- */
+/** 置中：640 - (20 - 13) * 56 / 4 = 542（整數）。 */
 export const ORIGIN_X = Math.round(LOGICAL_W / 2 - ((GRID_W - GRID_H) * TILE_W) / 4);
 
-/** 垂直取景：沿用舊版比例（96 / 400 → 144 / 600），房間略高於畫面中心。 */
+/** 垂直取景：沿用舊版比例（96/400 → 192/800），房間略高於畫面中心。 */
 export const ORIGIN_Y = Math.round((96 * LOGICAL_H) / 400);
 
 /** 菱形 tile 的內接半徑（供命中測試／描邊使用）。 */

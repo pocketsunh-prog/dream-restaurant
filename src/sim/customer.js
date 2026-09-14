@@ -14,40 +14,64 @@ import { randomAppearance } from './attract.js';
 import { applyCustomerMood, rollOutside } from './rating.js';
 import { pushLog } from '../core/state.js';
 
-const TYPE_TAGS = {
-  student: ['cheap', 'fried', 'quick', 'rice', 'noodle', 'meat'],
-  office: ['quick', 'rice', 'noodle', 'caffeine', 'mild'],
-  family: ['meat', 'soup', 'rice', 'local'],
-  tourist: ['local', 'tourist', 'seafood', 'fried'],
-  critic: ['premium', 'seafood', 'soup', 'local'],
-  vip: ['premium', 'seafood', 'meat']
+const TYPE_TAGS = Object.fromEntries(Object.entries(B.CUSTOMER_TYPES).map(([k, v]) => [k, v.tags]));
+const TYPE_TASTE = Object.fromEntries(Object.entries(B.CUSTOMER_TYPES).map(([k, v]) => [k, v.taste]));
+
+/** 各地點的額外偏好：哪些客群特別多（用來調整新類型在高雄/台北等地的比例） */
+const LOCATION_TYPE_BIAS = {
+  zhongli_xinming: { student: 1.5, family: 1.2, regulars: 1.3, soldiers: 1.4, colleagues: 0.9, couple: 1.0 },
+  keelung_miaokou: { tourist: 1.5, tour_group: 1.6, family: 1.3, elderly: 1.3, office: 0.7 },
+  taipei_nanyang: { office: 1.9, colleagues: 1.7, student: 1.3, cyclist: 1.1, cyclists: 1.2, tour_group: 0.6 },
+  taichung_zhonghua: { couple: 1.5, student: 1.3, kids_party: 1.3, blogger: 1.3, regulars: 1.2 },
+  tainan_dongdi: { family: 1.6, kids_party: 1.6, elderly: 1.5, office: 0.8, couple: 1.1 },
+  kaohsiung_xinkujiang: { couple: 1.8, blogger: 1.6, colleagues: 1.4, student: 1.2, elderly: 0.7 }
 };
 
-const TYPE_TASTE = { student: 68, office: 52, family: 58, tourist: 62, critic: 55, vip: 50 };
-const TYPE_NAME = { student: '學生', office: '上班族', family: '家庭', tourist: '觀光客', critic: '美食評論家', vip: '貴賓' };
+export function typeName(type) { return B.CUSTOMER_TYPES[type]?.name || '顧客'; }
 
-export function typeName(type) { return TYPE_NAME[type] || '顧客'; }
+/** 這一組幾個人的範圍 */
+export function partyRange(type) {
+  return B.CUSTOMER_TYPES[type]?.party || [1, 2];
+}
 
 /** 依地點顧客組成＋知名度抽出顧客類型 */
 export function pickCustomerType(state, rng) {
   const loc = getLocation(state.locationId);
-  const mix = { ...(loc?.customerMix || { student: 0.4, office: 0.2, family: 0.3, tourist: 0.08, critic: 0.015, vip: 0.005 }) };
-  const fameBoost = 1 + state.fame / 45;
-  mix.tourist = (mix.tourist || 0) * (0.7 + state.stars * 0.12 + state.fame / 120);
-  mix.critic = (mix.critic || 0) * fameBoost;
-  mix.vip = (mix.vip || 0) * fameBoost;
-  // 時段影響
+  const mix = loc?.customerMix || { student: 0.4, office: 0.2, family: 0.3, tourist: 0.08, critic: 0.015, vip: 0.005 };
+  const bias = LOCATION_TYPE_BIAS[state.locationId] || {};
   const h = state.minute / 60;
-  if (h >= 11 && h < 14) mix.office *= 1.5;
-  if (h >= 17 && h < 21) mix.family *= 1.4;
-  if (h >= 21) { mix.student *= 1.5; mix.family *= 0.7; }
-  return rng.weighted(Object.entries(mix).map(([v, w]) => ({ v, w: Math.max(0.0001, w) }))) || 'student';
+  const fame = state.fame || 0;
+  const weights = [];
+  for (const type of Object.keys(B.CUSTOMER_TYPES)) {
+    let w = B.TYPE_BASE_WEIGHT[type] || 1;
+    // 地點的顧客組成：有列在 mix 裡的類型按比例放大（15% 視為中性）
+    const share = mix[type];
+    if (share !== undefined) w *= clamp(share / 0.15, 0.35, 2.4);
+    w *= bias[type] ?? 1;
+    // 知名度帶動「慕名而來」的客群
+    if (type === 'critic') w *= 0.6 + fame / 28;
+    if (type === 'blogger') w *= 0.7 + fame / 22;
+    if (type === 'vip') w *= 0.6 + fame / 26;
+    if (type === 'tourist') w *= 0.7 + (state.stars || 1) * 0.12 + fame / 130;
+    if (type === 'tour_group') w *= 0.5 + (state.stars || 1) * 0.2 + fame / 90;
+    // 時段
+    if (h >= 11 && h < 14) { if (type === 'office') w *= 2.2; if (type === 'colleagues') w *= 1.8; if (type === 'couple') w *= 0.6; }
+    if (h >= 14 && h < 17) { if (type === 'cyclists' || type === 'elderly') w *= 1.6; if (type === 'office') w *= 0.6; }
+    if (h >= 17 && h < 21) { if (type === 'family' || type === 'kids_party' || type === 'colleagues') w *= 1.7; if (type === 'couple') w *= 1.5; }
+    if (h >= 21) { if (type === 'student' || type === 'soldiers') w *= 1.7; if (type === 'family' || type === 'kids_party' || type === 'elderly') w *= 0.5; }
+    if (h < 11 && h >= 6) { if (type === 'elderly' || type === 'office') w *= 1.4; }
+    weights.push({ v: type, w: Math.max(0.0001, w) });
+  }
+  return rng.weighted(weights) || 'student';
 }
 
 export function makeCustomer(state, rng, opts = {}) {
   const type = opts.type || pickCustomerType(state, rng);
   const loc = getLocation(state.locationId);
   const patienceRange = B.PATIENCE[type] || [40, 60];
+  const [pMin, pMax] = partyRange(type);
+  const starCap = 2 + clamp(state.stars || 1, 1, 5);          // 1★→3人、5★→7人
+  const partySize = clamp(rng.int(pMin, pMax), 1, Math.min(8, starCap));
   const outside = rollOutside(state, rng);
   const spawn = state.layout.outside || { x: state.layout.door.x, y: state.layout.gridH - 0.5 };
   const customer = {
@@ -55,9 +79,10 @@ export function makeCustomer(state, rng, opts = {}) {
     type,
     appearance: randomAppearance(rng),
     mood: rng.range(0, 12),
-    patience: rng.range(patienceRange[0], patienceRange[1]) * (type === 'office' ? 0.85 : 1),
+    patience: rng.range(patienceRange[0], patienceRange[1]) * (type === 'office' ? 0.85 : 1) *
+      (1 + (partySize - 1) * B.PARTY_PATIENCE_BONUS),
     budget: 0,
-    partySize: 1,
+    partySize,
     x: spawn.x,
     y: spawn.y,
     dir: 'N',
@@ -88,11 +113,17 @@ export function makeCustomer(state, rng, opts = {}) {
     prefTaste: clamp((TYPE_TASTE[type] || 55) + rng.range(-12, 12), 0, 100),
     prefTags: TYPE_TAGS[type] || [],
     queueSpot: null,
+    queueIndex: 0,
+    memberLooks: Array.from({ length: Math.max(0, partySize - 1) }, () => randomAppearance(rng)),
+    seatIndices: [],        // 這組佔用的座位索引
+    members: [],            // 給繪圖層用的同桌成員（就座後才有）
     complained: false
   };
   state.sim.customersSpawned += 1;
   state.sim.customers.push(customer);
-  state.stats.today.guests += 1;
+  // 來客數算「人」；另外記錄「組」數
+  state.stats.today.guests += partySize;
+  state.stats.today.parties = (state.stats.today.parties || 0) + 1;
   return customer;
 }
 
@@ -180,7 +211,9 @@ export function chooseOrder(state, customer, rng) {
   const staples = active.filter((m) => getDish(m.dishId)?.category === 'staple');
   if (!staples.length) return null;
 
-  const count = rng.weighted([{ v: 1, w: customer.type === 'office' ? 5 : 3 }, { v: 2, w: 3 }, { v: 3, w: 1 }]);
+  const party = clamp(customer.partySize || 1, 1, 8);
+  const base = 1 + Math.floor((party - 1) / 2);
+  const count = clamp(base + (rng.chance(0.35) ? 1 : 0), 1, 4);
   const picked = [];
   const staple = rng.weighted(staples.map((m) => ({ v: m, w: weightOf(m, getDish(m.dishId)) })));
   if (staple) picked.push(staple);
@@ -242,6 +275,41 @@ export function temperatureDeviation(state) {
   return Math.max(0, band.min - state.settings.acTemp, state.settings.acTemp - band.max);
 }
 
+/**
+ * 就座：把整組人安排到 seats 這些座位上（第一個是首領坐的位置）。
+ * 會建立給繪圖層用的 members（其餘成員的就座位置與外觀）。
+ */
+export function seatParty(state, customer, table, seatIndices) {
+  const seats = seatIndices.map((i) => table.seats[i]).filter(Boolean);
+  if (!seats.length) return false;
+  customer.seat = { x: seats[0].x, y: seats[0].y };
+  customer.seatedDir = seats[0].facing;
+  customer.dir = seats[0].facing;
+  customer.seatIndices = seatIndices.slice(0, seats.length);
+  customer.members = seats.slice(1).map((s, i) => ({
+    seat: { x: s.x, y: s.y },
+    dir: s.facing,
+    appearance: (customer.memberLooks && customer.memberLooks[i]) || customer.appearance,
+    eating: false,
+    frame: i % 2
+  }));
+  if (!table.occupants.includes(customer.uid)) table.occupants.push(customer.uid);
+  table.state = 'occupied';
+  return true;
+}
+
+/** 客人離場時把成員清掉（繪圖層就不會再畫同桌的人） */
+export function clearParty(customer) {
+  customer.members = [];
+  customer.seatIndices = [];
+}
+
+/** 這組人吃飯要吃多久 */
+export function eatingMinutes(customer) {
+  return B.EATING_MIN + (customer.order?.length || 0) * B.EATING_PER_PORTION +
+    Math.max(0, (customer.partySize || 1) - 1) * B.EATING_PER_GUEST;
+}
+
 export function updateMood(state, c, dtMin) {
   const dirt = state.sim.dirt;
   const loc = getLocation(state.locationId);
@@ -288,16 +356,21 @@ export function setBubble(c, kind, state, minutes = 3) {
 /* --------------------------------------------------------------- 離場處理 */
 
 export function customerLeaves(state, c, reason = null) {
+  if (c.departing || c.done) return c;      // 避免重複計數／重複扣評價
   const angry = reason !== null;
   c.leftAngry = angry;
   c.state = angry ? 'angry' : 'leaving';
   c.leaveReason = reason;
+  clearParty(c);
   c.leaveMinute = state.absMinute ?? state.minute;
 
   if (c.seat && c.tableUid) releaseSeat(state, c);
 
   if (angry) {
-    state.stats.today.angry += 1;
+    state.stats.today.angry += (c.partySize || 1);
+    if (reason === 'no_table' && (c.partySize || 1) >= 4) {
+      state.stats.today.noBigTable = (state.stats.today.noBigTable || 0) + 1;
+    }
     if (!c.complained) recordComplaint(state, c, reason);
     setBubble(c, 'angry', state, 2.5);
   }
@@ -335,7 +408,8 @@ export function customerLeaves(state, c, reason = null) {
     reason: reason || 'served',
     mood: Math.round(c.mood),
     spent: c.spent,
-    dishes: c.order.length
+    dishes: c.order.length,
+    partySize: c.partySize || 1
   });
   if (state.sim.visitLog.length > 300) state.sim.visitLog.shift();
   return c;
@@ -379,6 +453,7 @@ export function seatAt(state, c, table, seat) {
   table.state = 'occupied';
   const decor = decorAvg(state);
   c.mood = clamp(c.mood + clamp((decor - 40) / 12, -8, 8), -100, 100);
+  c.partyVoice = clamp(0.85 + 0.15 * (c.partySize || 1), 1, 1.6);
 }
 
 export function releaseSeat(state, c) {
@@ -392,6 +467,7 @@ export function releaseSeat(state, c) {
   }
   c.tableUid = null;
   c.seat = null;
+  clearParty(c);
 }
 
 export function decorAvg(state) {

@@ -106,11 +106,19 @@ function morningRoutine(day) {
 
   // 隨生意成長擴桌
   const tables = state.layout.items.filter((i) => i.typeId.startsWith('table_')).length;
-  if (tables < 8 && state.cash > 120000) {
+  if (tables < 9 && state.cash > 120000) {
     const t = EXPANSION_TABLES[tables - 2];
-    const c = EXPANSION_CHAIRS[tables - 2];
-    if (t) reduce(state, { type: 'PLACE_FURNITURE', typeId: 'table_2a', x: t.x, y: t.y });
-    if (c) reduce(state, { type: 'PLACE_FURNITURE', typeId: 'chair_wood', x: c.x, y: c.y });
+    // 交錯買大桌：家庭客／同事聚餐需要 4~6 人的桌子；每張桌子配 2~4 張椅子
+    const order = ['table_4a', 'table_6a', 'table_4a', 'table_2a', 'table_6a', 'table_4a', 'table_4a'];
+    const typeId = order[tables % order.length];
+    if (t) {
+      const res = reduce(state, { type: 'PLACE_FURNITURE', typeId, x: t.x, y: t.y });
+      if (res.ok) {
+        for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          reduce(state, { type: 'PLACE_FURNITURE', typeId: 'chair_wood', x: t.x + dx, y: t.y + dy });
+        }
+      }
+    }
   }
 
   // 補人（最多 8 位）
@@ -204,6 +212,9 @@ for (let d = 0; d < DAYS; d++) {
     totalRevenue += rec.revenue;
     totalAngry += rec.angry;
     dayLog.push({
+      avgWait: rec.avgWaitSec,
+      angryRate: rec.guests ? rec.angry / rec.guests : 0,
+      perParty: rec.parties ? rec.guests / rec.parties : 0,
       day: rec.day,
       guests: rec.guests,
       served: rec.served,
@@ -250,9 +261,14 @@ console.log(`評價(社區/區外): ${Math.round(state.reputation.community)} / 
 console.log(`週結算次數  : ${state.stats.weekly.length}`);
 if (state.stats.weekly.length) {
   const w = state.stats.weekly[state.stats.weekly.length - 1];
+  const waits = dayLog.map((r) => r.avgWait).filter((v) => v > 0);
+  const rates = dayLog.map((r) => r.angryRate);
+  if (waits.length) console.log(`平均等待    : ${Math.round(waits.reduce((a, b) => a + b, 0) / waits.length / 60)} 分  ｜ 生氣率 ${(rates.reduce((a, b) => a + b, 0) / rates.length * 100).toFixed(1)}%  ｜ 平均每組 ${(dayLog.reduce((a, r) => a + r.perParty, 0) / dayLog.length).toFixed(1)} 人`);
   console.log(`最近週排名  : 總第 ${w.totalRank} 名（口味 ${w.ranks.taste} / 服務 ${w.ranks.service} / 裝潢 ${w.ranks.decor} / 價格 ${w.ranks.price} / 人氣 ${w.ranks.popularity}）`);
 }
 console.log(`進貨次數    : ${restockCount}`);
+console.log(`店面規模    : ${state.layout.items.filter((i) => i.typeId.startsWith('table_')).length} 張桌 ／ ${seatCount(state.sim.tables)} 個可用座位 ／ 裝潢 ${state.layout.items.length} 件`);
+console.log(`員工        : 服務生 ${state.staff.filter((x) => x.role === 'waiter').length} 人、廚師 ${state.staff.filter((x) => x.role === 'chef').length} 人`);
 console.log(`最大同時顧客: ${maxCustomersSeen.value}`);
 console.log(`最大任務數  : ${maxTasksSeen.value}`);
 
@@ -273,7 +289,9 @@ check(state.reputation.community !== 350 || state.day > 1, '評價應該要有�
 check(state.stats.history.every((r) => finite(r.profit) && finite(r.revenue)), '日報表數值必須有限');
 check(state.staff.every((s) => s.hoursToday >= 0), '工時不得為負');
 check(state.menu.length <= 99, '菜單數量合理');
-check(state.stats.history.every((r) => (r.served + r.angry) <= r.guests + 1), '服務＋生氣不得超過來客數');
+const badDays = state.stats.history.filter((r) => (r.served + r.angry) > r.guests + 1);
+check(badDays.length === 0, '服務＋生氣不得超過來客數',
+  badDays.slice(0, 3).map((r) => `d${r.day}: 人${r.guests} 服務${r.served} 生氣${r.angry}`).join(' / '));
 
 // 進貨到貨驗證
 const arrived = state.menu.some((m) => (state.stock[m.dishId] || 0) > 0);

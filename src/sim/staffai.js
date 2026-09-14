@@ -7,7 +7,7 @@ import { findPath, tileDistance } from './pathfind.js';
 import { isWalkableTile } from './build.js';
 import * as B from '../core/balance.js';
 import { clamp } from './economy.js';
-import { moveEntity, setPathTo, atTile, customerLeaves, releaseSeat, setBubble, chooseOrder } from './customer.js';
+import { moveEntity, setPathTo, atTile, customerLeaves, releaseSeat, setBubble, chooseOrder, seatParty, eatingMinutes } from './customer.js';
 import { pushLog } from '../core/state.js';
 
 const TASK_PRIORITY = {
@@ -279,15 +279,18 @@ function doSeat(state, st, task) {
   const c = state.sim.customers.find((x) => x.uid === task.customerUid);
   const table = state.sim.tables.find((t) => t.uid === task.tableUid);
   if (!c || !table || c.state !== 'queueing') return finishTask(state, st, task);
-  const seat = table.seats[task.seatIndex] || table.seats[0];
+  const indices = (task.seatIndices && task.seatIndices.length) ? task.seatIndices : [task.seatIndex ?? 0];
+  const seat = table.seats[indices[0]] || table.seats[0];
   if (!seat) return finishTask(state, st, task);
   // 顧客自己走向座位（服務生在前帶位）
   releaseSeat(state, c);
   c.tableUid = table.uid;
+  c.seatIndices = indices.slice();
   c.seat = { x: seat.x, y: seat.y };
   c.state = 'toSeat';
   setPathTo(state.layout, c, { x: seat.x, y: seat.y });
   if (!c.path.length && !atTile(c, seat, 0.2)) {
+    seatParty(state, c, table, c.seatIndices);
     c.state = 'ordering';
     c.seatMinute = state.absMinute ?? state.minute;
   }
@@ -370,8 +373,9 @@ function doDeliver(state, st, task) {
     state.sim.todayDishScores.push(item.score);
     if (c.order.every((o) => o.delivered)) {
       c.state = 'eating';
-      c.eatDoneMinute = (state.absMinute ?? state.minute) + B.EATING_MIN + (c.order.length * B.EATING_PER_PORTION);
+      c.eatDoneMinute = (state.absMinute ?? state.minute) + eatingMinutes(c);
       setBubble(c, 'happy', state, 2);
+      for (const m of c.members || []) m.eating = true;
       const waitMin = Math.max(0, (state.absMinute ?? state.minute) - c.enterMinute);
       state.stats.today.waitSum += waitMin;
       state.stats.today.waitCount += 1;
@@ -416,7 +420,12 @@ function doClean(state, st, task) {
 
 /** 結帳（給 staffai 與顧客流程共用） */
 export function collectPayment(state, c) {
-  const base = c.order.reduce((s, o) => s + (o.price || 0), 0) * (B.TYPE_SPEND[c.type] || 1);
+  // 同一組客人只能結一次帳（服務生與自動結帳可能在同一 tick 都觸發）
+  if (c.paid || c.departing || c.done) return { spent: 0, tip: 0 };
+  c.paid = true;
+  const party = Math.max(1, c.partySize || 1);
+  const base = c.order.reduce((s, o) => s + (o.price || 0), 0) *
+    (B.TYPE_SPEND[c.type] || 1) * party * B.PARTY_PAY_FACTOR;
   const value = c.order.length
     ? c.order.reduce((s, o) => s + (o.value ?? 1), 0) / c.order.length
     : 1;
@@ -434,8 +443,8 @@ export function collectPayment(state, c) {
   state.cash += c.spent + c.tip;
   state.stats.today.revenue += c.spent;
   state.stats.today.tips += c.tip;
-  state.stats.today.served += 1;
-  state.sim.servedLog.push({ dishIds: c.order.map((o) => o.dishId), spent: c.spent, mood: c.mood });
+  state.stats.today.served += party;
+  state.sim.servedLog.push({ dishIds: c.order.map((o) => o.dishId), spent: c.spent, mood: c.mood, party });
   if (state.sim.servedLog.length > 200) state.sim.servedLog.shift();
   customerLeaves(state, c, null);
   return { spent: c.spent, tip: c.tip };

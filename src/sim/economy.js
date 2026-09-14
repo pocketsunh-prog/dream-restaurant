@@ -100,6 +100,7 @@ export function finalizeDay(state) {
     utilities,
     repairs: Math.round(today.repairs || 0),
     guests: today.guests,
+    parties: today.parties || 0,
     served: today.served,
     angry: today.angry,
     avgWaitSec: Math.round(avgWait * 60),

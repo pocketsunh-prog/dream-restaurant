@@ -62,18 +62,74 @@ export const TYPE_WEIGHT = {
   family: 1.1,
   tourist: 1.25,
   critic: 5.0,
-  vip: 3.0
+  vip: 3.0,
+  couple: 1.1,
+  colleagues: 1.2,
+  tour_group: 1.4,
+  soldiers: 1.0,
+  regulars: 1.6,
+  blogger: 3.5,
+  cyclists: 0.9,
+  elderly: 1.2,
+  kids_party: 1.1
 };
 
-/** 顧客類型消費力 */
+/** 顧客類型消費力（每人） */
 export const TYPE_SPEND = {
   student: 0.85,
   office: 1.0,
   family: 1.25,
   tourist: 1.15,
   critic: 1.0,
-  vip: 1.6
+  vip: 1.6,
+  couple: 1.25,
+  colleagues: 1.15,
+  tour_group: 1.05,
+  soldiers: 1.2,
+  regulars: 1.1,
+  blogger: 1.0,
+  cyclists: 0.95,
+  elderly: 1.1,
+  kids_party: 1.0
 };
+
+/** 顧客類型定義：每組人數、稱呼、喜好標籤、口味偏好、評價桶 */
+export const CUSTOMER_TYPES = {
+  student: { name: '學生', party: [1, 3], tags: ['cheap', 'fried', 'quick', 'rice', 'noodle', 'meat'], taste: 68, bucket: 'local' },
+  office: { name: '上班族', party: [1, 2], tags: ['quick', 'rice', 'noodle', 'caffeine', 'mild'], taste: 52, bucket: 'local' },
+  family: { name: '家庭客', party: [3, 6], tags: ['meat', 'soup', 'rice', 'local'], taste: 58, bucket: 'local' },
+  couple: { name: '情侶', party: [2, 2], tags: ['sweet', 'premium', 'dessert', 'drink'], taste: 62, bucket: 'local' },
+  colleagues: { name: '同事聚餐', party: [4, 6], tags: ['meat', 'alcohol', 'fried', 'rice'], taste: 60, bucket: 'local' },
+  regulars: { name: '老主顧', party: [2, 3], tags: ['local', 'rice', 'soup', 'cheap'], taste: 55, bucket: 'local' },
+  kids_party: { name: '親子團', party: [3, 7], tags: ['sweet', 'fried', 'drink', 'dessert'], taste: 60, bucket: 'local' },
+  elderly: { name: '銀髮族', party: [2, 4], tags: ['mild', 'soup', 'veg', 'local'], taste: 45, bucket: 'local' },
+  soldiers: { name: '阿兵哥', party: [3, 5], tags: ['meat', 'rice', 'cheap', 'fried'], taste: 70, bucket: 'local' },
+  cyclists: { name: '單車族', party: [2, 4], tags: ['quick', 'cold', 'drink', 'cheap'], taste: 55, bucket: 'local' },
+  tourist: { name: '觀光客', party: [2, 5], tags: ['local', 'tourist', 'seafood', 'fried'], taste: 62, bucket: 'outside' },
+  tour_group: { name: '旅行團', party: [5, 8], tags: ['local', 'tourist', 'rice', 'soup'], taste: 60, bucket: 'outside' },
+  critic: { name: '美食評論家', party: [1, 2], tags: ['premium', 'seafood', 'soup', 'local'], taste: 55, bucket: 'outside' },
+  blogger: { name: '美食部落客', party: [1, 2], tags: ['premium', 'sweet', 'dessert', 'tourist'], taste: 58, bucket: 'outside' },
+  vip: { name: '貴賓', party: [2, 4], tags: ['premium', 'seafood', 'meat'], taste: 50, bucket: 'outside' }
+};
+
+/** 各類型出現的基礎權重（會再依地點顧客組成與時段調整） */
+export const TYPE_BASE_WEIGHT = {
+  student: 22, office: 16, family: 14, couple: 9, colleagues: 7, regulars: 6,
+  kids_party: 5, elderly: 5, soldiers: 3, cyclists: 4,
+  tourist: 10, tour_group: 2.5, critic: 1.2, blogger: 1.6, vip: 1.2
+};
+
+/** 一組客人的消費：整組金額 = 餐點小計 × 人數 × 這個折數（分食折扣，人多不會等比例貴） */
+export const PARTY_PAY_FACTOR = 0.8;
+
+/** 每位同桌成員額外增加的用餐時間（遊戲分鐘） */
+export const EATING_PER_GUEST = 1.0;
+
+/** 大組客人比較有耐心（都訂位了） */
+export const PARTY_PATIENCE_BONUS = 0.03;   // 每多一人 +3%
+
+/** 候位隊伍：從門口往外排，每格間隔 */
+export const QUEUE_STEP = 1.05;
 
 /** 顧客心情門檻 */
 export const MOOD = {

@@ -18,7 +18,8 @@ import { spawnWalkers, updateWalkers, decayLure, lureMultiplier } from './attrac
 import { updateStaff, createTask, cancelTasksFor, collectPayment, checkResignations } from './staffai.js';
 import {
   makeCustomer, updateMood, moveEntity, setPathTo, atTile, customerLeaves,
-  releaseSeat, dishScoreFor, valueScoreFor, REASON_TEXT
+  releaseSeat, dishScoreFor, valueScoreFor, REASON_TEXT,
+  seatParty, clearParty, eatingMinutes, partyRange
 } from './customer.js';
 
 let customerSeq = 1;
@@ -55,6 +56,8 @@ export function beginDay(state) {
   state.sim.spawnAccumulator = 0;
   state.sim.customersSpawned = 0;
   state.sim.customersLost = 0;
+  state.sim.skippedBigParties = 0;
+  state.sim.skippedBiggest = 0;
   state.sim.dirt.floor = clamp((state.sim.dirt.floor || 0) * 0.7, 0, 100);
   state.sim.dirt.restroom = clamp((state.sim.dirt.restroom || 0) * 0.8, 0, 100);
   state.sim.equipBroken = state.sim.equipBroken || { ac: false, stove: false, fridge: false };
@@ -124,6 +127,17 @@ export function hasCashierOnShift(state) {
   return state.staff.some((s) => s.role === 'waiter' && s.working && s.duties?.cashier);
 }
 
+/** 目前有幾張桌子能坐下指定人數 */
+export function tablesForParty(state, size) {
+  const need = clamp(size || 1, 1, 8);
+  return state.sim.tables.filter((t) => t.usable && t.state !== 'dirty' && freeSeatIndices(state, t).length >= need);
+}
+
+/** 店裡最大的桌子有幾個位子（用來決定大組客人要不要來） */
+export function biggestTableSeats(state) {
+  return state.sim.tables.reduce((m, t) => Math.max(m, t.usable ? t.seats.length : 0), 0);
+}
+
 export function availability(state) {  let freeSeats = 0;
   let usable = 0;
   let dirty = 0;
@@ -179,9 +193,9 @@ export function spawnRate(state) {
   if (today.waitCount > 3) {
     const avgWait = today.waitSum / today.waitCount;
     const stress = clamp(avgWait / 45, 0, 1.6);
-    rate *= Math.max(0.25, 1 - stress * 0.45);
+    rate *= Math.max(0.22, 1 - stress * 0.55);
   }
-  const cap = Math.max(0.02, seats * 0.06);
+  const cap = Math.max(0.02, seats * 0.045);   // 一組客人佔多個位子，組數上限要調低
   return Math.min(rate, cap);
 }
 
@@ -200,6 +214,7 @@ export function stepSimulation(state, dtMin) {
       else spawnCustomers(state, dtMin, rng);
     }
 
+    refreshQueue(state);
     updateCustomers(state, dtMin, rng);
     updateStaff(state, dtMin, rng);
     updateRestaurant(state, dtMin, rng);
@@ -230,10 +245,21 @@ function spawnCustomers(state, dtMin, rng) {
   const { freeSeats, waiting } = availability(state);
   if (waiting >= 5) return;
   state.sim.spawnAccumulator = (state.sim.spawnAccumulator || 0) + spawnRate(state) * dtMin * (freeSeats > 0 ? 1 : 0.35);
+  const maxSeats = biggestTableSeats(state);
   while (state.sim.spawnAccumulator >= 1) {
     state.sim.spawnAccumulator -= 1;
     const c = makeCustomer(state, rng);
     if (!c) break;
+    // 店裡沒有夠大的桌子 → 這組客人直接路過（買大桌才吃得到這塊客群）
+    if (maxSeats > 0 && c.partySize > maxSeats) {
+      state.sim.customers = state.sim.customers.filter((x) => x.uid !== c.uid);
+      state.stats.today.guests -= c.partySize;
+      state.stats.today.parties = Math.max(0, (state.stats.today.parties || 0) - 1);
+      state.sim.customersSpawned -= 1;
+      state.sim.skippedBigParties = (state.sim.skippedBigParties || 0) + 1;
+      state.sim.skippedBiggest = Math.max(state.sim.skippedBiggest || 0, c.partySize);
+      continue;
+    }
     const door = state.layout.door;
     c.x = state.layout.outside?.x ?? door.x;
     c.y = state.layout.outside?.y ?? (state.layout.gridH - 0.5);
@@ -285,7 +311,7 @@ function updateCustomers(state, dtMin, rng) {
         break;
       }
       case 'queueing': {
-        moveEntity(state.layout, c, dtMin);
+        moveTowardQueueSlot(state, c, dtMin);
         updateMood(state, c, dtMin);
         const { freeSeats } = availability(state);
         if (freeSeats > 0) tryCreateSeatTask(state, c);
@@ -302,6 +328,15 @@ function updateCustomers(state, dtMin, rng) {
         break;
       }
       case 'toSeat': {
+        // 還在店外排隊 → 先線性走進門，進門後才用 A* 走向座位
+        if (!insideRestaurant(state, c)) {
+          const doorInside = { x: state.layout.door.x, y: state.layout.door.y - 1 };
+          if (moveTowardPoint(state, c, doorInside, dtMin) && c.seat) {
+            setPathTo(state.layout, c, c.seat);
+          }
+          if (c.waitMin > c.patience * 1.6) customerLeaves(state, c, 'no_table');
+          break;
+        }
         if (!c.path.length && c.seat && !atTile(c, c.seat, 0.25)) {
           // 走不到位子（動線被擋住）就重新找路，找不到就生氣離開，避免卡死
           if (!setPathTo(state.layout, c, c.seat)) {
@@ -312,8 +347,7 @@ function updateCustomers(state, dtMin, rng) {
         moveEntity(state.layout, c, dtMin);
         if (c.seat && atTile(c, c.seat, 0.22)) {
           const table = state.sim.tables.find((t) => t.uid === c.tableUid);
-          if (table && !table.occupants.includes(c.uid)) table.occupants.push(c.uid);
-          if (table) table.state = 'occupied';
+          if (table) seatParty(state, c, table, c.seatIndices && c.seatIndices.length ? c.seatIndices : [0]);
           c.state = 'ordering';
           c.seatMinute = state.absMinute ?? state.minute;
           c.dir = c.seatedDir || 'S';
@@ -400,8 +434,74 @@ function enterQueue(state, c, doorInside) {
   c.enterMinute = state.absMinute ?? state.minute;
   c.x = doorInside.x;
   c.y = doorInside.y;
-  const stop = queueSpot(state, c);
+  const stop = queueSlotAt(state, queueLength(state));
+  c.queueTarget = stop;
   if (!atTile(c, stop, 0.1)) setPathTo(state.layout, c, stop);
+}
+
+/** 目前有幾組在候位 */
+function queueLength(state) {
+  return state.sim.customers.filter((x) => x.state === 'queueing').length;
+}
+
+/**
+ * 候位隊伍的座標：從門口往外沿著人行道排成一條線（在店外，不佔室內地板）。
+ * index 0 最靠近門口。
+ */
+export function queueSlotAt(state, index) {
+  const gh = state.layout.gridH;
+  const gw = state.layout.gridW;
+  const door = state.layout.door;
+  const lane = state.layout.sidewalk || { y: gh - 0.5, x0: 1, x1: gw - 2 };
+  // 門口偏左就往右排，偏右就往左排，避免排到畫面外
+  const dir = door.x <= gw / 2 ? 1 : -1;
+  const step = B.QUEUE_STEP;
+  const row = Math.floor(index / 7);                  // 超過 7 組就再往外一排
+  const col = index % 7;
+  let x = door.x + dir * (0.95 + col * step);
+  x = clamp(x, lane.x0 ?? 1, lane.x1 ?? gw - 2);
+  const y = (lane.y ?? gh - 0.5) + row * 0.55;
+  return { x, y };
+}
+
+/** 線性走向一個點（店外沒有網格可以走 A*） */
+function moveTowardPoint(state, c, target, dtMin, speedMul = 0.65) {
+  const dx = target.x - c.x;
+  const dy = target.y - c.y;
+  const dist = Math.hypot(dx, dy);
+  const step = B.WALK_TILES_PER_MIN * speedMul * dtMin;
+  if (dist <= step || dist < 0.02) {
+    c.x = target.x;
+    c.y = target.y;
+    c.frame = 0;
+    return true;
+  }
+  c.x += (dx / dist) * step;
+  c.y += (dy / dist) * step;
+  c.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+  c.frame = (c.frame + dtMin * 1.6) % 2;
+  return false;
+}
+
+/** 客人目前是不是站在餐廳裡可通行的格子上 */
+function insideRestaurant(state, c) {
+  return isWalkableTile(state.layout, Math.round(c.x), Math.round(c.y));
+}
+
+/** 讓候位客人沿著隊伍往前補位（線性移動，因為店外不在網格上） */
+function moveTowardQueueSlot(state, c, dtMin) {
+  const slot = queueSlotAt(state, c.queueIndex || 0);
+  c.queueTarget = slot;
+  moveTowardPoint(state, c, slot, dtMin, 0.55);
+}
+
+/** 重排隊伍：先來的排前面，被服務掉的人後面的往前補 */
+export function refreshQueue(state) {
+  const waiting = state.sim.customers
+    .filter((x) => x.state === 'queueing')
+    .sort((a, b) => (a.enterMinute ?? 0) - (b.enterMinute ?? 0));
+  waiting.forEach((c, i) => { c.queueIndex = i; });
+  return waiting.length;
 }
 
 function queueSpot(state, c) {
@@ -426,22 +526,21 @@ function seatTaskClaimed(state, c) {
 function selfSeat(state, c) {
   const table = pickTableFor(state, c);
   if (!table) return false;
-  const seatIndex = freeSeatIndices(state, table)[0];
-  if (seatIndex === undefined) return false;
-  const seat = table.seats[seatIndex];
+  const free = freeSeatIndices(state, table);
+  const need = clamp(c.partySize || 1, 1, 8);
+  if (free.length < need) return false;
+  const seatIndices = free.slice(0, need);
+  const seat = table.seats[seatIndices[0]];
   state.sim.tasks = state.sim.tasks.filter((t) => !(t.kind === 'seat' && t.customerUid === c.uid));
   c.tableUid = table.uid;
   c.seat = { x: seat.x, y: seat.y };
+  c.seatIndices = seatIndices;
   c.seatedDir = seat.facing;
   c.state = 'toSeat';
   c.selfSeated = true;
-  if (!setPathTo(state.layout, c, { x: seat.x, y: seat.y })) {
-    if (atTile(c, seat, 0.3)) {
-      c.state = 'ordering';
-      c.seatMinute = state.absMinute ?? state.minute;
-      if (!table.occupants.includes(c.uid)) table.occupants.push(c.uid);
-      table.state = 'occupied';
-    } else {
+  // 在店內才直接找路；還在店外排隊時交給 toSeat 流程（先走進門）
+  if (insideRestaurant(state, c)) {
+    if (!setPathTo(state.layout, c, { x: seat.x, y: seat.y }) && !atTile(c, seat, 0.3)) {
       c.tableUid = null;
       c.seat = null;
       c.state = 'queueing';
@@ -457,12 +556,20 @@ export function freeSeatIndices(state, table) {
   const taken = new Set();
   for (const uid of table.occupants) {
     const other = state.sim.customers.find((x) => x.uid === uid);
-    if (other && other.seat) taken.add(`${other.seat.x},${other.seat.y}`);
+    if (!other) continue;
+    const idxs = (other.seatIndices && other.seatIndices.length) ? other.seatIndices : (other.seat ? [other.seat] : []);
+    for (const ix of idxs) {
+      const s = typeof ix === 'number' ? table.seats[ix] : ix;
+      if (s) taken.add(`${s.x},${s.y}`);
+    }
   }
   for (const task of state.sim.tasks) {
     if (task.kind !== 'seat' || task.tableUid !== table.uid) continue;
-    const s = table.seats[task.seatIndex];
-    if (s) taken.add(`${s.x},${s.y}`);
+    const idxs = task.seatIndices || [task.seatIndex];
+    for (const ix of idxs) {
+      const s = table.seats[ix];
+      if (s) taken.add(`${s.x},${s.y}`);
+    }
   }
   const out = [];
   table.seats.forEach((s, i) => {
@@ -477,9 +584,11 @@ function tryCreateSeatTask(state, c) {
   if (state.sim.tasks.some((t) => t.kind === 'seat' && t.customerUid === c.uid)) return;
   const table = pickTableFor(state, c);
   if (!table) return;
-  const seatIndex = freeSeatIndices(state, table)[0];
-  if (seatIndex === undefined) return;
-  createTask(state, 'seat', { customerUid: c.uid, tableUid: table.uid, seatIndex });
+  const free = freeSeatIndices(state, table);
+  const need = clamp(c.partySize || 1, 1, 8);
+  if (free.length < need) return;
+  const seatIndices = free.slice(0, need);
+  createTask(state, 'seat', { customerUid: c.uid, tableUid: table.uid, seatIndex: seatIndices[0], seatIndices });
 }
 
 /** 選桌：優先乾淨、離出餐口近、座位數剛好的桌子（動線越好翻桌越快） */
@@ -490,9 +599,11 @@ export function pickTableFor(state, c) {
     // 只有「待收桌」的桌子不能用；使用中的桌子只要還有空位就能再帶客
     if (!t.usable || t.state === 'dirty') continue;
     const free = freeSeatIndices(state, t);
-    if (!free.length) continue;
+    const need = clamp(c.partySize || 1, 1, 8);
+    if (free.length < need) continue;                 // 坐不下整組
     const dist = Math.abs(t.x - pass.x) + Math.abs(t.y - pass.y);
-    options.push({ table: t, score: 20 - dist + free.length * 0.5 });
+    const waste = free.length - need;                 // 浪費的位子越少越好（大桌留給大組）
+    options.push({ table: t, score: 20 - dist - waste * 1.5 });
   }
   if (!options.length) return null;
   options.sort((a, b) => b.score - a.score);

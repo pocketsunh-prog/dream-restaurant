@@ -500,15 +500,75 @@ export function createSettingsPanel({ store, ui, win }) {   // eslint-disable-li
     return { el: node, update };
   }
 
+  /* ------------------------------------------------------------ 畫面特效 */
+  const FX_ITEMS = [
+    { key: 'pools', label: '燈光光池', hint: '燈具與出餐口在地板上的暖色光暈（含霓虹溢光、門口灑光）' },
+    { key: 'shadows', label: '接觸陰影', hint: '人物與傢俱底下的陰影' },
+    { key: 'ao', label: '牆腳陰影（AO）', hint: '牆與地板交界的暗帶，關掉室內會比較平' },
+    { key: 'vignette', label: '室內暗角', hint: '房間四角的漸暗效果' },
+    { key: 'outsideShade', label: '店外陰影', hint: '店外鋪面的暗部與陰影帶' },
+    { key: 'shafts', label: '晴天窗光光柱', hint: '晴天時從窗戶斜射進來的光柱' }
+  ];
+
+  function buildFxTab() {
+    const boxes = new Map();
+    const rows = FX_ITEMS.map((item) => {
+      const box = checkbox({
+        label: item.label,
+        checked: false,
+        onChange: (on) => {
+          const res = dispatch({ type: 'SET_FX', key: item.key, on });
+          if (res && res.ok === false) ui.toast(res.error || '無法切換', 'bad');
+        }
+      });
+      boxes.set(item.key, box);
+      return h('div', { style: { display: 'flex', flexDirection: 'column', gap: '1px', padding: '2px 0' } },
+        box.el,
+        h('div', { class: 'muted', style: { marginLeft: '22px' } }, item.hint));
+    });
+
+    const allOn = button('全部開啟', () => {
+      for (const item of FX_ITEMS) dispatch({ type: 'SET_FX', key: item.key, on: true });
+      ui.toast('已開啟全部畫面特效', 'info');
+    }, { small: true });
+    const noShadow = button('只留燈光（關陰影類）', () => {
+      for (const item of FX_ITEMS) {
+        dispatch({ type: 'SET_FX', key: item.key, on: item.key === 'pools' });
+      }
+      ui.toast('已關閉陰影類特效，只保留燈光光池', 'info');
+    }, { small: true });
+    const allOff = button('全部關閉', () => {
+      for (const item of FX_ITEMS) dispatch({ type: 'SET_FX', key: item.key, on: false });
+      ui.toast('已關閉全部畫面特效', 'info');
+    }, { small: true });
+
+    const node = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
+      hintbox('這些只影響畫面表現，不影響模擬與評價。覺得畫面太花就把陰影類關掉；想看清楚店內配置建議只留「燈光光池」。'),
+      h('div', { class: 'row wrap' }, allOn, noShadow, allOff),
+      ...rows,
+      h('div', { class: 'muted' }, '快捷鍵：工具列的「🌓 光影」可一鍵切換陰影類；畫布縮放用 + / - / 0。'));
+
+    function update(state) {
+      const fx = (state && state.settings && state.settings.fx) || {};
+      for (const [key, box] of boxes) {
+        const on = fx[key] !== undefined ? !!fx[key] : false;
+        if (box.get() !== on) box.set(on);
+      }
+    }
+    return { el: node, update };
+  }
+
   /* ------------------------------------------------------------------ 組裝 */
   const hoursTab = buildHoursTab();
   const acTab = buildAcTab();
   const musicTab = buildMusicTab();
+  const fxTab = buildFxTab();
 
   const tabset = tabs([
     { id: 'hours', label: '營業', render: () => hoursTab.el },
     { id: 'ac', label: '空調', render: () => acTab.el },
-    { id: 'music', label: '音樂與天氣', render: () => musicTab.el }
+    { id: 'music', label: '音樂與天氣', render: () => musicTab.el },
+    { id: 'fx', label: '畫面', render: () => fxTab.el }
   ]);
   el.appendChild(tabset.el);
 
@@ -517,6 +577,7 @@ export function createSettingsPanel({ store, ui, win }) {   // eslint-disable-li
     hoursTab.update(S);
     acTab.update(S);
     musicTab.update(S);
+    fxTab.update(S);
   }
 
   try {

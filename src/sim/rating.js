@@ -19,6 +19,8 @@ export function applyCustomerMood(state, customer) {
   if (customer.wasCritic && customer.mood > 30) delta += 0.4;   // 評論家好評加成
   // 區外客比較少，同一份意見在外面傳得比較遠
   if (bucket === 'outside') delta *= 1.45;
+  // 一組人的聲量：人越多，一句話傳得越廣
+  delta *= (customer.partyVoice || 1);
   addRating(state, bucket, delta);
   return { bucket, delta };
 }

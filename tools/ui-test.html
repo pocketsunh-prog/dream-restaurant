@@ -69,8 +69,9 @@ async function run() {
 
   const st = () => store.getState();
   const rect0 = canvas.getBoundingClientRect();
-  const scale = rect0.width / 960;
-  info(`canvas CSS ${Math.round(rect0.width)}×${Math.round(rect0.height)}・scale=${scale}`);
+  const LOGICAL = DREAM.logical;
+  const scale = DREAM.logical.cssScale;   // CSS px per logical px
+  info(`canvas CSS ${Math.round(rect0.width)}×${Math.round(rect0.height)}・邏輯 ${LOGICAL.w}×${LOGICAL.h}・deviceScale=${LOGICAL.deviceScale}・cssScale=${LOGICAL.cssScale.toFixed(3)}`);
 
   const clientOf = (tx, ty) => {
     const p = renderer.tileToScreen(tx, ty);

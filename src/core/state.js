@@ -46,13 +46,14 @@ export function createNewGame(seed = newSeed(), opts = {}) {
   layout.items = [];
 
   // 開局基本設備：兩張桌、四張椅子、一個櫃台（可用 CLEAR_LAYOUT 重新規劃）
-  const tableDef = pickFurniture((f) => f.category === 'table' && (f.seats || 0) >= 2, 'table');
+  const tableDef = pickFurniture((f) => f.category === 'table' && (f.seats || 0) === 2, 'table');
+  const bigTableDef = pickFurniture((f) => f.category === 'table' && (f.seats || 0) === 4, 'table');
   const chairDef = pickFurniture((f) => f.category === 'chair', 'chair');
   const counterDef = pickFurniture((f) => f.category === 'counter', 'counter');
   const starterSpots = [
     { type: tableDef, x: 8, y: 7 }, { type: chairDef, x: 8, y: 6 }, { type: chairDef, x: 8, y: 8 },
     { type: chairDef, x: 7, y: 7 }, { type: chairDef, x: 9, y: 7 },
-    { type: tableDef, x: 12, y: 7 }, { type: chairDef, x: 12, y: 6 }, { type: chairDef, x: 12, y: 8 },
+    { type: bigTableDef, x: 12, y: 7 }, { type: chairDef, x: 12, y: 6 }, { type: chairDef, x: 12, y: 8 },
     { type: chairDef, x: 11, y: 7 }, { type: chairDef, x: 13, y: 7 },
     { type: counterDef, x: 15, y: 10 }
   ];
@@ -74,6 +75,8 @@ export function createNewGame(seed = newSeed(), opts = {}) {
     uidSeq: 1,
     reputation: { community: RATING_START, outside: RATING_START },
     settings: {
+      // 畫面特效開關（玩家可在「環境設定」即時切換；繪圖層讀 view.fx）
+      fx: { pools: true, shadows: false, ao: false, vignette: false, outsideShade: false, shafts: false },
       openMinute: 11 * 60,
       closeMinute: 23 * 60,
       acTemp: 24,
@@ -291,7 +294,7 @@ export function makeStaffEntry(state, person, wage) {
 export function emptyToday() {
   return {
     revenue: 0, spend: 0, tips: 0, wages: 0, rent: 0, utilities: 0, inventory: 0, repairs: 0,
-    guests: 0, served: 0, angry: 0, waitSum: 0, waitCount: 0, moodSum: 0, moodCount: 0,
+    guests: 0, parties: 0, served: 0, angry: 0, noBigTable: 0, waitSum: 0, waitCount: 0, moodSum: 0, moodCount: 0,
     complaints: {}, weather: 'sunny', decorations: 0
   };
 }
@@ -348,6 +351,8 @@ export function migrate(raw) {
   s.layout = s.layout || {};
   s.layout.items = s.layout.items || [];
   s.layout.rev = s.layout.rev || 1;
+  s.settings = s.settings || {};
+  s.settings.fx = { pools: true, shadows: false, ao: false, vignette: false, outsideShade: false, shafts: false, ...(s.settings.fx || {}) };
   s.minuteFloat = s.minuteFloat ?? s.minute ?? 540;
   s.absMinute = s.absMinute ?? ((s.day || 1) * 1440 + s.minuteFloat);
   s.version = SAVE_VERSION;

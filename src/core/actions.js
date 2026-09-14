@@ -71,6 +71,13 @@ export function reduce(state, action) {
       state.settings.acTemp = clamp(Math.round(action.temp), 16, 30);
       return ok();
     }
+    case 'SET_FX': {
+      const KEY = ['pools', 'shadows', 'ao', 'vignette', 'outsideShade', 'shafts'];
+      if (!KEY.includes(action.key)) return fail('沒有這項畫面特效');
+      if (!state.settings.fx) state.settings.fx = {};
+      state.settings.fx[action.key] = !!action.on;
+      return ok();
+    }
     case 'SET_MUSIC': {
       if (!B.MUSIC_NAME[action.id]) return fail('沒有這個曲風');
       state.settings.music = action.id;
@@ -459,7 +466,7 @@ export function reduce(state, action) {
 }
 
 export const ACTION_TYPES = [
-  'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC',
+  'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC', 'SET_FX',
   'MENU_ADD', 'MENU_REMOVE', 'MENU_UPDATE', 'MENU_TOGGLE', 'BUY_STOCK',
   'HIRE', 'FIRE', 'SET_WAGE', 'SET_SHIFT', 'SET_DUTY',
   'PLACE_FURNITURE', 'MOVE_FURNITURE', 'ROTATE_FURNITURE', 'REPLACE_FURNITURE', 'REMOVE_FURNITURE', 'CLEAR_LAYOUT', 'SET_TILE',

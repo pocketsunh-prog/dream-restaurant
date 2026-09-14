@@ -22,12 +22,15 @@ import {
   DEFAULT_TILE_PAL, makeTilePalette, resolveFurnitureArt,
   drawLightPool, drawGlow, drawSteam, drawContactShadow, drawPuddle, drawBreath, drawSplash, drawNeonSpill,
   drawStreetProp, drawWires, drawKitchenProp, drawAOOverlay,
+  drawPartyBadge, partyBadgeSize,
+  DEFAULT_FX, FX_KEYS, resolveFx, sameFx,
 } from './sprites.js';
 import { getDish } from '../data/dishes.js';
 
 export {
   TILE_W, TILE_H, GRID_W, GRID_H, ORIGIN_X, ORIGIN_Y, LOGICAL_W, LOGICAL_H,
   tileToScreen, screenToTile, tileDepth,
+  DEFAULT_FX, FX_KEYS, resolveFx, sameFx,
 };
 
 /** 會發光的傢俱美術 key（決定地板光池位置）。 */
@@ -41,6 +44,10 @@ const WALL_MOUNT_ARTS = {
 const SEATED_POSE_STATES = { SEATED: 'seated', ORDERING: 'seated', WAITING_FOOD: 'seated', PAYING: 'seated', EATING: 'eat' };
 /** 端盤中的員工狀態關鍵字（沿用既有 state 欄位，不新增欄位）。 */
 const CARRY_RE = /deliver|serve|carry|tray|buser|serving|food/i;
+/** 排隊地墊／腳印用色（在人行道上、室內地板不會用到）。 */
+const QUEUE_MAT = 'pave_hi';
+const QUEUE_MAT_LO = 'pave_joint';
+const QUEUE_FOOT = 'pave_curb';
 
 const EMPTY_LAYOUT = Object.freeze({
   gridW: GRID_W, gridH: GRID_H, tiles: [], items: [], entrances: [], passTiles: [], restroom: null,
@@ -222,6 +229,9 @@ export class FloorRenderer {
     this._peopleN = 0;
     this._bubbles = [];
     this._bubbleN = 0;
+    this._badges = [];
+    this._badgeN = 0;
+    this._badgePool = [];
     this._hitItems = [];
     this._hitItemsN = 0;
     this._hitPeople = [];
@@ -361,7 +371,8 @@ export class FloorRenderer {
    * @param {object} state 遊戲狀態（唯讀）
    * @param {object} [view] {frame, hover:{x,y}, ghost:{typeId,x,y,valid,rot,w,h}, selectionUid,
    *                          showGrid, focusItemUid, debugPaths, hoverCustomerUid, tick,
-   *                          timeOfDay, weather, skyline}
+   *                          timeOfDay, weather, skyline, fx}
+   *   view.fx 為光影開關（缺鍵用 DEFAULT_FX：光池開、陰影類全關），可逐項即時切換。
    */
   render(state, view) {
     const ctx = this.ctx;
@@ -386,29 +397,37 @@ export class FloorRenderer {
     const skyline = skylineOf(S, V);
     const pal = resolveTilePalette(S, V);
     const T = todTint(tod);
+    // 光影開關：view.fx 缺鍵 → DEFAULT_FX（光池保留、陰影類全關）
+    // （view.fx 沒給時退回 state.settings.fx，兩者都沒有就全用預設）
+    const fxIn = isObj(V.fx) ? V.fx : (isObj(S.settings) && isObj(S.settings.fx) ? S.settings.fx : null);
+    const fx = resolveFx(fxIn);
+    this._fx = fx;
     this._pal = pal;
     this._tod = tod;
     this._tt = T;
     this._tick = tick;
     this._weather = weather;
 
-    this._lastFrame = { gw, gh, frame, tod, weather, skyline, pal: pal.key };
+    this._lastFrame = { gw, gh, frame, tod, weather, skyline, pal: pal.key, fx };
 
     // 0) 背景 + 窗外街景（在牆後面）
     stage('backdrop');
-    this._drawBackdrop(ctx, gw, gh, tod, skyline);
-    // 0b) 雨天：騎樓水窪 + 漣漪
+    this._drawBackdrop(ctx, gw, gh, tod, skyline, fx);
+    // 0b) 雨天：騎樓水窪 + 漣漪（水窪是天氣，不受光影開關影響）
     if (weather === 'rain' || weather === 'storm') this._drawPavementPuddles(ctx, gw, gh, tick);
+    // 0c) 候位隊伍地墊／腳印（只在店外的人行道上，室內地板一定不會被蓋到）
+    stage('queue');
+    this._drawQueueMats(ctx, S, gw, gh, tick);
     // 1) 地板（依地點配色 + 污漬連動 + 周邊收邊帶）
     stage('floors');
     this._drawFloors(ctx, L, gw, gh, frame, pal, S);
     // 1b) 地板層燈光：光池 / 出餐口暖光 / 窗邊霓虹溢光（一律在牆與傢俱之前）
     stage('floorlights');
-    this._drawFloorLights(ctx, L, gw, gh, tick, T, pal);
+    if (fx.pools) this._drawFloorLights(ctx, L, gw, gh, tick, T, pal);
     stage('floorlights-end');
     // 1c) 牆腳環境光遮蔽（AO）
     stage('ao');
-    this._drawWallAO(ctx, L, gw, gh);
+    if (fx.ao) this._drawWallAO(ctx, L, gw, gh);
     // 1d) 廚房固定道具（沒買設備也像廚房）
     this._drawKitchenProps(ctx, L, gw, gh, tick, S);
     // 2) 牆面／門／出餐口
@@ -420,15 +439,19 @@ export class FloorRenderer {
     stage('items');
     this._drawSorted(ctx, S, L, gw, gh, frame, pal);
     stage('items-end');
+    // 3b) 人數徽章（一律在所有人之上；候位中的團體也一定會畫）
+    stage('badges');
+    this._drawBadges(ctx, frame);
+    stage('badges-end');
     // 4) 時段氛圍（網點裁切在房間剪影內）
     stage('ambience');
     this._drawAmbience(ctx, L, gw, gh, tick, tod, T, pal);
     // 4a) 室內氛圍：四角網點暗角 + 出餐口暖光 + 門口戶外光灑進來
-    this._drawInteriorMood(ctx, L, gw, gh, tick, T, pal);
-    // 4b) 冷天吐氣、熱浪地面霧氣
+    this._drawInteriorMood(ctx, L, gw, gh, tick, T, pal, fx);
+    // 4b) 冷天吐氣、熱浪地面霧氣（天氣效果，不受光影開關影響）
     this._drawWeatherScene(ctx, S, gw, gh, tick, weather);
     // 5) 天氣全畫面覆蓋
-    if (weather && weather !== 'none') drawWeather(ctx, weather, this.w, this.h, tick);
+    if (weather && weather !== 'none') drawWeather(ctx, weather, this.w, this.h, tick, { shafts: fx.shafts });
     // 6) 網格
     if (V.showGrid) this._drawGrid(ctx, L, gw, gh);
     // 7) 幽靈傢俱
@@ -503,16 +526,38 @@ export class FloorRenderer {
       }
     }
     // 夜晚：窗邊霓虹溢光（地點強調色）落在地板上，3 幀閃爍 + 偶發熄滅
+    // 跟著霓虹招牌本身跑：從招牌位置往房間內側找最近的室內地板格，
+    // 每面招牌最多 4 格 → 溢光一定是局部的，也不會再因為角落是廚房而整片落空。
     if (T.neon > 0) {
       const accent = pal.accent;
-      for (let y = 1; y < Math.min(gh, 4); y++) {
-        for (let x = 1; x < Math.min(gw, 4); x++) {
-          // 只畫在「緊鄰窗牆的室內地板格」，牆面本身不畫
-          if (!(x === 1 || y === 1)) continue;
+      const items = this._items();
+      let placed = 0;
+      for (let i = 0; i < items.length && placed < 4; i++) {
+        const it = items[i];
+        if (!isObj(it)) continue;
+        if (resolveFurnitureArt(it.typeId, { seats: num(it.seats, 0) }) !== 'neon_sign') continue;
+        const bx = Math.round(num(it.x, 0));
+        const by = Math.round(num(it.y, 0));
+        const cand = [[bx, by + 1], [bx + 1, by], [bx, by + 2], [bx + 2, by], [bx, by], [bx - 1, by + 1], [bx + 1, by + 1]];
+        for (let k = 0; k < cand.length && placed < 4; k++) {
+          const x = cand[k][0];
+          const y = cand[k][1];
+          if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
           if (this.tileAt(x, y) !== 'floor') continue;
           const c = this.tileToScreen(x, y);
-          const seed = (x * 3 + y * 5) & 7;
-          drawNeonSpill(ctx, c.px, c.py + 2, HALF_W * 0.85, HALF_H * 1.0, accent, T.neon, tick, seed);
+          drawNeonSpill(ctx, c.px, c.py + 2, HALF_W * 0.9, HALF_H * 1.05, accent, T.neon, tick, (x * 3 + y * 5) & 7);
+          placed++;
+        }
+      }
+      // 沒有任何霓虹招牌時，維持舊行為：窗牆邊的室內地板格（找不到地板就整片不畫）
+      if (placed === 0) {
+        for (let y = 1; y < Math.min(gh, 4); y++) {
+          for (let x = 1; x < Math.min(gw, 4); x++) {
+            if (!(x === 1 || y === 1)) continue;
+            if (this.tileAt(x, y) !== 'floor') continue;
+            const c = this.tileToScreen(x, y);
+            drawNeonSpill(ctx, c.px, c.py + 2, HALF_W * 0.85, HALF_H * 1.0, accent, T.neon, tick, (x * 3 + y * 5) & 7);
+          }
         }
       }
     }
@@ -576,6 +621,69 @@ export class FloorRenderer {
     }
   }
 
+  /**
+   * 候位隊伍的地墊／腳印：沿著每個候位客人的隊伍格畫一塊淡色地墊，
+   * 中間穿插單腳腳印（留空隙 → 讀起來是「一排」而不是一條實線）。
+   * 只畫在店外的人行道上：座標落在室內地板格（floor）時直接跳過，
+   * 所以永遠不會蓋到室內地板。長度隨隊伍長度自然伸縮。
+   */
+  _drawQueueMats(ctx, S, gw, gh, tick) {
+    const sim = isObj(S.sim) ? S.sim : null;
+    const customers = sim ? arr(sim.customers) : null;
+    if (!customers) return;
+    const q = this._queuePool || (this._queuePool = []);
+    let n = 0;
+    for (let i = 0; i < customers.length; i++) {
+      const c = customers[i];
+      if (!isObj(c)) continue;
+      if (String(c.state || '').toLowerCase() !== 'queueing') continue;
+      const t = isObj(c.queueTarget) ? c.queueTarget : c;
+      const tx = Math.round(num(t.x, -99));
+      const ty = Math.round(num(t.y, -99));
+      if (tx < -8 || ty < -8 || tx > gw + 8 || ty > gh + 8) continue;
+      // 室內地板格不畫（候位一定在店外；這裡是防禦性檢查）
+      if (this.tileAt(tx, ty) === 'floor') continue;
+      const rec = q[n] || (q[n] = { x: 0, y: 0, i: 0, idx: 0 });
+      rec.x = tx;
+      rec.y = ty;
+      rec.i = num(c.queueIndex, n) | 0;
+      rec.idx = n;
+      n++;
+    }
+    const N = n;
+    for (let i = 0; i < N; i++) {
+      // 依隊伍順序排（queueIndex 小的最靠近門口）
+      let pick = i;
+      for (let j = i + 1; j < N; j++) if (q[j].i < q[pick].i) pick = j;
+      if (pick !== i) {
+        const tmp = q[i];
+        q[i] = q[pick];
+        q[pick] = tmp;
+      }
+    }
+    for (let i = 0; i < N; i++) {
+      const s = q[i];
+      const c = this.tileToScreen(s.x, s.y);
+      const px = Math.round(c.px);
+      const py = Math.round(c.py);
+      // 地墊：菱形四角的短虛線（有缺口）＋中間一排網點，全部整數座標
+      const dxw = Math.round(HALF_W * 0.55);
+      const dyh = Math.round(HALF_H * 0.55);
+      ctx.fillStyle = color(QUEUE_MAT_LO);
+      ctx.fillRect(px - dxw - 6, py - dyh, 12, 1); // 北西邊
+      ctx.fillRect(px + dxw - 6, py - dyh, 12, 1); // 北東邊
+      ctx.fillRect(px - dxw - 6, py + dyh - 1, 12, 1); // 南西邊
+      ctx.fillRect(px + dxw - 6, py + dyh - 1, 12, 1); // 南東邊
+      ditherRect(ctx, px - HALF_W + 6, py - 4, HALF_W * 2 - 12, 8, QUEUE_MAT, 'clear', DITHER.b25);
+      // 腳印：每格一對，奇數格只畫單腳並留空 → 讀起來是一排、有斷點
+      ctx.fillStyle = color(QUEUE_FOOT);
+      ctx.fillRect(px - 8, py - 1, 4, 3);
+      if ((i & 1) === 0) ctx.fillRect(px + 4, py - 2, 4, 3);
+      // 第 3 格之後在兩格之間補一個小踏點（長隊伍看得出延伸方向）
+      if (i >= 2 && (i & 1) === 1) ctx.fillRect(px - Math.round(HALF_W * 0.5), py - 7, 3, 2);
+    }
+  }
+
   // ── 天氣相關場景元素 ────────────────────────────────────────────────────
 
   _drawPavementPuddles(ctx, gw, gh, tick) {
@@ -615,10 +723,11 @@ export class FloorRenderer {
 
   // ── 背景 + 街景 ─────────────────────────────────────────────────────────
 
-  _drawBackdrop(ctx, gw, gh, tod, skyline) {
-    const key = `${this.w}x${this.h}|${gw}x${gh}|${this.wallHeight}|${tod}|${skyline}`;
+  _drawBackdrop(ctx, gw, gh, tod, skyline, fx) {
+    const shade = !fx || fx.outsideShade !== false;
+    const key = `${this.w}x${this.h}|${gw}x${gh}|${this.wallHeight}|${tod}|${skyline}|sh${shade ? 1 : 0}`;
     if (this._backdropKey !== key || !this._backdrop) {
-      const cv = this._makeBackdrop(key, gw, gh, tod, skyline);
+      const cv = this._makeBackdrop(key, gw, gh, tod, skyline, shade);
       this._backdrop = cv;
       this._backdropKey = cv ? key : '';
     }
@@ -627,10 +736,10 @@ export class FloorRenderer {
       return;
     }
     // 無離屏 canvas 時的即時版本
-    this._paintBackdrop(ctx, gw, gh, tod, skyline);
+    this._paintBackdrop(ctx, gw, gh, tod, skyline, shade);
   }
 
-  _makeBackdrop(key, gw, gh, tod, skyline) {
+  _makeBackdrop(key, gw, gh, tod, skyline, shade) {
     const W = Math.max(8, Math.round(this.w));
     const H = Math.max(8, Math.round(this.h));
     let cv = null;
@@ -646,7 +755,7 @@ export class FloorRenderer {
     cv.height = H;
     const c = typeof cv.getContext === 'function' ? cv.getContext('2d') : null;
     if (!c) return null;
-    this._paintBackdrop(c, gw, gh, tod, skyline);
+    this._paintBackdrop(c, gw, gh, tod, skyline, shade);
     try {
       cv.__spriteKey = 'bg|' + key;
     } catch (e) {
@@ -655,7 +764,8 @@ export class FloorRenderer {
     return cv;
   }
 
-  _paintBackdrop(ctx, gw, gh, tod, skyline) {
+  _paintBackdrop(ctx, gw, gh, tod, skyline, shade) {
+    const outsideShade = shade !== false;
     const W = this.w;
     const H = this.h;
     const ox = this.originX;
@@ -691,12 +801,14 @@ export class FloorRenderer {
       ctx.lineTo(b.px, b.py);
     }
     ctx.stroke();
-    // 建物落在地面的硬邊影子（網點，不用漸層）
-    const sp = 1;
-    const pws = gw + sp * 2;
-    const phs = gh + sp * 2;
-    const s2 = footprintCenter(-sp, -sp, pws, phs, ox, oy);
-    this._ditherDiamond(ctx, s2.px, s2.py - ((pws + phs) / 2) * HALF_H + 5, ((pws + phs) / 2) * HALF_W * 2, ((pws + phs) / 2) * HALF_H * 2, 'shadow', DITHER.b50);
+    // 建物落在地面的硬邊影子（網點，不用漸層）→ view.fx.outsideShade
+    if (outsideShade) {
+      const sp = 1;
+      const pws = gw + sp * 2;
+      const phs = gh + sp * 2;
+      const s2 = footprintCenter(-sp, -sp, pws, phs, ox, oy);
+      this._ditherDiamond(ctx, s2.px, s2.py - ((pws + phs) / 2) * HALF_H + 5, ((pws + phs) / 2) * HALF_W * 2, ((pws + phs) / 2) * HALF_H * 2, 'shadow', DITHER.b50);
+    }
     // 路緣：外圈深色 + 上緣亮一階
     ctx.strokeStyle = color('pave_curb');
     ctx.lineWidth = 1;
@@ -891,34 +1003,42 @@ export class FloorRenderer {
   }
 
   /**
-   * 室內氛圍：四角網點暗角 + 出餐口暖色提亮 + 門口戶外光灑進門內一格。
-   * （光池本體沿用 _drawFloorLights，這裡只補氛圍層。）
+   * 室內氛圍：四角網點暗角（fx.vignette）＋ 出餐口暖色提亮（fx.pools）
+   * ＋ 門口戶外光灑進門內一格（fx.pools）。三項都可以各自完全關掉。
    */
-  _drawInteriorMood(ctx, L, gw, gh, tick, T, pal) {
+  _drawInteriorMood(ctx, L, gw, gh, tick, T, pal, fx) {
+    const wantVignette = !fx || fx.vignette !== false;
+    const wantPools = !fx || fx.pools !== false;
     // 四角暗角（裁切在房間剪影內）
-    ctx.save();
-    this._roomPath(ctx, gw, gh);
-    ctx.clip();
-    const poly = roomSilhouette(gw, gh, this.wallHeight, this.originX, this.originY);
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (let i = 0; i < poly.length; i++) {
-      if (poly[i].x < minX) minX = poly[i].x;
-      if (poly[i].x > maxX) maxX = poly[i].x;
-      if (poly[i].y < minY) minY = poly[i].y;
-      if (poly[i].y > maxY) maxY = poly[i].y;
+    if (wantVignette) {
+      ctx.save();
+      this._roomPath(ctx, gw, gh);
+      ctx.clip();
+      const poly = roomSilhouette(gw, gh, this.wallHeight, this.originX, this.originY);
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < poly.length; i++) {
+        if (poly[i].x < minX) minX = poly[i].x;
+        if (poly[i].x > maxX) maxX = poly[i].x;
+        if (poly[i].y < minY) minY = poly[i].y;
+        if (poly[i].y > maxY) maxY = poly[i].y;
+      }
+      const w = maxX - minX;
+      const h = maxY - minY;
+      const band = Math.round(Math.min(w, h) * 0.22);
+      // 上緣／下緣／左右緣（pattern 填色：1 次 fillRect／每條帶）
+      ditherPattern(ctx, minX, minY, w, band, 'shadow', 'clear', DITHER.b12);
+      ditherPattern(ctx, minX, maxY - band, w, band, 'shadow', 'clear', DITHER.b25);
+      ditherPattern(ctx, minX, minY, band, h, 'shadow', 'clear', DITHER.b25);
+      ditherPattern(ctx, maxX - band, minY, band, h, 'shadow', 'clear', DITHER.b12);
+      ctx.restore();
     }
-    const w = maxX - minX;
-    const h = maxY - minY;
-    const band = Math.round(Math.min(w, h) * 0.22);
-    // 上緣／下緣／左右緣（pattern 填色：1 次 fillRect／每條帶）
-    ditherPattern(ctx, minX, minY, w, band, 'shadow', 'clear', DITHER.b12);
-    ditherPattern(ctx, minX, maxY - band, w, band, 'shadow', 'clear', DITHER.b25);
-    ditherPattern(ctx, minX, minY, band, h, 'shadow', 'clear', DITHER.b25);
-    ditherPattern(ctx, maxX - band, minY, band, h, 'shadow', 'clear', DITHER.b12);
-    ctx.restore();
+    if (!wantPools) {
+      void pal;
+      return;
+    }
     // 出餐口暖色提亮（沿用光池畫法，但畫在氛圍層，讓夜晚看得出熱源）
     if (T.lamps > 0.3) {
       const pass = arr(L.passTiles);
@@ -1006,6 +1126,19 @@ export class FloorRenderer {
     // 用餐中的客人：把他們點的菜對應到桌（itemUid → [category...]）
     const dishMap = Object.create(null);
     const customers = sim ? arr(sim.customers) : null;
+    // 有人坐的椅子格（owner 的 seat + 同桌成員的 seat）→ 椅子往外拉，空椅收進桌下
+    const seats = this._seatPool || (this._seatPool = new Set());
+    seats.clear();
+    if (customers) {
+      for (let i = 0; i < customers.length; i++) {
+        const cu = customers[i];
+        if (!isObj(cu)) continue;
+        addSeatKey(seats, cu.seat);
+        const mem = arr(cu.members) || arr(cu.party);
+        if (mem) for (let k = 0; k < mem.length; k++) if (isObj(mem[k])) addSeatKey(seats, mem[k].seat);
+      }
+    }
+    this._seats = seats;
     if (customers) {
       for (let i = 0; i < customers.length; i++) {
         const cu = customers[i];
@@ -1036,6 +1169,7 @@ export class FloorRenderer {
     this._hitItemsN = 0;
     this._hitPeopleN = 0;
     this._bubbleN = 0;
+    this._badgeN = 0;
 
     // 合併兩個已排序序列（items 依 x+y，people 依 x+y）
     const ni = items.length;
@@ -1077,6 +1211,7 @@ export class FloorRenderer {
   }
 
   _drawItem(ctx, item, idx, frame, accent, S) {
+    const fxx = this._fx || DEFAULT_FX;
     const w = Math.max(1, Math.round(num(item.w, 1)));
     const h = Math.max(1, Math.round(num(item.h, 1)));
     const c = this.footprintCenter(num(item.x, 0), num(item.y, 0), w, h);
@@ -1091,6 +1226,9 @@ export class FloorRenderer {
       else if (this.tileAt(num(item.x, 0) - 1, num(item.y, 0)) === 'wall') wall = 'W';
     }
     const dishes = this._dishes ? this._dishes[item.uid] : null;
+    // 椅子：有人坐 → 往外拉一點；空椅 → 稍微收進桌下（依 sim.customers[].seat）
+    const isChair = key.indexOf('chair_') === 0 || key === 'sofa';
+    const seatOccupied = !!(isChair && this._seats && this._seats.has(`${Math.round(num(item.x, 0))},${Math.round(num(item.y, 0))}`));
     const box = drawFurniture(ctx, item.typeId, c.px, c.py, {
       w, h,
       // 椅子優先用 sim 算好的 rotAuto 面向桌子；玩家手動轉過的不會有 rotAuto
@@ -1103,6 +1241,12 @@ export class FloorRenderer {
       dishes,
       wall,
       accent,
+      // 光影開關：傢俱的接觸陰影
+      shadows: fxx.shadows,
+      // 同型椅子不要 100% 一模一樣（座標 hash → 4 種座墊/木紋變化）
+      variant: isChair ? (hashCode32(Math.round(num(item.x, 0)) * 73856093 ^ (Math.round(num(item.y, 0)) * 19349663)) >>> 5) & 3 : 0,
+      seatPull: isChair ? (seatOccupied ? -30 : 22) : 0,
+      seatOccupied,
       out: rec.box,
     });
     void S;
@@ -1137,6 +1281,39 @@ export class FloorRenderer {
       }
     }
     const staff = arr(S.staff);
+    // 同行家人（c.members / c.party）：只有「已坐下」的客人才會有座位，未坐下不畫
+    if (customers) {
+      for (let i = 0; i < customers.length; i++) {
+        const c = customers[i];
+        if (!isObj(c)) continue;
+        const party = arr(c.party) || arr(c.members);
+        if (!party || !party.length) continue;
+        if (!isSeatedCustomer(c)) continue;
+        const looks = arr(c.memberLooks);
+        const ownerDir = typeof c.seatedDir === 'string' ? c.seatedDir : 'N';
+        for (let m = 0; m < party.length; m++) {
+          const mem = isObj(party[m]) ? party[m] : null;
+          if (!mem) continue;
+          const seat = isObj(mem.seat) ? mem.seat : null;
+          const x = num(seat ? seat.x : mem.x, -1);
+          const y = num(seat ? seat.y : mem.y, -1);
+          if (x < -3 || y < -3 || x > gw + 4 || y > gh + 4) continue;
+          const e = this._entry();
+          e.kind = 4;
+          // 依座位深度排序（seat.x + seat.y），與傢俱／其他人共用同一條 painter 演算法
+          e.d = x + y;
+          e.t = 3;
+          e.ref = mem;
+          e.x = x;
+          e.y = y;
+          e.frame = frame;
+          e.idx = m;
+          e.looks = looks;
+          e.ownerDir = ownerDir;
+          out[n++] = e;
+        }
+      }
+    }
     if (staff) {
       for (let i = 0; i < staff.length; i++) {
         const s = staff[i];
@@ -1189,6 +1366,7 @@ export class FloorRenderer {
   }
 
   _drawPersonEntry(ctx, e, idx, frame) {
+    const fxx = this._fx || DEFAULT_FX;
     const ref = e.ref;
     const p = this.tileToScreen(e.x, e.y);
     const kind = e.kind;
@@ -1209,8 +1387,10 @@ export class FloorRenderer {
 
     // 姿勢：全部由既有欄位推導（state / mood / dir / seatedDir / frame）
     const seatedPose = kind === 1 ? SEATED_POSE_STATES[st] : null;
+    const memEating = kind === 4 ? !!(ref.eating === true || (ref.eating == null && (frame & 1))) : false;
     let pose;
-    if (seatedPose === 'eat') pose = (frame & 1) ? 'eat' : 'seated';
+    if (kind === 4) pose = memEating ? 'eat' : 'seated';
+    else if (seatedPose === 'eat') pose = (frame & 1) ? 'eat' : 'seated';
     else if (seatedPose === 'seated') pose = 'seated';
     else if (kind === 2 && CARRY_RE.test(st)) pose = 'carry';
     else if (num(ref.mood, 0) < -20) pose = 'angry';
@@ -1218,22 +1398,35 @@ export class FloorRenderer {
     else pose = 'idle';
 
     const seated = pose === 'seated' || pose === 'eat';
-    const dirRaw = seated && ref.seatedDir ? ref.seatedDir : ref.dir;
+    const dirRaw = kind === 4
+      ? (typeof ref.dir === 'string' ? ref.dir : e.ownerDir || 'N')
+      : (seated && ref.seatedDir ? ref.seatedDir : ref.dir);
     // 走路 4 格循環：由位置（會隨移動改變）＋模擬影格推導，站著的人不會抖動
     const walkFrame = moving ? (((Math.floor((e.x + e.y) * 2) + (frame | 0)) & 3) + 4) & 3 : 0;
-    const entFrame = moving ? walkFrame : (frame & 1);
+    const entFrame = kind === 4
+      ? (Number.isFinite(Number(ref.frame)) ? (Number(ref.frame) | 0) & 3 : (frame & 1))
+      : (moving ? walkFrame : (frame & 1));
     const blink = pose === 'idle' && ((this._tick + hashCode32(uidKey.length * 7 + idx)) % 53) < 3;
 
     const app = kind === 2
       ? (isObj(ref.appearance) ? ref.appearance : appearanceFromSeed(ref.staffId || ref.uid, ref.role))
-      : (isObj(ref.appearance) ? ref.appearance : appearanceFromSeed(ref.uid, ref.role));
+      : kind === 4
+        ? (isObj(ref.appearance) ? ref.appearance
+          : (e.looks && isObj(e.looks[e.idx]) ? e.looks[e.idx] : appearanceFromSeed(`m${e.idx}${idx}`, ref.type)))
+        : (isObj(ref.appearance) ? ref.appearance : appearanceFromSeed(ref.uid, ref.role));
     const fy = p.py + 2;
+    // 坐姿的人沒有內建影子（貼圖下方被椅子遮住），改用接觸陰影讓人物貼著地板
+    // → view.fx.shadows 關閉時完全不畫
+    if (seated && fxx.shadows) drawContactShadow(ctx, p.px, p.py + 3, kind === 4 ? 19 : 20, 5);
     const rec = this._rec(this._peopleRecs, idx);
     const box = drawPerson(ctx, app, p.px, fy, {
       dir: dirRaw,
       frame: entFrame,
       pose,
       blink,
+      seated,
+      shadows: fxx.shadows,
+      stature: kind === 4 ? memberStature(ref, e.idx | 0) : 0,
       kind: kind === 1 ? ref.type : null,
       uniform: kind === 2 ? (ref.role === 'chef' ? 'chef' : 'waiter') : null,
       mood: num(ref.mood, 0) < -20 ? 'angry' : null,
@@ -1249,6 +1442,20 @@ export class FloorRenderer {
       this._hitPeople[this._hitPeopleN] = rec;
       this._hitPeopleN++;
     }
+    // 人數徽章（團體 ≥ 2 人；候位中的團體也一定要畫）
+    if (kind === 1) {
+      const ps = Math.max(1, Math.min(8, Math.round(num(ref.partySize, 1)) || 1));
+      if (ps >= 2 && this._badgeN < 128) {
+        const bd = this._badgeRec(this._badgeN);
+        bd.n = ps;
+        bd.x = p.px;
+        // 頭頂上方：站姿頭頂 ≈ fy-45、坐姿 ≈ fy-36（貼圖 32×48、坐姿整體下移 9px）
+        bd.y = seated ? fy - 30 : fy - 39;
+        bd.queued = st.toLowerCase() === 'queueing' ? 1 : 0;
+        this._badges[this._badgeN] = bd;
+        this._badgeN++;
+      }
+    }
     // 心情氣泡
     let bkind = null;
     if (kind === 1) bkind = moodBubble(ref);
@@ -1257,11 +1464,28 @@ export class FloorRenderer {
     if (bkind && this._bubbleN < 128) {
       const b = this._brec(this._bubbleN);
       b.kind = bkind;
-      b.x = p.px + 6;
-      b.y = fy - 22;
+      b.x = p.px + 8;
+      b.y = seated ? fy - 33 : fy - 42;
       b.f = (num(ref.frame, frame) | 0) & 1;
       this._bubbles[this._bubbleN] = b;
       this._bubbleN++;
+    }
+  }
+
+  _badgeRec(idx) {
+    let r = this._badgePool[idx];
+    if (!r) {
+      r = { n: 2, x: 0, y: 0, queued: 0 };
+      this._badgePool[idx] = r;
+    }
+    return r;
+  }
+
+  /** 畫所有團體人數徽章（在 items 之後、氛圍之前，所以一定蓋在人的頭上）。 */
+  _drawBadges(ctx) {
+    for (let i = 0; i < this._badgeN; i++) {
+      const b = this._badges[i];
+      drawPartyBadge(ctx, b.n, b.x, b.y);
     }
   }
 
@@ -1578,6 +1802,32 @@ function comparePeople(a, b) {
   return 0;
 }
 
+/** 座位座標 → Set 的鍵（畫椅子時用來判斷「這張椅子有人坐」）。 */
+function addSeatKey(set, seat) {
+  if (!isObj(seat)) return;
+  const x = num(seat.x, NaN);
+  const y = num(seat.y, NaN);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  set.add(`${Math.round(x)},${Math.round(y)}`);
+}
+
+/** 客人是否已經坐下（有座位）→ 同行家人才會出現在座位上。 */
+function isSeatedCustomer(c) {
+  if (!isObj(c)) return false;
+  const st = typeof c.state === 'string' ? c.state.toUpperCase() : '';
+  if (SEATED_STATES[st]) return true;
+  return !!(isObj(c.seat) || c.seatedDir);
+}
+
+/** 同行家人的身高差（±1px，由外觀雜湊決定；不影響其他人）。 */
+function memberStature(mem, index) {
+  if (isObj(mem) && (mem.stature === 1 || mem.stature === -1)) return mem.stature;
+  const app = isObj(mem) && isObj(mem.appearance) ? mem.appearance : null;
+  const seedS = `${app ? app.hair : ''}|${app ? app.shirt : ''}|${index | 0}`;
+  const h = hashCode32(seedS.length * 31 + (index | 0)) ^ hashCode32(seedS);
+  return (Math.abs(h) % 3) - 1;
+}
+
 // ===========================================================================
 // 小地圖
 // ===========================================================================
@@ -1624,10 +1874,10 @@ export function renderMinimap(ctx, state, w, h) {
       ctx.fillRect(ox + x * cell, oy + y * cell, cell, cell);
     }
   }
-  // 邊框
+  // 邊框（整數座標：不用 0.5 位移的細線技巧，維持硬邊像素風）
   ctx.strokeStyle = color('gray_15');
   ctx.lineWidth = 1;
-  ctx.strokeRect(ox - 0.5, oy - 0.5, cell * gw + 1, cell * gh + 1);
+  ctx.strokeRect(ox, oy, cell * gw, cell * gh);
 
   // 傢俱
   const items = L && arr(L.items) ? L.items : [];

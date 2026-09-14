@@ -14,16 +14,71 @@ import {
 } from './palette.js';
 import { TILE_W, TILE_H, HALF_W, HALF_H } from './iso.js';
 
-export const WALL_H = 33; // 主要牆面高度（px；＝舊版 22 的 1.5 倍）
-export const NEAR_WALL_H = 14; // 近端（南／東）矮牆，避免遮住客人
-/** 舊版 28×14 tile 的細節尺寸 → 新版 42×21 的整數換算（1.5 倍後四捨五入）。 */
+export const WALL_H = 44; // 主要牆面高度（px；＝舊版 22 → ×4/3 → 44，與 56×28 tile 等比）
+export const NEAR_WALL_H = 25; // 近端（南／東）矮牆，避免遮住客人（原 19 → ×4/3）
+/** 舊版 28×14 tile 的細節尺寸 → 新版 56×28 的整數換算（2 倍）。 */
 export const ART_SCALE = TILE_W / 28;
-export const PERSON_W = 24;
-export const PERSON_H = 36;
+export const PERSON_W = 32;
+export const PERSON_H = 48;
 export const PERSON_ANCHOR = PERSON_H; // 角色貼圖對齊：底邊 = 腳底
 
-/** 舊版人物尺寸（16×24）→ 新版 24×36 的等比參考，供舊程式碼／文件對照。 */
+/** 舊版人物尺寸（16×24）→ 新版 32×48 的等比參考，供舊程式碼／文件對照。 */
 export const PERSON_SCALE = PERSON_W / 16;
+
+// ===========================================================================
+// 0b. 光影效果開關（玩家回饋「pls remove light shadow」→ 陰影類預設全關、光池保留）
+// ===========================================================================
+
+/**
+ * 繪圖層光影開關的預設值。全部由 `view.fx` 覆寫（缺鍵用這裡的預設）。
+ * - pools        燈光光池／出餐口暖光／霓虹溢光／門口戶外光灑入
+ * - shadows      人物與傢俱的接觸陰影
+ * - ao           牆腳環境光遮蔽
+ * - vignette     室內四角暗角
+ * - outsideShade 店外鋪面的陰影帶（含 backdrop 上的大片暗色斜帶）
+ * - shafts       晴天窗光光柱
+ */
+export const DEFAULT_FX = {
+  pools: true,
+  shadows: false,
+  ao: false,
+  vignette: false,
+  outsideShade: false,
+  shafts: false,
+};
+
+/** DEFAULT_FX 的鍵（resolveFx 只認這些）。 */
+export const FX_KEYS = ['pools', 'shadows', 'ao', 'vignette', 'outsideShade', 'shafts'];
+
+/**
+ * 解析 `view.fx`：缺鍵／非布林一律回退成 DEFAULT_FX，永遠回傳完整物件。
+ * @param {object} [fx]
+ * @returns {{pools:boolean,shadows:boolean,ao:boolean,vignette:boolean,outsideShade:boolean,shafts:boolean}}
+ */
+export function resolveFx(fx) {
+  const out = {
+    pools: DEFAULT_FX.pools,
+    shadows: DEFAULT_FX.shadows,
+    ao: DEFAULT_FX.ao,
+    vignette: DEFAULT_FX.vignette,
+    outsideShade: DEFAULT_FX.outsideShade,
+    shafts: DEFAULT_FX.shafts,
+  };
+  if (fx && typeof fx === 'object') {
+    for (let i = 0; i < FX_KEYS.length; i++) {
+      const k = FX_KEYS[i];
+      if (typeof fx[k] === 'boolean') out[k] = fx[k];
+    }
+  }
+  return out;
+}
+
+/** 兩個 fx 是否相同（快取用）。 */
+export function sameFx(a, b) {
+  if (!a || !b) return false;
+  for (let i = 0; i < FX_KEYS.length; i++) if (a[FX_KEYS[i]] !== b[FX_KEYS[i]]) return false;
+  return true;
+}
 
 // ===========================================================================
 // 0. 離屏快取
@@ -334,6 +389,8 @@ function mkPainter(c, W, flip) {
     u(v) {
       return Math.round(v * ART_SCALE);
     },
+    /** 是否畫接觸陰影（由 drawPerson / drawFurniture 依 view.fx 設定）。 */
+    shadows: true,
   };
   return g;
 }
@@ -504,6 +561,13 @@ function normalKind(kind) {
  * 繪製人物。pose: 'walk'|'idle'|'carry'|'eat'|'angry'|'seated'
  * 座標：24×36，腳底＝第 36 列（最後一列為影子）。
  */
+/**
+ * 人物繪製：32×48（原 24×36 的 4/3 倍畫布，重新手繪）。
+ * 座標全部為整數（畫布 32×48，腳底＝第 48 列，最後 3 列為接觸陰影）。
+ * pose: 'walk'|'idle'|'carry'|'eat'|'angry'|'seated'
+ * 版面：頭髮 3–8／臉 8–18／下巴 18–19／脖子 20／肩 21／軀幹 21–34／腰帶 35／
+ *       褲 36–38／腿 39–44／鞋 44–46／影子 46–47；寬度：頭 10、軀幹 14、手臂 3。
+ */
 function paintPerson(c, o) {
   const g = mkPainter(c, PERSON_W, o.flip);
   const dir = o.dir;
@@ -513,18 +577,19 @@ function paintPerson(c, o) {
   const wf = walk ? (o.frame & 3) : 0;
   const bob = walk && (wf === 1 || wf === 3) ? -1 : 0;
   const breathe = pose === 'idle' && (o.frame & 1) ? -1 : 0;
-  const off = seated ? 7 : 0; // 坐姿整體下移
+  const off = seated ? 9 : 0; // 坐姿整體下移
+  const stature = o.stature === -1 || o.stature === 1 ? o.stature : 0; // 家人身高差（±1px）
   const OL = 'furn_outline';
 
   const sk = o.skin;
   const skHi = shade(sk, 'white', 0.34);
-  const skLo = shade(sk, 'skin_sh', 0.5);
+  const skLo = shade(sk, 'skin_sh', 0.48);
   const ha = o.hair;
-  const haHi = shade(ha, 'white', 0.24);
+  const haHi = shade(ha, 'white', 0.26);
   const haLo = shade(ha, 'black', 0.32);
-  let sh = o.uniform === 'chef' ? 'shirt_wht' : o.shirt;
-  const shHi = shade(sh, 'white', 0.28);
-  const shLo = shade(sh, 'black', 0.3);
+  const sh = o.uniform === 'chef' ? 'shirt_wht' : o.shirt;
+  const shHi = shade(sh, 'white', 0.30);
+  const shLo = shade(sh, 'black', 0.30);
   const pt = o.pants;
   const ptLo = shade(pt, 'black', 0.32);
   const so = o.shoe;
@@ -532,273 +597,316 @@ function paintPerson(c, o) {
   const kind = o.kind;
   const apron = o.uniform === 'waiter' ? 'teal_lo' : null;
 
-  // 基準線（未坐下時）
-  const footRow = 33; // 鞋子底部結束列
-  const hipRow = 24;
-  const shoulderRow = 13;
-  const neckRow = 12;
-  const faceTop = 7;
+  // ── 版面基準列 ──────────────────────────────────────────────────────
+  const footRow = 44;
+  const hipRow = 35;
+  const shoulderRow = 21;
+  const neckRow = 20;
+  const faceTop = 8;
   const headTop = 3;
+  const yS = stature; // 身高差：整個人往上 1px 或往下 1px
 
-  // ── 影子（硬邊網點橢圓；與傢俱同方向、往右下偏 1px）────────────────
-  if (!seated) {
-    g.ell(11, 34, 7, 2, 'shadow');
-    g.ell(12, 34, 5, 1, 'shadow');
+  // ── 接觸陰影（硬邊網點橢圓，與傢俱同方向、往右下偏 1px）─────────────
+  if (!seated && o.shadows !== false) {
+    g.ell(15, 46, 9, 2, 'shadow');
+    g.ell(16, 46, 6, 1, 'shadow');
+    g.r(10, 47, 10, 1, 'shadow');
   }
 
-  // ── 腿／鞋 ───────────────────────────────────────────────────────────
-  const legSwing = walk ? [0, 1, 0, -1][wf] : 0;
+  // ── 腿／鞋 ──────────────────────────────────────────────────────────
   if (!seated) {
-    const lx = 8 + (walk ? (wf === 0 ? -1 : wf === 2 ? 1 : 0) : 0) + bob * 0;
-    const rx = 13 + (walk ? (wf === 0 ? 1 : wf === 2 ? -1 : 0) : 0);
-    const lLeg = 5 + (walk && wf === 1 ? -2 : walk && wf === 3 ? -3 : 0);
-    const rLeg = 5 + (walk && wf === 3 ? -2 : walk && wf === 1 ? -3 : 0);
-    g.r(lx, hipRow + 1 + bob, 3, lLeg + bob, pt);
-    g.r(rx, hipRow + 1 + bob, 3, rLeg + bob, pt);
-    g.r(lx, hipRow + 1 + bob, 1, lLeg + bob, ptLo);
-    g.r(rx, hipRow + 1 + bob, 1, rLeg + bob, ptLo);
-    // 鞋
-    g.r(lx - 1, footRow - 1 + bob + (walk ? (wf === 1 ? -1 : 0) : 0), 5, 3, OL);
-    g.r(rx - 1, footRow - 1 + bob + (walk ? (wf === 3 ? -1 : 0) : 0), 5, 3, OL);
-    g.r(lx, footRow + bob, 4, 2, so);
-    g.r(rx, footRow + bob, 4, 2, so);
-    g.r(lx, footRow + 1 + bob, 4, 1, shade(so, 'black', 0.4));
-    g.r(rx, footRow + 1 + bob, 4, 1, shade(so, 'black', 0.4));
+    const lx = 11 + (walk ? (wf === 0 ? -1 : wf === 2 ? 1 : 0) : 0);
+    const rx = 17 + (walk ? (wf === 0 ? 1 : wf === 2 ? -1 : 0) : 0);
+    const lLeg = 7 + (walk && wf === 1 ? -3 : walk && wf === 3 ? -4 : 0);
+    const rLeg = 7 + (walk && wf === 3 ? -3 : walk && wf === 1 ? -4 : 0);
+    g.r(lx, hipRow + 1 + bob + yS, 4, lLeg + bob, pt);
+    g.r(rx, hipRow + 1 + bob + yS, 4, rLeg + bob, pt);
+    g.r(lx, hipRow + 1 + bob + yS, 1, lLeg + bob, ptLo);
+    g.r(rx, hipRow + 1 + bob + yS, 1, rLeg + bob, ptLo);
+    // 褲管折線
+    g.r(lx + 2, hipRow + 2 + yS, 1, lLeg - 1, shade(pt, 'black', 0.16));
+    g.r(rx + 2, hipRow + 2 + yS, 1, rLeg - 1, shade(pt, 'black', 0.16));
+    // 鞋（含鞋底暗線）
+    const lsy = footRow - 1 + bob + yS + (walk && wf === 1 ? -1 : 0);
+    const rsy = footRow - 1 + bob + yS + (walk && wf === 3 ? -1 : 0);
+    g.r(lx - 2, lsy, 7, 4, OL);
+    g.r(rx - 1, rsy, 7, 4, OL);
+    g.r(lx - 1, lsy + 1, 6, 2, so);
+    g.r(rx, rsy + 1, 6, 2, so);
+    g.r(lx - 1, lsy + 3, 6, 1, shade(so, 'black', 0.45));
+    g.r(rx, rsy + 3, 6, 1, shade(so, 'black', 0.45));
+    g.r(lx, lsy + 1, 3, 1, shade(so, 'white', 0.25));
+    g.r(rx + 1, rsy + 1, 3, 1, shade(so, 'white', 0.25));
   } else {
-    // 坐姿：大腿往前，看不到小腿
-    g.r(5, hipRow - 1 + off, 14, 4, pt);
-    g.r(5, hipRow - 1 + off, 14, 1, shade(pt, 'white', 0.15));
-    g.r(5, hipRow + 2 + off, 14, 1, ptLo);
-    g.r(18, hipRow + off, 3, 3, so);
+    // 坐姿：大腿往前延伸，看不到小腿
+    g.r(7, hipRow - 1 + off + yS, 18, 5, pt);
+    g.r(7, hipRow - 1 + off + yS, 18, 1, shade(pt, 'white', 0.16));
+    g.r(7, hipRow + 3 + off + yS, 18, 1, ptLo);
+    g.r(23, hipRow + off + yS, 4, 4, so);
+    g.r(23, hipRow + off + yS, 4, 1, shade(so, 'white', 0.25));
   }
 
-  // ── 腰帶 ─────────────────────────────────────────────────────────────
-  g.r(7, hipRow - 2 + off + bob, 10, 1, shade(pt, 'black', 0.5));
+  // ── 腰帶（含皮帶頭）────────────────────────────────────────────────
+  g.r(11, hipRow - 2 + off + bob + yS, 11, 2, shade(pt, 'black', 0.5));
+  g.r(15, hipRow - 2 + off + bob + yS, 3, 2, 'metal_md');
 
-  // ── 軀幹 ─────────────────────────────────────────────────────────────
-  const torsoTop = shoulderRow + bob + off + breathe;
-  const torsoBot = hipRow - 2 + off + bob;
+  // ── 軀幹 ────────────────────────────────────────────────────────────
+  const torsoTop = shoulderRow + bob + off + breathe + yS;
+  const torsoBot = hipRow - 2 + off + bob + yS;
   const torH = torsoBot - torsoTop;
-  g.r(7, torsoTop, 10, torH, sh);
-  g.r(6, torsoTop + 1, 12, torH - 2, sh);
-  g.r(7, torsoTop, 10, 1, mixHex(sh, '#ffffff', 0.45)); // 肩線高光（讓人物從地板跳出來）
-  g.r(7, torsoTop, 1, torH, shLo);
-  g.r(16, torsoTop, 1, torH, shLo);
-  g.r(11, torsoTop, 1, torH, mixHex(shHi, '#ffffff', 0.3)); // 門襟
-  // 上方光源的雙色調網點（把人物從地板色調中拉出來）
-  g.dith(7, torsoTop + 1, 10, Math.max(1, torH - 2), mixHex(sh, '#ffffff', 0.5), 'clear', DITHER.b25);
+  g.r(9, torsoTop, 14, torH, sh);
+  g.r(11, torsoTop + 1, 10, torH - 1, sh);
+  g.r(9, torsoTop, 14, 1, mixHex(sh, '#ffffff', 0.5)); // 肩線高光
+  g.r(9, torsoTop, 1, torH, shLo);
+  g.r(22, torsoTop, 1, torH, shLo);
+  g.r(15, torsoTop + 1, 2, torH - 2, mixHex(shHi, '#ffffff', 0.28)); // 門襟
+  // 布料：白色網點打亮（人物必須從地板色調裡跳出來；地板在早晨／傍晚偏亮，
+  // 所以衣料整體偏亮、再由深色袖側與輪廓收邊）
+  g.dith(10, torsoTop + 2, 12, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.55), 'clear', DITHER.b50);
+  g.r(10, torsoTop + 2, 2, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.25)); // 左肩受光
+  g.r(20, torsoTop + 2, 2, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.25)); // 右肩受光
   // 領口
-  g.r(9, torsoTop, 6, 1, shLo);
-  g.r(10, torsoTop + 1, 4, 1, skLo);
+  g.r(13, torsoTop, 6, 1, shLo);
+  g.r(14, torsoTop + 1, 4, 2, skLo);
   if (o.uniform === 'chef') {
-    // 雙排扣廚師服
-    g.r(9, torsoTop + 2, 6, torH - 3, 'shirt_wht');
+    g.r(13, torsoTop + 3, 6, torH - 4, 'shirt_wht');
     for (let i = 0; i < 3; i++) {
-      g.p(10, torsoTop + 3 + i * 3, 'gray_30');
-      g.p(14, torsoTop + 3 + i * 3, 'gray_30');
+      g.r(13, torsoTop + 4 + i * 4, 2, 2, 'gray_30');
+      g.r(17, torsoTop + 4 + i * 4, 2, 2, 'gray_30');
     }
-    g.r(9, torsoTop, 6, 1, 'gray_70');
+    g.r(13, torsoTop, 6, 2, 'gray_70');
   } else if (apron) {
-    // 服務生圍裙 + 領結
-    g.r(8, torsoTop + 3, 8, torH - 3, apron);
-    g.r(8, torsoTop + 3, 1, torH - 3, shade(apron, 'black', 0.35));
-    g.r(10, torsoTop + 1, 4, 1, 'red_md');
-    g.p(11, torsoTop + 2, 'red_hi');
+    g.r(10, torsoTop + 4, 12, torH - 4, apron);
+    g.r(10, torsoTop + 4, 1, torH - 4, shade(apron, 'black', 0.35));
+    g.r(12, torsoTop + 2, 8, 2, apron);
+    g.r(14, torsoTop + 1, 4, 2, 'red_md'); // 領結
+    g.r(15, torsoTop + 2, 2, 1, 'red_hi');
   } else if (kind === 'office' || kind === 'vip' || kind === 'critic') {
-    // 西裝外套 + 領帶
-    g.r(7, torsoTop + 2, 3, torH - 2, shade(sh, 'black', 0.35));
-    g.r(14, torsoTop + 2, 3, torH - 2, shade(sh, 'black', 0.35));
-    g.r(11, torsoTop + 1, 2, 4, kind === 'vip' ? 'red_md' : 'shirt_nvy');
-    if (kind === 'vip') g.r(14, torsoTop + 3, 2, 1, 'lamp_md'); // 口袋巾
+    g.r(9, torsoTop + 3, 4, torH - 3, shade(sh, 'black', 0.38));
+    g.r(19, torsoTop + 3, 4, torH - 3, shade(sh, 'black', 0.38));
+    g.r(15, torsoTop + 2, 2, 6, kind === 'vip' ? 'red_md' : 'shirt_nvy'); // 領帶
+    g.r(15, torsoTop + 2, 2, 1, 'white');
+    if (kind === 'vip') g.r(19, torsoTop + 5, 3, 2, 'lamp_md'); // 口袋巾
   } else if (kind === 'family') {
-    g.r(8, torsoTop + 4, 8, 2, shade(sh, 'black', 0.2));
+    g.r(10, torsoTop + 6, 12, 3, shade(sh, 'black', 0.18));
+    g.r(12, torsoTop + 7, 8, 1, shade(sh, 'white', 0.2));
   } else if (kind === 'tourist') {
-    g.r(6, torsoTop + 2, 2, torH - 4, 'shirt_org'); // 相機背帶
-    g.r(16, torsoTop + 2, 2, torH - 4, 'shirt_org');
+    g.r(9, torsoTop + 3, 3, torH - 5, 'shirt_org');
+    g.r(20, torsoTop + 3, 3, torH - 5, 'shirt_org');
   }
 
-  // ── 手臂 ─────────────────────────────────────────────────────────────
-  const armCol = o.uniform === 'chef' ? 'shirt_wht' : o.uniform === 'waiter' ? 'shirt_wht' : sh;
+  // ── 手臂 ────────────────────────────────────────────────────────────
+  const armCol = o.uniform ? 'shirt_wht' : sh;
   const swing = walk ? [1, 0, -1, 0][wf] : 0;
   if (pose === 'carry') {
-    // 端盤：托盤擺在胸前，盤子＋杯子看得出來，雙手扶著托盤兩側
-    const ty = torsoTop + 8;
-    g.r(4, torsoTop + 3, 3, 5, armCol); // 左前臂
-    g.r(17, torsoTop + 3, 3, 5, armCol); // 右前臂
-    g.r(3, torsoTop + 2, 1, 6, shLo);
-    g.r(20, torsoTop + 2, 1, 6, shLo);
-    // 托盤（金屬薄盤，不是木板）
-    g.r(6, ty, 12, 1, OL);
-    g.r(7, ty - 1, 10, 1, 'metal');
-    g.r(8, ty - 2, 8, 1, 'metal_hi');
-    // 盤子
-    g.dia(10, ty - 6, 8, 4, OL);
-    g.dia(10, ty - 5, 6, 2, 'gray_90');
-    g.r(9, ty - 5, 4, 1, 'white');
-    // 杯子
-    g.r(14, ty - 6, 3, 4, OL);
-    g.r(14, ty - 5, 2, 3, 'shirt_wht');
-    g.r(14, ty - 5, 2, 1, 'white');
-    // 雙手（扶著托盤兩側）
-    g.r(5, ty - 1, 3, 3, sk);
-    g.r(16, ty - 1, 3, 3, sk);
-    g.r(5, ty + 1, 3, 1, OL);
-    g.r(16, ty + 1, 3, 1, OL);
+    // 端盤：托盤在胸前，盤子＋杯子看得出來，雙手扶著托盤兩側
+    const ty = torsoTop + 11;
+    g.r(5, torsoTop + 4, 4, 6, armCol);
+    g.r(23, torsoTop + 4, 4, 6, armCol);
+    g.r(4, torsoTop + 3, 1, 8, shLo);
+    g.r(27, torsoTop + 3, 1, 8, shLo);
+    g.r(8, ty, 16, 2, OL); // 托盤底
+    g.r(9, ty - 1, 14, 1, 'metal');
+    g.r(10, ty - 2, 12, 1, 'metal_hi');
+    g.dia(13, ty - 8, 11, 6, OL); // 盤子
+    g.dia(13, ty - 7, 9, 4, 'gray_90');
+    g.r(11, ty - 7, 5, 1, 'white');
+    g.r(19, ty - 8, 4, 6, OL); // 杯子
+    g.r(19, ty - 7, 3, 5, 'shirt_wht');
+    g.r(19, ty - 7, 3, 1, 'white');
+    g.r(6, ty, 4, 4, sk); // 雙手扶盤
+    g.r(22, ty, 4, 4, sk);
+    g.r(6, ty + 3, 4, 1, OL);
+    g.r(22, ty + 3, 4, 1, OL);
   } else if (pose === 'angry') {
-    // 生氣：雙臂向兩側張開、握拳在腰側胸前高度（絕不舉過頭）
-    g.r(2, torsoTop + 3, 4, 7, armCol);
-    g.r(18, torsoTop + 3, 4, 7, armCol);
-    g.r(1, torsoTop + 9, 4, 4, sk); // 左手拳
-    g.r(19, torsoTop + 9, 4, 4, sk); // 右手拳
-    g.r(1, torsoTop + 12, 4, 1, OL);
-    g.r(19, torsoTop + 12, 4, 1, OL);
-    g.r(2, torsoTop + 2, 2, 1, shLo);
-    g.r(20, torsoTop + 2, 2, 1, shLo);
+    // 生氣：雙臂外張、握拳在腰側（不舉過頭）＋怒氣符號畫在頭側
+    g.r(4, torsoTop + 4, 4, 9, armCol);
+    g.r(24, torsoTop + 4, 4, 9, armCol);
+    g.r(3, torsoTop + 12, 5, 5, sk);
+    g.r(24, torsoTop + 12, 5, 5, sk);
+    g.r(3, torsoTop + 16, 5, 1, OL);
+    g.r(24, torsoTop + 16, 5, 1, OL);
+    g.r(4, torsoTop + 3, 3, 1, shLo);
+    g.r(25, torsoTop + 3, 3, 1, shLo);
   } else if (pose === 'eat') {
-    g.r(5, torsoTop + 2 + swing, 2, torH - 3, armCol);
-    g.r(17, torsoTop + 2 - swing, 2, torH - 3, armCol);
-    // 前臂抬到嘴邊
-    g.r(14, torsoTop - 2, 2, 5, armCol);
-    g.r(13, torsoTop - 4, 3, 2, sk);
-    g.r(15, torsoTop - 5, 2, 2, 'gray_70'); // 筷子／叉子
+    g.r(6, torsoTop + 3 + swing, 3, torH - 4, armCol);
+    g.r(23, torsoTop + 3 - swing, 3, torH - 4, armCol);
+    g.r(19, torsoTop - 2, 3, 7, armCol); // 前臂抬到嘴邊
+    g.r(17, torsoTop - 5, 5, 3, sk);
+    g.r(21, torsoTop - 6, 2, 3, 'gray_70'); // 筷子／叉子
   } else {
-    g.r(5, torsoTop + 1 + swing, 2, torH - 2, armCol);
-    g.r(17, torsoTop + 1 - swing, 2, torH - 2, armCol);
-    g.r(4, torsoTop + 1 + swing, 1, torH - 2, shLo);
-    g.r(19, torsoTop + 1 - swing, 1, torH - 2, shLo);
-    // 手掌
+    g.r(7, torsoTop + 2 + swing, 3, torH - 3, armCol);
+    g.r(22, torsoTop + 2 - swing, 3, torH - 3, armCol);
+    g.r(7, torsoTop + 2 + swing, 1, torH - 3, mixHex(armCol, '#ffffff', 0.4)); // 手臂外緣受光
+    g.r(24, torsoTop + 2 - swing, 1, torH - 3, mixHex(armCol, '#ffffff', 0.4));
+    g.r(6, torsoTop + 2 + swing, 1, torH - 3, shLo);
+    g.r(25, torsoTop + 2 - swing, 1, torH - 3, shLo);
+    // 袖口
+    g.r(7, torsoTop + torH - 2 + swing, 3, 1, shHi);
+    g.r(22, torsoTop + torH - 2 - swing, 3, 1, shHi);
     if (kind === 'critic') {
-      g.r(4, torsoTop + torH - 1 + swing, 3, 3, sk);
-      g.r(3, torsoTop + torH + 1 + swing, 3, 3, 'shirt_wht'); // 筆記本
-      g.r(3, torsoTop + torH + 6 + swing, 3, 3, 'white');
+      g.r(5, torsoTop + torH - 1 + swing, 4, 4, sk);
+      g.r(3, torsoTop + torH + 2 + swing, 5, 5, 'shirt_wht'); // 筆記本
+      g.r(4, torsoTop + torH + 3 + swing, 3, 1, 'gray_30');
+      g.r(6, torsoTop + torH + 7 + swing, 2, 6, 'white'); // 筆
     } else if (kind === 'tourist') {
-      g.r(4, torsoTop + torH - 1 + swing, 3, 2, sk);
-      g.r(17, torsoTop + torH - 1 - swing, 3, 2, sk);
-      g.r(8, torsoTop + 6, 8, 4, OL); // 掛在胸前的相機
-      g.r(9, torsoTop + 7, 6, 2, 'gray_30');
-      g.r(10, torsoTop + 7, 2, 2, 'sky_hi');
+      g.r(5, torsoTop + torH - 1 + swing, 4, 3, sk);
+      g.r(23, torsoTop + torH - 1 - swing, 4, 3, sk);
+      g.r(11, torsoTop + 7, 10, 6, OL); // 掛在胸前的相機
+      g.r(12, torsoTop + 8, 8, 4, 'gray_30');
+      g.r(13, torsoTop + 8, 3, 3, 'sky_hi');
+      g.r(17, torsoTop + 9, 2, 1, 'white');
     } else {
-      g.r(4, torsoTop + torH - 1 + swing, 3, 3, sk);
-      g.r(17, torsoTop + torH - 1 - swing, 3, 3, sk);
+      g.r(5, torsoTop + torH - 1 + swing, 4, 4, sk);
+      g.r(23, torsoTop + torH - 1 - swing, 4, 4, sk);
+      g.r(5, torsoTop + torH + 2 + swing, 4, 1, skLo);
+      g.r(23, torsoTop + torH + 2 - swing, 4, 1, skLo);
     }
   }
 
-  // ── 脖子 ─────────────────────────────────────────────────────────────
-  g.r(10, neckRow + bob + off + breathe, 4, 2, skLo);
+  // ── 脖子 ────────────────────────────────────────────────────────────
+  g.r(13, neckRow + bob + off + breathe + yS, 6, 2, skLo);
+  g.r(14, neckRow + bob + off + breathe + yS, 4, 1, sk);
 
-  // ── 頭 ───────────────────────────────────────────────────────────────
-  const ft = faceTop + off + bob + breathe;
-  const ht = headTop + off + bob + breathe;
+  // ── 頭 ──────────────────────────────────────────────────────────────
+  const ft = faceTop + off + bob + breathe + yS;
+  const ht = headTop + off + bob + breathe + yS;
   if (dir === 'E') {
-    g.r(8, ft, 8, 5, sk);
-    g.r(15, ft + 1, 2, 3, sk); // 鼻
-    g.r(16, ft + 2, 1, 1, skLo);
+    g.r(11, ft, 10, 8, sk);
+    g.r(20, ft + 2, 3, 4, sk); // 鼻
+    g.r(22, ft + 3, 1, 1, skLo);
+    g.r(11, ft + 7, 8, 1, skLo); // 下顎陰影
   } else {
-    g.r(8, ft, 8, 5, sk);
-    g.r(9, ft + 5, 6, 1, skLo); // 下巴
-    g.r(8, ft, 8, 1, skHi); // 額頭
+    g.r(11, ft, 10, 8, sk);
+    g.r(12, ft + 8, 8, 1, skLo); // 下巴
+    g.r(11, ft, 10, 1, skHi); // 額頭高光
+    g.r(12, ft + 4, 1, 3, shade(sk, 'red_hi', 0.22)); // 臉頰陰影
+    g.r(19, ft + 4, 1, 3, shade(sk, 'red_hi', 0.22));
   }
 
-  // 髮型
+  // ── 髮型 ────────────────────────────────────────────────────────────
   if (style === 'bald') {
-    g.r(8, ft - 1, 8, 1, skHi);
-    if (dir !== 'N') g.r(7, ft + 2, 1, 2, ha);
+    g.r(11, ht + 1, 10, 2, skHi);
+    if (dir !== 'N') g.r(10, ft + 2, 1, 4, ha);
+    g.r(10, ht + 3, 1, 3, ha);
+    g.r(21, ht + 3, 1, 3, ha);
   } else if (style === 'long') {
     if (dir === 'N') {
-      g.r(7, ht, 10, 9, ha);
-      g.r(7, ht, 10, 2, haHi);
+      g.r(10, ht, 12, 13, ha);
+      g.r(10, ht, 12, 3, haHi);
+      g.r(10, ht + 10, 12, 2, haLo);
     } else {
-      g.r(7, ht, 10, 4, ha);
-      g.r(6, ht + 2, 2, 8, ha);
-      g.r(16, ht + 2, 2, 8, ha);
-      g.r(7, ht, 10, 1, haHi);
-      if (dir === 'E') g.r(6, ht + 1, 8, 3, ha);
+      g.r(10, ht, 12, 6, ha);
+      g.r(9, ht + 3, 2, 11, ha);
+      g.r(21, ht + 3, 2, 11, ha);
+      g.r(10, ht, 12, 1, haHi);
+      g.r(9, ht + 12, 2, 2, haLo);
+      g.r(21, ht + 12, 2, 2, haLo);
+      if (dir === 'E') g.r(9, ht + 2, 10, 4, ha);
     }
   } else if (style === 'bun') {
-    g.r(8, ht, 8, 4, ha);
-    g.r(7, ht + 1, 10, 3, ha);
-    g.r(7, ht, 4, 2, haHi);
-    if (dir === 'N') g.dia(12, ht - 4, 7, 6, ha);
-    else if (dir === 'E') g.dia(6, ht - 3, 6, 6, ha);
-    else g.dia(12, ht - 4, 7, 6, ha);
+    g.r(11, ht, 10, 6, ha);
+    g.r(10, ht + 2, 12, 4, ha);
+    g.r(11, ht, 6, 2, haHi);
+    g.dia(16, ht - 5, 9, 8, ha);
+    g.p(15, ht - 3, haHi);
   } else if (style === 'cap') {
-    g.r(7, ht, 10, 4, o.hatCol);
-    g.r(7, ht, 10, 1, shade(o.hatCol, 'white', 0.3));
-    g.r(7, ht + 3, 12, 1, shade(o.hatCol, 'black', 0.3));
+    g.r(10, ht, 12, 6, o.hatCol);
+    g.r(10, ht, 12, 2, shade(o.hatCol, 'white', 0.32));
+    g.r(10, ht + 5, 14, 2, shade(o.hatCol, 'black', 0.3));
+    g.r(12, ht + 1, 8, 1, 'white');
   } else {
-    g.r(8, ht, 8, 1, ha);
-    g.r(7, ht + 1, 10, 3, ha);
-    g.r(8, ht, 8, 1, haHi);
+    g.r(11, ht, 10, 2, ha);
+    g.r(10, ht + 1, 12, 5, ha);
+    g.r(11, ht, 10, 1, haHi);
     if (dir === 'N') {
-      g.r(7, ht + 1, 10, 6, ha);
-      g.r(7, ht + 5, 10, 2, haLo);
+      g.r(10, ht + 1, 12, 10, ha);
+      g.r(10, ht + 8, 12, 3, haLo);
+      g.r(12, ht + 3, 8, 1, haHi);
     } else {
-      g.r(7, ht + 1, 1, 5, ha);
-      g.r(16, ht + 1, 1, 5, ha);
-      if (dir === 'E') g.r(7, ht + 1, 2, 5, ha);
+      g.r(10, ht + 1, 1, 8, ha);
+      g.r(21, ht + 1, 1, 8, ha);
+      g.r(10, ht + 1, 2, 8, haLo);
+      if (dir === 'E') g.r(10, ht + 1, 3, 8, ha);
     }
   }
 
-  // 五官
+  // ── 五官 ────────────────────────────────────────────────────────────
   if (dir === 'S') {
     if (o.blink) {
-      g.r(9, ft + 2, 3, 1, OL);
-      g.r(13, ft + 2, 3, 1, OL);
+      g.r(12, ft + 3, 4, 1, OL);
+      g.r(16, ft + 3, 4, 1, OL);
     } else {
-      g.r(9, ft + 2, 2, 2, 'white');
-      g.r(13, ft + 2, 2, 2, 'white');
-      g.r(10, ft + 2, 1, 2, OL);
-      g.r(13, ft + 2, 1, 2, OL);
+      g.r(12, ft + 3, 3, 3, 'white');
+      g.r(17, ft + 3, 3, 3, 'white');
+      g.r(13, ft + 3, 2, 3, OL);
+      g.r(17, ft + 3, 2, 3, OL);
+      g.p(14, ft + 3, 'white');
+      g.p(18, ft + 3, 'white');
     }
-    g.r(9, ft + 1, 3, 1, haLo); // 眉
-    g.r(13, ft + 1, 3, 1, haLo);
-    g.r(11, ft + 4, 2, 1, 'red_lo'); // 嘴
+    g.r(12, ft + 2, 3, 1, haLo); // 眉
+    g.r(17, ft + 2, 3, 1, haLo);
+    g.r(15, ft + 6, 2, 1, 'red_lo'); // 嘴
+    g.r(14, ft + 7, 4, 1, shade(sk, 'red_hi', 0.3));
   } else if (dir === 'E') {
-    g.r(13, ft + 2, 2, 2, 'white');
-    g.r(14, ft + 2, 1, 2, OL);
-    g.r(13, ft + 1, 3, 1, haLo);
-    g.r(15, ft + 4, 2, 1, 'red_lo');
+    g.r(17, ft + 3, 3, 3, 'white');
+    g.r(18, ft + 3, 2, 3, OL);
+    g.r(17, ft + 2, 3, 1, haLo);
+    g.r(20, ft + 6, 2, 1, 'red_lo');
   } else if (dir === 'W') {
-    g.r(9, ft + 2, 2, 2, 'white');
-    g.r(9, ft + 2, 1, 2, OL);
-    g.r(8, ft + 1, 3, 1, haLo);
-    g.r(7, ft + 4, 2, 1, 'red_lo');
+    g.r(12, ft + 3, 3, 3, 'white');
+    g.r(12, ft + 3, 2, 3, OL);
+    g.r(11, ft + 2, 3, 1, haLo);
+    g.r(10, ft + 6, 2, 1, 'red_lo');
   }
 
-  // 帽子
+  // ── 帽子 ────────────────────────────────────────────────────────────
   if (o.hat === 2) {
-    // 廚師高帽
-    g.r(6, ht - 6, 12, 4, 'shirt_wht');
-    g.r(7, ht - 8, 10, 2, 'white');
-    g.r(6, ht - 6, 12, 1, 'white');
-    g.r(6, ht - 2, 12, 1, 'gray_70');
-    g.r(7, ht, 10, 1, 'gray_90');
+    g.r(9, ht - 7, 14, 5, 'shirt_wht'); // 廚師高帽
+    g.r(10, ht - 10, 12, 3, 'white');
+    g.r(9, ht - 7, 14, 1, 'white');
+    g.r(9, ht - 2, 14, 1, 'gray_70');
+    g.r(10, ht, 12, 1, 'gray_90');
   } else if (o.hat === 1) {
-    g.r(7, ht - 1, 10, 2, o.hatCol);
-    g.r(7, ht - 1, 10, 1, shade(o.hatCol, 'white', 0.3));
-    g.r(dir === 'E' ? 15 : 7, ht + 1, dir === 'E' ? 6 : 12, 1, shade(o.hatCol, 'black', 0.3));
+    g.r(10, ht - 1, 12, 3, o.hatCol);
+    g.r(10, ht - 1, 12, 1, shade(o.hatCol, 'white', 0.3));
+    g.r(dir === 'E' ? 20 : 10, ht + 2, dir === 'E' ? 8 : 14, 1, shade(o.hatCol, 'black', 0.3));
   } else if (o.hat === 3) {
-    g.r(7, ht + 2, 10, 1, 'red');
-    g.r(16, ht + 2, 2, 1, 'red');
+    g.r(10, ht + 3, 12, 2, 'red');
+    g.r(21, ht + 3, 3, 2, 'red');
+    g.r(10, ht + 3, 12, 1, 'red_hi');
   } else if (o.hat === 5) {
-    g.r(7, ht - 1, 10, 1, o.hatCol);
-    g.r(15, ht + 3, 6, 1, shade(o.hatCol, 'black', 0.25));
+    g.r(10, ht - 1, 12, 1, o.hatCol);
+    g.r(20, ht + 4, 8, 1, shade(o.hatCol, 'black', 0.25));
   }
 
-  // 生氣：臉部泛紅 + 頭側怒氣符號（血管十字）
+  // ── 生氣：臉部泛紅 + 頭側怒氣符號（眼睛必須保持看得見）─────────────────
   if (pose === 'angry') {
-    g.dith(8, ft, 8, 6, 'red_hi', 'clear', DITHER.b37);
-    g.r(9, ft + 1, 2, 1, OL);
-    g.r(13, ft + 1, 2, 1, OL);
-    // 怒氣符號：畫在頭部右側（不遮住臉、也不在頭頂最高的 6 列）
-    const ax = 18;
-    const ay = ft + 1;
-    g.r(ax, ay + 2, 5, 1, 'red');
-    g.r(ax + 2, ay, 1, 5, 'red');
+    // 兩頰網點泛紅（只蓋臉頰，不蓋眼睛）
+    g.dith(11, ft + 5, 3, 3, 'red_hi', 'clear', DITHER.b50);
+    g.dith(18, ft + 5, 3, 3, 'red_hi', 'clear', DITHER.b50);
+    // 怒眉（內低外高）＋ < > 眼型
+    g.r(12, ft + 1, 3, 1, OL);
+    g.r(17, ft + 1, 3, 1, OL);
+    g.r(12, ft + 2, 2, 1, OL);
+    g.r(18, ft + 2, 2, 1, OL);
+    g.r(12, ft + 3, 2, 2, 'white');
+    g.r(18, ft + 3, 2, 2, 'white');
+    g.r(12, ft + 3, 2, 1, OL);
+    g.r(18, ft + 4, 2, 1, OL);
+    g.r(13, ft + 4, 1, 1, OL);
+    g.r(17, ft + 3, 1, 1, OL);
+    // 張嘴生氣
+    g.r(14, ft + 6, 4, 2, 'red_lo');
+    g.r(15, ft + 6, 2, 1, OL);
+    const ax = 25;
+    const ay = ft - 2;
+    g.r(ax, ay + 3, 7, 1, 'red');
+    g.r(ax + 3, ay, 1, 7, 'red');
     g.p(ax, ay, 'red_hi');
-    g.p(ax + 4, ay + 4, 'red_hi');
-    g.p(ax, ay + 4, 'red_hi');
-    g.p(ax + 4, ay, 'red_hi');
+    g.p(ax + 6, ay + 6, 'red_hi');
+    g.p(ax, ay + 6, 'red_hi');
+    g.p(ax + 6, ay, 'red_hi');
   }
 }
 
@@ -806,9 +914,10 @@ function paintPerson(c, o) {
 /**
  * 畫一個人（腳底中心對齊 x, y）。
  * opts: {dir:'N'|'S'|'E'|'W', frame, pose:'walk'|'idle'|'carry'|'eat'|'angry'|'seated',
- *        seated (pose 的別名), appearance, mood, uniform, kind, blink, style}
+ *        seated (pose 的別名), appearance, mood, uniform, kind, blink, style, shadows}
  * 姿勢全部由既有欄位推導（floor.js 依 state / dir / seatedDir / frame / mood 決定），
  * 不需要新增任何 state 欄位。
+ * `shadows: false` 會連貼圖裡的接觸陰影一起不畫（view.fx.shadows）。
  */
 export function drawPerson(ctx, appearance, x, y, opts = {}) {
   if (!ctx) return null;
@@ -826,11 +935,14 @@ export function drawPerson(ctx, appearance, x, y, opts = {}) {
     ? o.pose
     : (o.seated ? 'seated' : 'walk');
   const blink = o.blink ? 1 : 0;
-  const key = `p2|${q.hair}|${q.skin}|${q.shirt}|${q.pants}|${q.hat}|${q.hatCol}|${q.shoe}|${style}|${dir}|${frame & 3}|${pose}|${uniform || ''}|${kind || ''}|${blink}`;
+  // 家人身高差：-1 / 0 / +1 px（同一 sprite 快取需分開）
+  const stature = o.stature === 1 ? 1 : o.stature === -1 ? -1 : 0;
+  const shadows = o.shadows !== false;
+  const key = `p4|${q.hair}|${q.skin}|${q.shirt}|${q.pants}|${q.hat}|${q.hatCol}|${q.shoe}|${style}|${dir}|${frame & 3}|${pose}|${uniform || ''}|${kind || ''}|${blink}|s${stature}|w${shadows ? 1 : 0}`;
   const paint = (c) => paintPerson(c, {
     dir, frame, pose, flip, hair: q.hair, skin: q.skin, shirt: q.shirt,
     pants: q.pants, hat: q.hat, hatCol: q.hatCol, shoe: q.shoe, uniform, kind, style, blink,
-    mood: o.mood,
+    mood: o.mood, stature, shadows,
   });
   const dx = Math.round(x - PERSON_W / 2);
   const dy = Math.round(y - PERSON_ANCHOR);
@@ -1019,6 +1131,76 @@ export function drawBubble(ctx, kind, x, y, frame = 0) {
   return BUBBLE_BOX;
 }
 const BUBBLE_BOX = { x: 0, y: 0, w: 20, h: 20 };
+
+// ===========================================================================
+// 3b. 人數徽章（候位／同桌人數；手繪 0–9 像素字，不使用 canvas 文字 API）
+// ===========================================================================
+
+/** 3×5 手繪數字（'1' 為亮點）。 */
+export const BADGE_DIGITS = {
+  0: ['111', '101', '101', '101', '111'],
+  1: ['010', '110', '010', '010', '111'],
+  2: ['111', '001', '111', '100', '111'],
+  3: ['111', '001', '111', '001', '111'],
+  4: ['101', '101', '111', '001', '001'],
+  5: ['111', '100', '111', '001', '111'],
+  6: ['111', '100', '111', '101', '111'],
+  7: ['111', '001', '001', '010', '010'],
+  8: ['111', '101', '111', '101', '111'],
+  9: ['111', '101', '111', '001', '111'],
+};
+
+/** 徽章尺寸：1 位數 9×9、2 位數 13×9（維持 1px 描邊與 1px 間距）。 */
+export function partyBadgeSize(n) {
+  const d = String(Math.max(0, Math.min(99, Math.round(Number(n) || 0)))).length;
+  return { w: d <= 1 ? 9 : 13, h: 9, digits: d };
+}
+
+/**
+ * 畫人數徽章（米色底＋1px 深框＋手繪數字＋朝下的 1px 尖角）。
+ * x = 水平中心，y = 徽章底緣（尖角尖端）。回傳 {x,y,w,h}（左上角）。
+ */
+export function drawPartyBadge(ctx, n, x, y, opts = {}) {
+  if (!ctx) return null;
+  const count = Math.max(0, Math.min(99, Math.round(Number(n) || 0)));
+  const sz = partyBadgeSize(count);
+  const box = sz.w;
+  const key = `pb|${count}`;
+  const cv = cachedSprite(key, box, 12, (c) => {
+    const g = mkPainter(c, box, false);
+    // 尖角（朝下）
+    g.r(3, 9, 3, 1, 'furn_outline');
+    g.r(4, 10, 1, 1, 'furn_outline');
+    g.p(4, 9, 'cloth_cream');
+    // 米色底 + 1px 深框
+    g.r(0, 0, box, 9, 'furn_outline');
+    g.r(1, 1, box - 2, 7, 'cloth_cream');
+    g.r(1, 1, box - 2, 1, 'cloth_white');
+    g.r(1, 7, box - 2, 1, 'cloth_hem');
+    // 手繪數字
+    const s = String(count);
+    for (let i = 0; i < s.length; i++) {
+      const rows = BADGE_DIGITS[s.charCodeAt(i) - 48] || BADGE_DIGITS[0];
+      g.stamp(2 + i * 4, 2, rows, { 1: 'top_dark' });
+    }
+  });
+  const dx = Math.round(x - box / 2);
+  const dy = Math.round(y - 11);
+  if (cv) ctx.drawImage(cv, dx, dy);
+  else drawUncached(ctx, box, 12, dx, dy, () => {
+    const g = mkPainter(ctx, box, false);
+    g.r(0, 0, box, 9, 'furn_outline');
+    g.r(1, 1, box - 2, 7, 'cloth_cream');
+  });
+  if (opts.out) {
+    const o = opts.out;
+    o.x = dx;
+    o.y = dy;
+    o.w = box;
+    o.h = 12;
+  }
+  return { x: dx, y: dy, w: box, h: 12 };
+}
 
 // ===========================================================================
 // 4. 地板／牆面／門／出餐口
@@ -1508,6 +1690,7 @@ function rotToDir(rot) {
  * 讓桌椅從木地板上「浮」起來，但完全不使用漸層或柔邊。
  */
 function baseShadow(g, geo, scale = 1) {
+  if (g.shadows === false) return; // view.fx.shadows === false → 完全不畫
   const w = geo.bw * scale;
   const h = geo.bh * scale;
   g.diaMask(geo.cx, geo.gy - h / 2 + g.u(2), w + g.u(2), h + g.u(2), 'shadow', DITHER.b25);
@@ -1698,7 +1881,313 @@ function paintTable(g, geo, o) {
 
 // ── 椅 ────────────────────────────────────────────────────────────────────
 /** 椅子：深色木框 + 彩色椅墊 + 背向坐向的椅背，與地板和桌面都明顯不同色。 */
-function paintChair(g, geo, o) {
+// ===========================================================================
+// 椅子（木椅／鐵管椅／沙發椅；56×28 tile 下手繪細節）
+// ===========================================================================
+
+/** 座墊色票（variant 0 = 既有色；同型椅子只做同色系微調，不同型之間保持辨識度）。 */
+const CHAIR_SEAT_VARIANTS = {
+  wood: ['teal', 'teal_md', 'cushion_teal', 'teal_lo'],
+  iron: ['cushion_gry', 'gray_50', 'gray_70', 'cushion_gry'],
+  soft: ['red', 'red_md', 'cushion_red', 'red_lo'],
+};
+
+/** 依 variant 取座墊色。 */
+function seatVariant(kind, variant) {
+  const list = CHAIR_SEAT_VARIANTS[kind] || CHAIR_SEAT_VARIANTS.wood;
+  const v = ((variant | 0) % list.length + list.length) % list.length;
+  return list[v];
+}
+
+/**
+ * 斜削椅腳：上粗下細、側面暗一階、腳底加深色接地塊。
+ * (x, yTop) 為腳的頂端左緣，yBot 為地面。
+ */
+function taperedLeg(g, x, yTop, yBot, col, o) {
+  const h = Math.round(yBot) - Math.round(yTop);
+  if (h <= 1) return;
+  const wTop = g.u(2);
+  const wBot = Math.max(2, wTop - g.u(1));
+  const steps = 3;
+  for (let i = 0; i < steps; i++) {
+    const y0 = Math.round(yTop + (h * i) / steps);
+    const y1 = Math.round(yTop + (h * (i + 1)) / steps);
+    const w = Math.round(wTop + ((wBot - wTop) * i) / steps);
+    g.r(x + Math.round((wTop - w) / 2), y0, w, Math.max(1, y1 - y0), col);
+    g.r(x + Math.round((wTop - w) / 2), y0, 1, Math.max(1, y1 - y0), 'furn_outline');
+    g.r(x + Math.round((wTop - w) / 2) + w - 1, y0, 1, Math.max(1, y1 - y0), shade(col, 'black', 0.3));
+  }
+  // 腳底接地（深色）
+  g.r(x, Math.round(yBot) - g.u(1), wBot + 1, g.u(1), shade(col, 'black', 0.62));
+  if (o && o.cap) g.r(x, Math.round(yBot) - g.u(1) - g.u(1), wBot + 1, g.u(1), 'black');
+}
+
+/** 椅腳的 4 個等角位置（座面四角，往下就是地板上的落點）。 */
+function chairLegSpots(geo, seatInset, seatLift) {
+  const hw = geo.bw / 2 - seatInset;
+  const hh = geo.bh / 2 - seatInset;
+  const bx = geo.cx;
+  const by = geo.gy - seatLift; // 座面底部的中心
+  return [
+    { x: bx - hw, y: by }, // W
+    { x: bx, y: by + hh }, // S
+    { x: bx + hw, y: by }, // E
+    { x: bx, y: by - hh }, // N
+  ];
+}
+
+/** 垂直圓管椅腳（等角：垂直線在螢幕上仍是垂直線）。 */
+function tubeLeg(g, x, yTop, yBot, w, face, hi, lo, foot) {
+  const h = Math.round(yBot) - Math.round(yTop);
+  if (h <= 0) return;
+  const x0 = Math.round(x - w / 2);
+  g.r(x0, Math.round(yTop), w, h, 'furn_outline');
+  g.r(x0, Math.round(yTop), Math.max(1, w - 1), h, face);
+  g.r(x0, Math.round(yTop), 1, h, hi);
+  if (w > 2) g.r(x0 + w - 1, Math.round(yTop), 1, h, lo);
+  if (foot) g.r(x0, Math.round(yBot) - g.u(1) - 1, w, g.u(1) + 1, 'black');
+}
+
+/** 手繪半圓彎管（頂端弧）：厚 thick、上緣高光、下緣描邊，不做任何擦除。 */
+function arcRail(g, cx, cy, halfW, thick, face, hi, ol) {
+  for (let i = -halfW; i <= halfW; i++) {
+    const t = i / Math.max(1, halfW);
+    const dy = -Math.round(Math.sqrt(Math.max(0, 1 - t * t)) * thick);
+    const x = Math.round(cx + i);
+    g.r(x, Math.round(cy + dy), 1, thick, face);
+    g.p(x, Math.round(cy + dy), hi);
+    g.p(x, Math.round(cy + dy) + thick, ol);
+  }
+}
+
+/** 木椅：斜削腳＋木紋座面（倒角）＋3 橫板條 2 立柱椅背＋榫接點。 */
+function paintChairWood(g, geo, o) {
+  const d = o.dir || 'S';
+  const OL = 'furn_outline';
+  const varN = o.variant | 0;
+  const frameCol = varN === 1 ? 'wood_md' : 'wood';
+  const frameHi = 'wood_hi';
+  const frameLo = 'wood_sh';
+  const seatCol = seatVariant('wood', varN);
+  baseShadow(g, geo, 0.7);
+
+  const seatLift = g.u(6); // 座面離地
+  const seatW = geo.bw - g.u(7);
+  const seatH = geo.bh - g.u(4);
+  const seatTop = geo.gy - seatLift - g.u(2);
+
+  // ── 椅腳（斜削，四隻都在座面四角正下方）──
+  const spots = chairLegSpots(geo, g.u(4), seatLift);
+  const backLegs = d === 'S' ? [3, 0] : d === 'N' ? [2, 1] : d === 'E' ? [2, 3] : [1, 0];
+  const frontLegs = d === 'S' ? [1, 2] : d === 'N' ? [0, 3] : d === 'E' ? [0, 1] : [2, 3];
+  for (const i of backLegs) taperedLeg(g, Math.round(spots[i].x - g.u(1)), spots[i].y, spots[i].y + seatLift, frameLo, null);
+  // 橫撐（左右各一根，從側面看得到）
+  g.r(Math.round(geo.cx - seatW / 2 + g.u(2)), Math.round(geo.gy - g.u(1)), Math.round(seatW - g.u(4)), g.u(1), frameLo);
+  for (const i of frontLegs) taperedLeg(g, Math.round(spots[i].x - g.u(1)), spots[i].y, spots[i].y + seatLift, frameCol, null);
+
+  // ── 座面（等角薄板：1px 描邊＋頂面木紋＋倒角）──
+  g.dia(geo.cx, seatTop, seatW + 2, seatH + 2, OL);
+  g.dia(geo.cx, seatTop + 1, seatW, seatH, frameHi);
+  g.dia(geo.cx, seatTop + 1 + g.u(1), seatW - g.u(3), seatH - g.u(1), frameCol);
+  // 前緣厚度帶
+  g.dia(geo.cx, seatTop + g.u(2), seatW, seatH - g.u(1), OL);
+  g.dia(geo.cx, seatTop + g.u(2) + 1, seatW - g.u(1), seatH - g.u(2), frameCol);
+  // 木紋（等角方向 2 條，隨 variant 位移）
+  const grain = (varN & 1) ? 1 : 0;
+  g.line(geo.cx - seatW / 2 + g.u(3), seatTop + seatH / 2 + grain, geo.cx, seatTop + seatH - g.u(1) + grain, frameLo);
+  g.line(geo.cx, seatTop + g.u(1) + grain, geo.cx + seatW / 2 - g.u(3), seatTop + seatH / 2 + grain, frameLo);
+  // 倒角：遠邊亮、近邊暗
+  g.line(geo.cx - seatW / 2, seatTop + seatH / 2 + 1, geo.cx, seatTop + 1, 'wood_hi');
+  g.line(geo.cx, seatTop + seatH + 1, geo.cx + seatW / 2, seatTop + seatH / 2 + 1, frameLo);
+  // 椅墊（每一種 variant 都有墊子，只是顏色／織紋不同）
+  g.dia(geo.cx, seatTop + g.u(1), seatW - g.u(4), seatH - g.u(3), seatCol);
+  g.dith(geo.cx - seatW / 2 + g.u(4), seatTop + g.u(2), seatW - g.u(8), g.u(3), mixHex(seatCol, '#ffffff', 0.35), 'clear', DITHER.b25);
+  g.dith(geo.cx - seatW / 2 + g.u(4), seatTop + g.u(2), seatW - g.u(8), g.u(3), shade(seatCol, 'black', 0.35), 'clear', varN & 1 ? DITHER.b12 : DITHER.sparse);
+  g.r(geo.cx - g.u(4), seatTop + g.u(1), g.u(3), 1, mixHex(seatCol, '#ffffff', 0.45));
+  // 有人坐 → 坐墊中間壓出凹痕（不用擦除，直接蓋深色帶）
+  if (o.seatOccupied) {
+    g.r(geo.cx - g.u(4), seatTop + g.u(2), g.u(8), 1, shade(seatCol, 'black', 0.42));
+    g.r(geo.cx - g.u(5), seatTop + g.u(3), g.u(10), 1, shade(seatCol, 'black', 0.28));
+  }
+
+  // ── 椅背：2 立柱 + 3 橫板條 + 圓角頂 ──
+  const backH = g.u(12) + (varN === 2 ? g.u(1) : 0);
+  const postW = g.u(2);
+  const gap = g.u(8);
+  const bxc = geo.cx;
+  const byBot = seatTop + g.u(1);
+  const byTop = byBot - backH;
+  const pxL = Math.round(bxc - gap - postW);
+  const pxR = Math.round(bxc + gap);
+  for (const px of [pxL, pxR]) {
+    g.r(px, byTop + 1, postW, backH - 1, OL);
+    g.r(px + 1, byTop + 2, postW - 2, backH - 3, frameCol);
+    g.r(px + 1, byTop + 2, 1, backH - 3, frameHi);
+    g.r(px + postW - 1, byTop + 2, 1, backH - 3, frameLo);
+  }
+  // 頂端圓角：最上面一列往內縮 1px（不用擦除）
+  g.r(pxL + 1, byTop + 1, postW - 1, 1, OL);
+  g.r(pxR, byTop + 1, postW - 1, 1, OL);
+  // 3 根橫向板條（上／中／下），板條上下各 1px 亮暗
+  const slatW = Math.round(gap * 2 + postW);
+  for (let i = 0; i < 3; i++) {
+    const sy = byTop + g.u(2) + Math.round((backH - g.u(5)) * (i / 2));
+    g.r(pxL, sy, slatW, g.u(2), OL);
+    g.r(pxL + 1, sy + 1, slatW - 2, Math.max(1, g.u(2) - 2), frameHi);
+    g.r(pxL + 1, sy + g.u(2) - 1, slatW - 2, 1, frameLo);
+    // 榫接：立柱與板條交接處的深色小點
+    g.p(pxL + 1, sy + g.u(1), 'wood_sh');
+    g.p(pxR + postW - 2, sy + g.u(1), 'wood_sh');
+  }
+  void d;
+}
+
+/** 鐵管椅：細圓管骨架（亮面＋暗面）、彎管靠背、繃緊布面、黑色腳墊。 */
+function paintChairIron(g, geo, o) {
+  const d = o.dir || 'S';
+  const OL = 'furn_outline';
+  const varN = o.variant | 0;
+  const tube = 'metal';
+  const tubeHi = 'metal_hi';
+  const tubeLo = 'metal_lo';
+  const fabric = seatVariant('iron', varN);
+  baseShadow(g, geo, 0.6);
+
+  const seatLift = g.u(8);
+  const seatW = geo.bw - g.u(8);
+  const seatH = geo.bh - g.u(5);
+  const seatTop = geo.gy - seatLift - g.u(1);
+  const tw = g.u(1) + 1; // 管徑（細管但至少 3px 才看得出高光／暗面）
+
+  const spots = chairLegSpots(geo, g.u(3), seatLift);
+  const backLegs = d === 'S' ? [3, 0] : d === 'N' ? [2, 1] : d === 'E' ? [2, 3] : [1, 0];
+  const frontLegs = d === 'S' ? [1, 2] : d === 'N' ? [0, 3] : d === 'E' ? [0, 1] : [2, 3];
+  for (const i of backLegs) tubeLeg(g, spots[i].x, spots[i].y, spots[i].y + seatLift, tw, shade(tube, 'black', 0.25), tube, tubeLo, true);
+  // 座下橫撐（細管）
+  g.r(Math.round(geo.cx - seatW / 2 + g.u(2)), Math.round(geo.gy - g.u(3)), Math.round(seatW - g.u(4)), 1, OL);
+  g.r(Math.round(geo.cx - seatW / 2 + g.u(2)), Math.round(geo.gy - g.u(3)) + 1, Math.round(seatW - g.u(4)), 1, tubeLo);
+  // 座面（繃布：網點織紋 + 深色邊框）
+  g.dia(geo.cx, seatTop, seatW + 2, seatH + 2, OL);
+  g.dia(geo.cx, seatTop + 1, seatW, seatH, fabric);
+  g.dith(geo.cx - seatW / 2 + g.u(3), seatTop + g.u(2), seatW - g.u(6), seatH - g.u(4), shade(fabric, 'black', 0.3), 'clear', DITHER.b12);
+  g.r(geo.cx - Math.round(seatW / 2) + g.u(4), seatTop + g.u(1), seatW - g.u(8), 1, mixHex(fabric, '#ffffff', 0.45));
+  if (o.seatOccupied) {
+    // 有人坐：繃布被壓出皺褶
+    g.r(geo.cx - g.u(4), seatTop + g.u(2), g.u(8), 1, shade(fabric, 'black', 0.4));
+    g.r(geo.cx - g.u(6), seatTop + g.u(3), g.u(12), 1, shade(fabric, 'black', 0.24));
+  }
+  for (const i of frontLegs) tubeLeg(g, spots[i].x, spots[i].y, spots[i].y + seatLift, tw, tube, tubeHi, tubeLo, true);
+
+  // ── 彎管靠背：兩根立管向上，頂端一段半圓彎管 ──
+  const backH = g.u(12) + (varN & 1);
+  const postW = Math.max(2, g.u(1) + 1);
+  const gap = g.u(7);
+  const bxc = geo.cx;
+  const byBot = seatTop + g.u(1);
+  const railCy = byBot - backH;
+  const pxL = Math.round(bxc - gap);
+  const pxR = Math.round(bxc + gap - postW);
+  for (const px of [pxL, pxR]) {
+    const x0 = px;
+    g.r(x0, railCy, postW, byBot - railCy, OL);
+    g.r(x0, railCy, postW - 1, byBot - railCy, tube);
+    g.r(x0, railCy, 1, byBot - railCy, tubeHi);
+    if (postW > 2) g.r(x0 + postW - 1, railCy, 1, byBot - railCy, tubeLo);
+  }
+  arcRail(g, bxc, railCy, gap + Math.round(postW / 2), Math.max(2, g.u(2)), tube, tubeHi, OL);
+  // 中間橫管
+  const midY = Math.round(byBot - backH * 0.45);
+  g.r(pxL, midY, pxR + postW - pxL, 1, OL);
+  g.r(pxL, midY + 1, pxR + postW - pxL, Math.max(1, postW - 1), tube);
+  g.r(pxL + 1, midY + 1, Math.max(1, pxR - pxL - 2), 1, tubeHi);
+}
+
+/** 沙發椅：厚坐墊（雙色調＋壓線縫線）＋扶手＋橫向壓紋椅背。 */
+function paintChairSoft(g, geo, o) {
+  const d = o.dir || 'S';
+  const OL = 'furn_outline';
+  const varN = o.variant | 0;
+  const fabric = seatVariant('soft', varN);
+  const fabHi = mixHex(fabric, '#ffffff', 0.3);
+  const fabLo = shade(fabric, 'black', 0.32);
+  const woodCol = 'wood_md';
+  baseShadow(g, geo, 0.8);
+
+  const seatLift = g.u(4);
+  const seatW = geo.bw - g.u(6);
+  const seatH = geo.bh - g.u(4);
+  const seatTop = geo.gy - seatLift - g.u(3);
+
+  // 椅腳（短木腳）
+  const spots = chairLegSpots(geo, g.u(5), seatLift);
+  const backLegs = d === 'S' ? [3, 0] : d === 'N' ? [2, 1] : d === 'E' ? [2, 3] : [1, 0];
+  const frontLegs = d === 'S' ? [1, 2] : d === 'N' ? [0, 3] : d === 'E' ? [0, 1] : [2, 3];
+  for (const i of backLegs) taperedLeg(g, Math.round(spots[i].x - g.u(1)), spots[i].y, spots[i].y + seatLift, shade(woodCol, 'black', 0.2), null);
+  for (const i of frontLegs) taperedLeg(g, Math.round(spots[i].x - g.u(1)), spots[i].y, spots[i].y + seatLift, woodCol, null);
+
+  // ── 椅背軟墊（先畫，扶手才會壓在前面）──
+  const backH = g.u(12) + (varN === 1 ? g.u(1) : 0);
+  const bwid = Math.round(seatW - g.u(2));
+  const bx = Math.round(geo.cx - bwid / 2);
+  const byBot = seatTop + g.u(1);
+  const byTop = byBot - backH;
+  g.r(bx - 1, byTop, bwid + 2, backH + 2, OL);
+  g.r(bx, byTop + 1, bwid, backH, fabric);
+  g.r(bx + 1, byTop, bwid - 2, g.u(1) + 1, fabHi);
+  g.r(bx, byTop + 1, 1, backH, fabHi);
+  g.r(bx + bwid - 1, byTop + 1, 1, backH, fabLo);
+  g.r(bx, byBot, bwid, 1, fabLo);
+  // 橫向壓紋（3 條）+ 鈕扣
+  for (let i = 0; i < 3; i++) {
+    const y = byTop + g.u(3) + i * g.u(3);
+    g.r(bx + 1, y, bwid - 2, 1, fabLo);
+    g.r(bx + 1, y + 1, bwid - 2, 1, shade(fabric, 'black', 0.16));
+    if (i === 1) {
+      g.p(bx + Math.round(bwid / 2) - 1, y + 1, shade(fabric, 'black', 0.6));
+      g.p(bx + Math.round(bwid / 2), y + 1, shade(fabric, 'black', 0.6));
+    }
+  }
+
+  // ── 座墊（厚：頂面亮、前緣中、底緣暗 + 壓線與縫線點）──
+  g.dia(geo.cx, seatTop, seatW + 2, seatH + 2, OL);
+  g.dia(geo.cx, seatTop + 1, seatW, seatH, fabHi);
+  g.dia(geo.cx, seatTop + 1, seatW - g.u(2), seatH - g.u(1), fabric);
+  g.dia(geo.cx, seatTop + g.u(3), seatW, seatH - g.u(1), OL);
+  g.dia(geo.cx, seatTop + g.u(3) + 1, seatW - 1, seatH - g.u(2), fabLo);
+  const stitchCol = shade(fabric, 'black', 0.5);
+  for (let i = 0; i < 4; i++) {
+    const t = (i + 1) / 5;
+    const sx = geo.cx - seatW / 2 + seatW * t;
+    const sy = seatTop + seatH / 2 + 1 + (i % 2 ? 1 : -1);
+    g.p(Math.round(sx), Math.round(sy), stitchCol);
+  }
+  g.r(geo.cx - g.u(4), seatTop + g.u(2), g.u(8), 1, fabLo);
+  if (o.seatOccupied) {
+    // 有人坐：厚坐墊被壓沉（兩道凹痕）
+    g.r(geo.cx - g.u(5), seatTop + g.u(2), g.u(10), 1, shade(fabric, 'black', 0.45));
+    g.r(geo.cx - g.u(7), seatTop + g.u(3), g.u(14), 1, shade(fabric, 'black', 0.3));
+  }
+
+  // ── 扶手（左右各一，畫在最上層並突出椅背兩側才看得見）──
+  const armW = g.u(2) + 1;
+  const armTop = seatTop;
+  const armH = g.u(4);
+  for (const side of [-1, 1]) {
+    const acx = Math.round(geo.cx + side * (seatW / 2 + g.u(1)));
+    const x0 = acx - Math.round(armW / 2);
+    g.r(x0, armTop - armH, armW, armH + g.u(3), OL);
+    g.r(x0 + 1, armTop - armH + 1, armW - 2, armH + g.u(1), fabric);
+    g.r(x0 + 1, armTop - armH + 1, armW - 2, 1, fabHi);
+    g.r(x0 + 1, armTop - armH + 2, 1, armH + g.u(1) - 1, side < 0 ? fabHi : fabLo);
+    g.r(x0 + 1, armTop + g.u(1), armW - 2, 1, fabLo);
+    // 支撐柱（扶手前端往下接到地面）
+    g.r(acx - 1, armTop + g.u(2), 2, seatLift - g.u(2), shade(woodCol, 'black', 0.35));
+  }
+  void d;
+}
+
+/** 舊版通用椅（凳子／長凳沿用）。 */
+function paintChairSimple(g, geo, o) {
   const d = o.dir || 'S';
   const seatCol = o.seat || 'cushion_teal';
   const frameCol = o.frameCol || 'wood_sh';
@@ -2514,79 +3003,80 @@ function paintUnknown(g, geo, o) {
  */
 const FURNITURE_ART = {
   // 桌（6+）：二人桌明顯小一號；桌面一律「亮桌布」或「深木桌」以和木地板拉開對比
-  table_2a: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S'] }) },
-  table_2b: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_cream', facings: ['N', 'S'] }) },
-  table_4a: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S', 'E', 'W'] }) },
-  table_4b: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }) },
-  table_6a: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'top_dark', facings: ['N', 'S', 'E', 'W'] }) },
-  table_6b: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }) },
-  table_long: { hgt: 18, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S', 'E', 'W'] }) },
+  table_2a: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S'] }) },
+  table_2b: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_cream', facings: ['N', 'S'] }) },
+  table_4a: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S', 'E', 'W'] }) },
+  table_4b: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }) },
+  table_6a: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'top_dark', facings: ['N', 'S', 'E', 'W'] }) },
+  table_6b: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }) },
+  table_long: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S', 'E', 'W'] }) },
 
-  // 椅（3）＋沙發／長凳：淺色木框 + 彩色椅墊（與地板、桌面都拉開色調），背向坐向
-  chair_wood: { hgt: 14, dirs: true, paint: (g, geo, o) => paintChair(g, geo, { ...o, seat: 'teal', frameCol: 'wood', frameHi: 'wood_hi' }) },
-  chair_iron: { hgt: 21, dirs: true, paint: (g, geo, o) => paintChair(g, geo, { ...o, seat: 'cushion_gry', frameCol: 'metal', frameHi: 'metal_hi' }) },
-  chair_stool: { hgt: 11, paint: (g, geo, o) => paintChair(g, geo, { ...o, stool: true, seat: 'teal', frameCol: 'wood', frameHi: 'wood_hi' }) },
-  chair_bench: { hgt: 16, paint: (g, geo, o) => paintChair(g, geo, { ...o, stool: true, seat: 'wood_hi', frameCol: 'wood_md', frameHi: 'wood_hi' }) },
-  chair_soft: { hgt: 15, dirs: true, paint: (g, geo, o) => paintChair(g, geo, { ...o, seat: 'red', frameCol: 'wood', frameHi: 'wood_hi' }) },
-  sofa: { hgt: 22, paint: paintSofa },
+  // 椅（3）＋沙發／長凳：三種椅子各自手繪（木椅斜削腳＋板條背、鐵管椅彎管＋繃布、
+  // 沙發椅厚坐墊＋扶手），座墊顏色依 variant（座標 hash）微調，背向坐向
+  chair_wood: { hgt: 26, dirs: true, seatVariants: true, paint: paintChairWood },
+  chair_iron: { hgt: 32, dirs: true, seatVariants: true, paint: paintChairIron },
+  chair_soft: { hgt: 30, dirs: true, seatVariants: true, paint: paintChairSoft },
+  chair_stool: { hgt: 15, paint: (g, geo, o) => paintChairSimple(g, geo, { ...o, stool: true, seat: 'teal', frameCol: 'wood', frameHi: 'wood_hi' }) },
+  chair_bench: { hgt: 21, paint: (g, geo, o) => paintChairSimple(g, geo, { ...o, stool: true, seat: 'wood_hi', frameCol: 'wood_md', frameHi: 'wood_hi' }) },
+  sofa: { hgt: 29, paint: paintSofa },
 
   // 櫃台（2）＋帶位台
-  counter: { hgt: 22, paint: paintCounter },
-  cashier_counter: { hgt: 24, paint: (g, geo, o) => paintCounter(g, geo, { ...o, cashier: true }) },
-  bar_counter: { hgt: 26, paint: (g, geo, o) => paintCounter(g, geo, { ...o, bar: true, menu: true }) },
-  host_podium: { hgt: 20, paint: paintPodium },
+  counter: { hgt: 29, paint: paintCounter },
+  cashier_counter: { hgt: 32, paint: (g, geo, o) => paintCounter(g, geo, { ...o, cashier: true }) },
+  bar_counter: { hgt: 35, paint: (g, geo, o) => paintCounter(g, geo, { ...o, bar: true, menu: true }) },
+  host_podium: { hgt: 27, paint: paintPodium },
 
   // 廚房（3+）
-  stove: { hgt: 24, anim: true, paint: paintStove },
-  prep_table: { hgt: 21, paint: paintPrepTable },
-  sink: { hgt: 21, anim: true, paint: paintSink },
-  fridge: { hgt: 39, anim: true, paint: paintFridge },
-  freezer: { hgt: 30, paint: (g, geo, o) => paintFridge(g, geo, { ...o, freezer: true }) },
-  oven: { hgt: 24, anim: true, paint: paintOven },
-  hood: { hgt: 12, mount: 24, paint: paintHood },
-  fryer: { hgt: 21, anim: true, paint: paintFryer },
-  dishwasher: { hgt: 22, anim: true, paint: paintDishwasher },
-  rice_cooker: { hgt: 15, anim: true, paint: paintRiceCooker },
+  stove: { hgt: 32, anim: true, paint: paintStove },
+  prep_table: { hgt: 28, paint: paintPrepTable },
+  sink: { hgt: 28, anim: true, paint: paintSink },
+  fridge: { hgt: 52, anim: true, paint: paintFridge },
+  freezer: { hgt: 40, paint: (g, geo, o) => paintFridge(g, geo, { ...o, freezer: true }) },
+  oven: { hgt: 32, anim: true, paint: paintOven },
+  hood: { hgt: 16, mount: 32, paint: paintHood },
+  fryer: { hgt: 28, anim: true, paint: paintFryer },
+  dishwasher: { hgt: 29, anim: true, paint: paintDishwasher },
+  rice_cooker: { hgt: 20, anim: true, paint: paintRiceCooker },
 
   // 廁所（2+）
-  toilet: { hgt: 18, dirs: true, paint: paintToilet },
-  washbasin: { hgt: 21, anim: true, paint: paintWashbasin },
-  urinal: { hgt: 18, mount: 12, paint: paintUrinal },
-  hand_dryer: { hgt: 9, mount: 18, paint: paintDryer },
-  mirror: { hgt: 15, mount: 22, paint: paintMirror },
+  toilet: { hgt: 24, dirs: true, paint: paintToilet },
+  washbasin: { hgt: 28, anim: true, paint: paintWashbasin },
+  urinal: { hgt: 24, mount: 16, paint: paintUrinal },
+  hand_dryer: { hgt: 12, mount: 24, paint: paintDryer },
+  mirror: { hgt: 20, mount: 29, paint: paintMirror },
 
   // 設備（8）
-  cctv: { hgt: 10, mount: 24, anim: true, paint: paintCCTV },
-  aircon: { hgt: 14, mount: 21, anim: true, paint: paintAircon },
-  speaker: { hgt: 15, mount: 18, anim: true, paint: paintSpeaker },
-  extinguisher: { hgt: 22, mount: 6, paint: paintExtinguisher },
-  security_host: { hgt: 16, mount: 18, anim: true, paint: paintSecurityHost },
-  infrared: { hgt: 8, mount: 21, paint: paintInfrared },
-  lamp: { hgt: 39, anim: true, paint: paintLamp },
-  ceiling_lamp: { hgt: 16, mount: 42, anim: true, paint: paintCeilingLamp },
-  trash_bin: { hgt: 16, paint: paintTrashBin },
-  heater: { hgt: 18, anim: true, paint: paintHeater },
+  cctv: { hgt: 13, mount: 32, anim: true, paint: paintCCTV },
+  aircon: { hgt: 19, mount: 28, anim: true, paint: paintAircon },
+  speaker: { hgt: 20, mount: 24, anim: true, paint: paintSpeaker },
+  extinguisher: { hgt: 29, mount: 8, paint: paintExtinguisher },
+  security_host: { hgt: 21, mount: 24, anim: true, paint: paintSecurityHost },
+  infrared: { hgt: 11, mount: 28, paint: paintInfrared },
+  lamp: { hgt: 52, anim: true, paint: paintLamp },
+  ceiling_lamp: { hgt: 21, mount: 56, anim: true, paint: paintCeilingLamp },
+  trash_bin: { hgt: 21, paint: paintTrashBin },
+  heater: { hgt: 24, anim: true, paint: paintHeater },
 
   // 裝潢（10+）
-  plant: { hgt: 26, paint: paintPlant },
-  painting: { hgt: 18, mount: 21, paint: paintPainting },
+  plant: { hgt: 35, paint: paintPlant },
+  painting: { hgt: 24, mount: 28, paint: paintPainting },
   rug: { hgt: 0, paint: paintRug },
-  neon_sign: { hgt: 18, mount: 22, anim: true, accent: true, paint: paintNeonSign },
-  aquarium: { hgt: 22, anim: true, paint: paintAquarium },
-  partition: { hgt: 30, paint: paintPartition },
-  menu_board: { hgt: 30, mount: 6, accent: true, paint: paintMenuBoard },
-  tv: { hgt: 18, mount: 15, anim: true, paint: paintTV },
-  banner: { hgt: 18, mount: 27, accent: true, paint: paintBanner },
-  clock: { hgt: 12, mount: 24, anim: true, paint: paintClock },
-  vase: { hgt: 15, paint: paintVase },
-  coat_rack: { hgt: 39, paint: paintCoatRack },
-  vending_machine: { hgt: 39, anim: true, paint: paintVending },
-  water_cooler: { hgt: 33, paint: paintWaterCooler },
-  shelf: { hgt: 30, paint: paintShelf },
-  lantern_string: { hgt: 21, mount: 27, accent: true, paint: paintLanternString },
-  fountain: { hgt: 24, anim: true, paint: paintFountain },
+  neon_sign: { hgt: 24, mount: 29, anim: true, accent: true, paint: paintNeonSign },
+  aquarium: { hgt: 29, anim: true, paint: paintAquarium },
+  partition: { hgt: 40, paint: paintPartition },
+  menu_board: { hgt: 40, mount: 8, accent: true, paint: paintMenuBoard },
+  tv: { hgt: 24, mount: 20, anim: true, paint: paintTV },
+  banner: { hgt: 24, mount: 36, accent: true, paint: paintBanner },
+  clock: { hgt: 16, mount: 32, anim: true, paint: paintClock },
+  vase: { hgt: 20, paint: paintVase },
+  coat_rack: { hgt: 52, paint: paintCoatRack },
+  vending_machine: { hgt: 52, anim: true, paint: paintVending },
+  water_cooler: { hgt: 44, paint: paintWaterCooler },
+  shelf: { hgt: 40, paint: paintShelf },
+  lantern_string: { hgt: 28, mount: 36, accent: true, paint: paintLanternString },
+  fountain: { hgt: 32, anim: true, paint: paintFountain },
 
-  unknown: { hgt: 21, paint: paintUnknown },
+  unknown: { hgt: 28, paint: paintUnknown },
 };
 
 // typeId 關鍵字 → 美術 key（順序即優先序；越特定越前面）
@@ -2654,6 +3144,9 @@ export function resolveFurnitureArt(typeId, opts = {}) {
  * 畫一件傢俱。x,y 為腳印菱形中心（螢幕座標）。
  * opts: {w,h（佔用格數）, rot, frame, broken, ghost, valid, seats}
  */
+/** 椅子「往桌子方向推／往外拉」的等角軸向位移向量。 */
+const PULL_VEC = { N: [1, -1], S: [-1, 1], E: [1, 1], W: [-1, -1] };
+
 export function drawFurniture(ctx, typeId, x, y, opts = {}) {
   if (!ctx) return null;
   const o = opts || {};
@@ -2667,15 +3160,32 @@ export function drawFurniture(ctx, typeId, x, y, opts = {}) {
   const geo = artGeo(gw, gh, art.hgt, (art.mount || 0) + lift);
   const dir = art.dirs ? rotToDir(o.rot) : 'S';
   const frame = art.anim ? ((Number(o.frame) | 0) & 3) : 0;
+  // 接觸陰影（view.fx.shadows）
+  const shadows = o.shadows !== false;
+  // 座墊／木紋變化：只有宣告 seatVariants 的美術吃這個鍵（0..3，僅 4 種快取）
+  const variant = art.seatVariants ? (((Number(o.variant) | 0) % 4) + 4) % 4 : 0;
+  // 空椅收進桌下／有人往外拉：整張貼圖沿等角軸向位移（貼圖本身可共用）
+  const seatPull = Number(o.seatPull);
+  let pullX = 0;
+  let pullY = 0;
+  if (art.dirs && Number.isFinite(seatPull) && seatPull !== 0) {
+    const fv = PULL_VEC[dir] || [0, 0];
+    const k = Math.max(-60, Math.min(60, seatPull)) / 100;
+    pullX = Math.round(fv[0] * HALF_W * k);
+    pullY = Math.round(fv[1] * HALF_H * k);
+  }
   // 只有用到場地強調色的傢俱才把 accent 放進快取鍵（避免快取爆量）
   const acc = typeof o.accent === 'string' ? o.accent : null;
   const accKey = art.accent && acc ? `|${acc}` : '';
   const occKey = art.takesOccupancy ? (Number(o.occupied) | 0) : 0;
   const dishKey = art.takesOccupancy && o.dishes && o.dishes.length ? '|' + o.dishes.join('') : '';
-  const cacheKey = `f|${key}|${gw}x${gh}|${dir}|${frame}|${o.broken ? 'b' : ''}|${o.rugCol || ''}${accKey}|${occKey}${dishKey}|${wall || ''}`;
+  // 椅子：有人坐（坐墊壓痕）也要分開快取
+  const seatKey2 = art.seatVariants && o.seatOccupied ? '|c1' : '';
+  const cacheKey = `f|${key}|${gw}x${gh}|${dir}|${frame}|${o.broken ? 'b' : ''}|${o.rugCol || ''}${accKey}|${occKey}${dishKey}|${wall || ''}|v${variant}${seatKey2}|w${shadows ? 1 : 0}`;
   const paint = (c) => {
     const g = mkPainter(c, geo.W, false);
-    art.paint(g, geo, { ...o, dir, frame });
+    g.shadows = shadows;
+    art.paint(g, geo, { ...o, dir, frame, variant, shadows, seatOccupied: !!o.seatOccupied });
     if (o.broken) {
       // 損壞：紅色叉叉 + 警示
       const bx = geo.cx;
@@ -2687,8 +3197,8 @@ export function drawFurniture(ctx, typeId, x, y, opts = {}) {
       g.r(bx + 5, by - 8, 2, 2, 'gray_15');
     }
   };
-  const dx = Math.round(x - geo.cx);
-  const dy = Math.round(y - geo.gy);
+  const dx = Math.round(x - geo.cx) + pullX;
+  const dy = Math.round(y - geo.gy) + pullY;
   let cv = cachedSprite(cacheKey, geo.W, geo.H, paint);
   if (cv && o.ghost) {
     const tint = PALETTE[o.valid === false ? 'ghost_bad' : 'ghost_ok'];
@@ -2702,9 +3212,11 @@ export function drawFurniture(ctx, typeId, x, y, opts = {}) {
   out.y = dy;
   out.w = geo.W;
   out.h = geo.H;
-  out.cx = Math.round(x);
-  out.gy = Math.round(y);
+  out.cx = Math.round(x) + pullX;
+  out.gy = Math.round(y) + pullY;
   out.dir = dir;
+  out.variant = variant;
+  out.pulled = pullX !== 0 || pullY !== 0;
   return out;
 }
 
@@ -3090,27 +3602,38 @@ function vignette(ctx, w, h, dark, light, maxBand) {
 }
 
 /**
+ * 晴天的窗光光柱（兩道從畫面上方斜射下來的光束）。
+ * 玩家回饋覺得這兩道光會干擾閱讀店內配置，所以預設關閉；
+ * 想開回來把這裡改成 true 即可（其餘晴天效果如浮塵不受影響）。
+ */
+export const SUN_SHAFTS = false;
+
+/**
  * 全畫面天氣覆蓋層（畫在最上層）。
  * @param {CanvasRenderingContext2D} ctx
  * @param {string} weather sunny|cloudy|rain|storm|cold|heat
  * @param {number} w @param {number} h 邏輯尺寸
  * @param {number} tick 影格計數（60fps）
+ * @param {{shafts?: boolean}} [opts] 可覆寫光柱開關
  */
-export function drawWeather(ctx, weather, w, h, tick) {
+export function drawWeather(ctx, weather, w, h, tick, opts) {
   if (!ctx) return;
   const kind = WEATHER_KINDS.indexOf(weather) >= 0 ? weather : 'sunny';
   const W = Math.round(w);
   const H = Math.round(h);
   const t = Number(tick) || 0;
   if (kind === 'sunny') {
-    // 光柱（硬邊網點斜帶，收斂在畫面上半部，避免壓過室內）
-    for (let s = 0; s < 2; s++) {
-      const x0 = Math.round(W * (0.14 + s * 0.34));
-      const wdt = 14 + s * 5;
-      for (let y = 0; y < H * 0.78; y += 3) {
-        const x = x0 + Math.round(y * 0.42);
-        if (x > W) break;
-        ditherPattern(ctx, x, y, Math.min(wdt, W - x), 3, 'lamp_md', 'clear', s & 1 ? DITHER.sparse : DITHER.b12);
+    // 光柱（預設關閉，見 SUN_SHAFTS；玩家反映會干擾閱讀店內配置）
+    const shafts = (opts && opts.shafts !== undefined) ? opts.shafts : SUN_SHAFTS;
+    if (shafts) {
+      for (let s = 0; s < 2; s++) {
+        const x0 = Math.round(W * (0.14 + s * 0.34));
+        const wdt = 14 + s * 5;
+        for (let y = 0; y < H * 0.78; y += 3) {
+          const x = x0 + Math.round(y * 0.42);
+          if (x > W) break;
+          ditherPattern(ctx, x, y, Math.min(wdt, W - x), 3, 'lamp_md', 'clear', s & 1 ? DITHER.sparse : DITHER.b12);
+        }
       }
     }
     // 浮塵
@@ -3678,7 +4201,8 @@ export function drawAOOverlay(ctx, cx, cy, edges) {
     const g = mkPainter(c, w, false);
     const mx = w / 2;
     const my = h / 2;
-    g.diaMask(mx, 1, TILE_W - 2, TILE_H - 2, 'shadow', DITHER.b25);
+    // 整格淡淡壓暗 + 貼牆那幾排更密的暗帶（網點，硬邊、不用漸層）
+    g.diaMask(mx, 1, TILE_W - 2, TILE_H - 2, 'shadow', DITHER.b50);
     const band = (x0, y0, x1, y1, toward) => {
       for (let i = 0; i < 3; i++) {
         const t0 = i / 3;
@@ -3690,7 +4214,7 @@ export function drawAOOverlay(ctx, cx, cy, edges) {
         const sx = Math.round(Math.min(ax, bx));
         const sy = Math.round((ay + by) / 2) + toward * i;
         const ww = Math.max(2, Math.round(Math.abs(bx - ax)) + 1);
-        const p = i === 0 ? DITHER.b50 : i === 1 ? DITHER.b37 : DITHER.b25;
+        const p = i === 0 ? DITHER.b75 : i === 1 ? DITHER.b62 : DITHER.b50;
         const row = p[((sy % 4) + 4) % 4];
         let run = 0;
         for (let k = 0; k < ww; k++) {

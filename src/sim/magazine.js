@@ -42,11 +42,11 @@ export function computeScores(state, rows) {
   const taste = clamp(avgOf(dishScores) || 45, 0, 100);
   const angryRate = guests ? angry / Math.max(1, guests) : 0;
   const waitPenalty = clamp((avgWaitMin / 45) * 35, 0, 45);
-  const angryPenalty = clamp(angryRate * 120, 0, 45);
+  const angryPenalty = clamp(angryRate * 85, 0, 45);
   const service = clamp(100 - waitPenalty - angryPenalty, 0, 100);
   const decorScore = clamp(decor / 5, 0, 100);
   const price = clamp((avgOf(valueScores) || 0.8) * 71, 0, 100);
-  const targetGuests = 7 * (loc?.baseTraffic || 1) * 55;
+  const targetGuests = 7 * (loc?.baseTraffic || 1) * 130;   // 以「人」計
   const popularity = clamp((guests / Math.max(40, targetGuests)) * 70 + state.stars * 3, 0, 100);
 
   return { taste, service, decor: decorScore, price, popularity, guests, served, angry, avgWaitMin };

@@ -60,19 +60,64 @@ try {
   console.error('[main] FloorRenderer 建立失敗', err);
 }
 
-let scale = 2;
+/**
+ * 縮放策略：以「裝置像素」為單位取整數倍，再換算回 CSS 尺寸。
+ * 這樣 1 個邏輯像素永遠等於整數個裝置像素 → 不會有半像素造成的模糊。
+ * 玩家可以用 + / - 手動指定倍率，0 回到自動。
+ */
+const VIEW = { deviceScale: 1, cssScale: 1, auto: true, userScale: 0 };
+try {
+  const saved = Number(localStorage.getItem('dreamrestaurant.zoom') || 0);
+  if (saved >= 1 && saved <= 8) { VIEW.auto = false; VIEW.userScale = saved; }
+} catch { /* 無 localStorage 就忽略 */ }
+
 function fitCanvas() {
+  const dpr = window.devicePixelRatio || 1;
   const rect = stage.getBoundingClientRect();
-  const raw = Math.min(rect.width / LOGICAL_W, rect.height / LOGICAL_H);
-  // 2 倍以上用整數倍（像素完美）；空間不足時允許 0.5 級距，讓畫面盡量填滿
-  scale = raw >= 2 ? Math.floor(raw) : Math.max(1, Math.floor(raw * 2) / 2);
-  canvas.style.width = `${LOGICAL_W * scale}px`;
-  canvas.style.height = `${LOGICAL_H * scale}px`;
+  const availW = Math.max(320, rect.width) * dpr;
+  const availH = Math.max(240, rect.height) * dpr;
+  let scale;
+  if (!VIEW.auto && VIEW.userScale > 0) {
+    scale = VIEW.userScale;
+  } else {
+    scale = Math.max(1, Math.floor(Math.min(availW / LOGICAL_W, availH / LOGICAL_H)));
+  }
+  VIEW.deviceScale = scale;
+  VIEW.cssScale = scale / dpr;
+  canvas.style.width = `${Math.round(LOGICAL_W * VIEW.cssScale)}px`;
+  canvas.style.height = `${Math.round(LOGICAL_H * VIEW.cssScale)}px`;
+  if (canvas.width !== LOGICAL_W) canvas.width = LOGICAL_W;
+  if (canvas.height !== LOGICAL_H) canvas.height = LOGICAL_H;
 }
+
+function setZoom(scale) {
+  if (scale === 0) {
+    VIEW.auto = true;
+    VIEW.userScale = 0;
+    try { localStorage.removeItem('dreamrestaurant.zoom'); } catch { /* 忽略 */ }
+    fitCanvas();
+    ui.toast('縮放：自動（依視窗大小取整數倍）', 'info');
+    return;
+  }
+  const next = Math.max(1, Math.min(8, scale));
+  VIEW.auto = false;
+  VIEW.userScale = next;
+  try { localStorage.setItem('dreamrestaurant.zoom', String(next)); } catch { /* 忽略 */ }
+  fitCanvas();
+  ui.toast(`縮放：${next}x`, 'info');
+}
+
 window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', fitCanvas);
+if (window.matchMedia) {
+  try {
+    window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener('change', fitCanvas);
+  } catch { /* 舊瀏覽器忽略 */ }
+}
 
 const view = {
   frame: 0,
+  fx: null,                 // 由 state.settings.fx 每格更新
   hover: null,
   ghost: null,
   selectionUid: null,
@@ -176,6 +221,19 @@ function buildToolbar() {
     gridBtn.classList.toggle('is-on', view.showGrid);
   }, { small: true });
   toolbar.appendChild(gridBtn);
+  const fxOn = () => !!(store.getState().settings?.fx?.ao);
+  const shadowBtn = W.button('🌓 光影', () => {
+    const st = store.getState();
+    const on = !(st.settings?.fx?.ao);
+    // 一鍵切換「陰影類」：AO／接觸陰影／暗角／店外陰影
+    for (const key of ['ao', 'shadows', 'vignette', 'outsideShade']) {
+      store.dispatch({ type: 'SET_FX', key, on });
+    }
+    shadowBtn.classList.toggle('is-on', on);
+    ui.toast(on ? '已開啟陰影效果' : '已關閉陰影效果（光影可在「環境」面板細項調整）', 'info');
+  }, { small: true, title: '一鍵切換陰影類特效（AO／接觸陰影／暗角／店外陰影）' });
+  shadowBtn.classList.toggle('is-on', fxOn());
+  toolbar.appendChild(shadowBtn);
   toolbar.appendChild(W.button('🔊 音效', () => {
     const on = !document.body.dataset.muted;
     document.body.dataset.muted = on ? '1' : '';
@@ -223,6 +281,9 @@ function computeHints(state) {
   if (state.cash < 0) hints.push(['bad', `現金是負的！連續 ${Math.floor(state.flags.negativeCashDays || 0)} 天會破產。`]);
   const noShift = state.staff.filter((s) => s.shift && (s.shift.start > state.settings.openMinute || s.shift.end < state.settings.closeMinute));
   if (noShift.length) hints.push(['warn', `${noShift.length} 位員工的班表沒有涵蓋營業時間。`]);
+  if ((state.sim.skippedBigParties || 0) > 0) {
+    hints.push(['warn', `剛剛有 ${state.sim.skippedBigParties} 組（最大 ${state.sim.skippedBiggest} 人）因為店裡沒有夠大的桌子而路過，買張大桌就吃得到。`]);
+  }
   const tired = state.staff.filter((s) => (s.fatigue ?? 0) > 80);
   if (tired.length) hints.push(['warn', `${tired.map((s) => s.name).join('、')} 疲勞過高（效率剩 72%），縮短班表或加薪可以留住人。`]);
   const unhappy = state.staff.filter((s) => (s.mood ?? 70) < 30);
@@ -285,7 +346,7 @@ function updateHud(state) {
 
 function canvasPoint(ev) {
   const rect = canvas.getBoundingClientRect();
-  return { x: (ev.clientX - rect.left) / scale, y: (ev.clientY - rect.top) / scale };
+  return { x: (ev.clientX - rect.left) / VIEW.cssScale, y: (ev.clientY - rect.top) / VIEW.cssScale };
 }
 
 function pendingPlacement() {
@@ -348,7 +409,7 @@ function itemScreenPos(item) {
   const w = item.w || def?.w || 1;
   const h = item.h || def?.h || 1;
   const p = renderer ? renderer.tileToScreen(item.x + (w - 1) / 2, item.y + (h - 1) / 2) : { px: 320, py: 200 };
-  return { x: (p.px ?? 320) * scale, y: (p.py ?? 200) * scale };
+  return { x: (p.px ?? 320) * VIEW.cssScale, y: (p.py ?? 200) * VIEW.cssScale };
 }
 
 function ensureBar() {
@@ -625,9 +686,12 @@ function setupCanvasInput() {
     }
   });
 
-  // 鍵盤：Esc 取消、R 旋轉、M 移動、Delete 拆除
+  // 鍵盤：Esc 取消、R 旋轉、M 移動、Delete 拆除、+/- 縮放
   window.addEventListener('keydown', (ev) => {
     if (ev.target && /input|textarea|select/i.test(ev.target.tagName || '')) return;
+    if (ev.key === '+' || ev.key === '=') { setZoom((VIEW.auto ? VIEW.deviceScale : VIEW.userScale) + 1); return; }
+    if (ev.key === '-' || ev.key === '_') { setZoom((VIEW.auto ? VIEW.deviceScale : VIEW.userScale) - 1); return; }
+    if (ev.key === '0') { setZoom(0); return; }
     if (ev.key === 'Escape') {
       clearSelection();
       const panel = windows.panels.get('build');
@@ -777,6 +841,7 @@ function loop(now) {
     if (state.settings.music && state.settings.music !== 'off') setMusic(state.settings.music);
   }
 
+  view.fx = state.settings?.fx || null;
   view.frame = (view.frame + 1) % 100000;
   if (renderer) {
     try {
@@ -888,6 +953,9 @@ function main() {
       if (!res.ok) console.warn('[main] 測試搬遷失敗：', res.error);
       target.phase = savedPhase;
     }
+    // ?weather=sunny|rain|... → 指定天氣（自動化測試用）
+    const wf = params.get('weather');
+    if (wf) store.getState().sim.weather = wf;
     // ?show=settle|starup|award|gameover → 直接顯示事件畫面（自動化測試用）
     const show = params.get('show');
     if (show) {
@@ -935,6 +1003,8 @@ function main() {
   window.DREAM = {
     store, windows, view, renderer, ui, stepSimulation, restaurantSummary, seatCount, BALANCE: B,
     // 給自動化測試讀取的互動狀態（唯讀）
+    logical: { get w() { return LOGICAL_W; }, get h() { return LOGICAL_H; }, get deviceScale() { return VIEW.deviceScale; }, get cssScale() { return VIEW.cssScale; }, get auto() { return VIEW.auto; } },
+    setZoom,
     get interaction() {
       return {
         selectionUid: selection.uid,
