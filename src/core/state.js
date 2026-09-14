@@ -5,7 +5,7 @@ import { DISHES, getDish } from '../data/dishes.js';
 import { STAFF_POOL, staffById, makeCandidateList } from '../data/staff.js';
 import { LOCATIONS, getLocation } from '../data/locations.js';
 import { FURNITURE, furnitureById } from '../data/furniture.js';
-import { defaultLayout, rebuildTables, findAutoPlace } from '../sim/build.js';
+import { defaultLayout, rebuildTables, findAutoPlace, autoPlaceChairs } from '../sim/build.js';
 import { makeRng, newSeed } from './rng.js';
 import { START_CASH, RATING_START, GRID_W, GRID_H, MENU_LIMIT, STAR_REQS } from './balance.js';
 
@@ -45,17 +45,37 @@ export function createNewGame(seed = newSeed(), opts = {}) {
   layout.rev = 1;
   layout.items = [];
 
-  // 開局基本設備：兩張桌、四張椅子、一個櫃台（可用 CLEAR_LAYOUT 重新規劃）
-  const tableDef = pickFurniture((f) => f.category === 'table' && (f.seats || 0) === 2, 'table');
-  const bigTableDef = pickFurniture((f) => f.category === 'table' && (f.seats || 0) === 4, 'table');
-  const chairDef = pickFurniture((f) => f.category === 'chair', 'chair');
-  const counterDef = pickFurniture((f) => f.category === 'counter', 'counter');
-  const starterSpots = [
-    { type: tableDef, x: 8, y: 7 }, { type: chairDef, x: 8, y: 6 }, { type: chairDef, x: 8, y: 8 },
-    { type: chairDef, x: 7, y: 7 }, { type: chairDef, x: 9, y: 7 },
-    { type: bigTableDef, x: 12, y: 7 }, { type: chairDef, x: 12, y: 6 }, { type: chairDef, x: 12, y: 8 },
-    { type: chairDef, x: 11, y: 7 }, { type: chairDef, x: 13, y: 7 },
-    { type: counterDef, x: 15, y: 10 }
+  // 頂級開局：最大桌（六人宴會桌）、頂級裝潢、全套防治設備
+  const premiumStarterItems = [
+    { typeId: 'kitchen_stove', x: 1, y: 1 },
+    { typeId: 'kitchen_worktable', x: 3, y: 1 },
+    { typeId: 'kitchen_dishwasher', x: 5, y: 1 },
+    { typeId: 'fridge', x: 6, y: 1 },
+    { typeId: 'ac_unit', x: 0, y: 4 },
+    { typeId: 'ceiling_lamp', x: 10, y: 0 },
+    { typeId: 'stereo', x: 15, y: 0 },
+    { typeId: 'cctv', x: 19, y: 4 },
+    { typeId: 'infrared_sensor', x: 19, y: 5 },
+    { typeId: 'fire_extinguisher', x: 0, y: 8 },
+    { typeId: 'fire_system', x: 19, y: 8 },
+    { typeId: 'security_host', x: 0, y: 9 },
+    { typeId: 'table_6b', x: 1, y: 5 },
+    { typeId: 'table_6b', x: 4, y: 5 },
+    { typeId: 'table_6b', x: 7, y: 5 },
+    { typeId: 'table_6b', x: 10, y: 5 },
+    { typeId: 'table_6b', x: 1, y: 8 },
+    { typeId: 'table_6b', x: 4, y: 8 },
+    { typeId: 'table_6b', x: 7, y: 8 },
+    { typeId: 'table_6b', x: 10, y: 8 },
+    { typeId: 'counter_bar', x: 14, y: 10 },
+    { typeId: 'restroom_toilet', x: 16, y: 1 },
+    { typeId: 'restroom_sink', x: 17, y: 1 },
+    { typeId: 'fountain_small', x: 13, y: 5 },
+    { typeId: 'jukebox', x: 14, y: 7 },
+    { typeId: 'neon_sign', x: 0, y: 6 },
+    { typeId: 'painting_landscape', x: 0, y: 2 },
+    { typeId: 'photo_wall', x: 19, y: 2 },
+    { typeId: 'lantern_row', x: 13, y: 10 }
   ];
 
   const state = {
@@ -102,6 +122,7 @@ export function createNewGame(seed = newSeed(), opts = {}) {
       sidewalk: layout.sidewalk,
       rev: 1
     },
+    kitchen: { stove: 5, fridge: 5, prep: 5 },   // 廚房設備等級（開局直接滿級）
     sim: {
       customers: [],
       walkers: [],
@@ -148,20 +169,25 @@ export function createNewGame(seed = newSeed(), opts = {}) {
     log: []
   };
 
-  // 擺放開局傢俱
-  for (const spot of starterSpots) {
-    if (!spot.type) continue;
+  // 擺放頂級開局傢俱（不扣現金，直接配置）
+  for (const spot of premiumStarterItems) {
+    const def = furnitureById(spot.typeId);
+    if (!def) continue;
     state.layout.items.push({
-      uid: nextUid(state),
-      typeId: spot.type.id,
-      x: spot.x,
-      y: spot.y,
-      w: spot.type.w || 1,
-      h: spot.type.h || 1,
-      rot: 0,
-      durability: 100,
-      broken: false
+      uid: 'init_' + premiumStarterItems.indexOf(spot),
+      typeId: spot.typeId,
+      x: spot.x, y: spot.y,
+      w: def.w || 1, h: def.h || 1,
+      rot: 0, durability: 100, broken: false
     });
+  }
+
+  // 開局桌子自動配椅子
+  for (const it of state.layout.items) {
+    const def = furnitureById(it.typeId);
+    if (def && def.category === 'table') {
+      it.chairUids = autoPlaceChairs(state, it, nextUid);
+    }
   }
 
   // 開局基本裝潢：讓新店面看起來像間餐廳（燈具也會產生夜間光池）
@@ -317,6 +343,7 @@ export function migrate(raw) {
   const s = raw;
   s.version = s.version || 1;
   s.sim = s.sim || {};
+  s.kitchen = { stove: 1, fridge: 1, prep: 1, ...(s.kitchen || {}) };
   s.sim.customers = s.sim.customers || [];
   s.sim.walkers = s.sim.walkers || [];
   s.sim.tables = s.sim.tables || [];

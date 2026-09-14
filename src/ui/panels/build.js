@@ -21,7 +21,7 @@ import {
 
 /* ------------------------------------------------------------------ 常數 */
 
-const PLACE_CATEGORIES = ['table', 'chair', 'counter', 'decor', 'restroom', 'kitchen'];
+const PLACE_CATEGORIES = ['table', 'counter', 'decor', 'restroom', 'kitchen'];  // 椅子改隨桌子自動配
 const CATEGORY_LABEL = {
   table: '桌子', chair: '椅子', counter: '櫃台', decor: '裝潢', equipment: '設備',
   restroom: '廁所', kitchen: '廚房'

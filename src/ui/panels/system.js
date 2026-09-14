@@ -15,6 +15,7 @@
 //                docs/GAME_PROMPT.md §1 考據、§3.5 員工、§3.7 星級、§3.9 地點、§3.11 事件、§3.13 存讀檔
 // ============================================================================
 import * as DATA from '../../data/index.js';
+import * as B from '../../core/balance.js';
 import {
   h, el as htmlEl, clear, tabs, table, statRow, section, hintbox, tag, button,
   toolbar, sep, toast, money, pct, stars, confirmDialog
@@ -640,13 +641,76 @@ export function createSystemPanel({ store, ui, win }) {   // eslint-disable-line
   const savesTab = buildSavesTab();
   const moveTab = buildMoveTab();
   const manualTab = buildManualTab();
+
+  /* ------------------------------------------------------------ 廚房設備 */
+  function buildKitchenTab() {
+    const rows = new Map();
+    const box = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } });
+    for (const target of ['stove', 'fridge', 'prep']) {
+      const spec = B.KITCHEN_SPECS[target];
+      const head = h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+        h('span', { style: { fontSize: '18px' } }, spec.icon),
+        h('span', { style: { fontWeight: 'bold' } }, spec.name),
+        h('span', { class: 'muted', style: { marginLeft: 'auto' } }, '等級 —'));
+      const descEl = h('div', { class: 'muted' }, '');
+      const costEl = h('span', { class: 'k' }, '');
+      const btn = button('升級', () => {
+        const st = liveState();
+        const cur = (st.kitchen && st.kitchen[target]) || 1;
+        if (cur >= B.KITCHEN_MAX_LEVEL) { notify(spec.name + ' 已滿級', 'info'); return; }
+        const cost = B.kitchenUpgradeCost(target, cur);
+        if ((st.cash || 0) < cost) { notify('現金不足（需要 ' + money(cost) + '）', 'bad'); return; }
+        ask({
+          title: '升級' + spec.name,
+          message: '確定要花 ' + money(cost) + ' 把' + spec.name + '升到等級 ' + (cur + 1) + '？\n' + spec.desc(cur + 1),
+          okLabel: '支付 ' + money(cost) + ' 升級',
+          cancelLabel: '取消'
+        }).then((ok) => { if (ok) dispatch({ type: 'UPGRADE_KITCHEN', target }); });
+      }, { kind: 'primary' });
+      const row = h('div', { class: 'card', style: { display: 'flex', flexDirection: 'column', gap: '3px' } },
+        head, descEl, h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } },
+          h('span', { class: 'muted' }, costEl), btn));
+      rows.set(target, { head, descEl, costEl, btn });
+      box.appendChild(row);
+    }
+
+    function update(state) {
+      const st = state || {};
+      const fx = st.kitchen || {};
+      for (const target of ['stove', 'fridge', 'prep']) {
+        const spec = B.KITCHEN_SPECS[target];
+        const cur = fx[target] || 1;
+        const r = rows.get(target);
+        if (!r) continue;
+        r.head.childNodes[2].textContent = '等級 ' + cur + ' / ' + B.KITCHEN_MAX_LEVEL;
+        r.descEl.textContent = spec.desc(cur);
+        if (cur >= B.KITCHEN_MAX_LEVEL) {
+          r.costEl.textContent = '已滿級';
+          r.btn.disabled = true;
+          r.btn.textContent = '已滿級';
+        } else {
+          const cost = B.kitchenUpgradeCost(target, cur);
+          r.costEl.textContent = '升級費用 ' + money(cost);
+          r.btn.disabled = (st.cash || 0) < cost;
+          r.btn.textContent = '升到 ' + (cur + 1) + ' 級';
+        }
+      }
+    }
+
+    update(liveState());
+    return { el: box, update };
+  }
+
+
   const statsTab = buildStatsTab();
+  const kitchenTab = buildKitchenTab();
 
   const tabset = tabs([
     { id: 'saves', label: '存讀檔', render: () => savesTab.el },
     { id: 'move', label: '搬遷資訊', render: () => moveTab.el },
     { id: 'manual', label: '玩法說明', render: () => manualTab.el },
-    { id: 'stats', label: '統計總覽', render: () => statsTab.el }
+    { id: 'stats', label: '統計總覽', render: () => statsTab.el },
+    { id: 'kitchen', label: '廚房設備', render: () => kitchenTab.el }
   ]);
   el.appendChild(tabset.el);
 
@@ -656,6 +720,7 @@ export function createSystemPanel({ store, ui, win }) {   // eslint-disable-line
     moveTab.update(S);
     manualTab.update(S);
     statsTab.update(S);
+    kitchenTab.update(S);
   }
 
   try {
@@ -664,7 +729,7 @@ export function createSystemPanel({ store, ui, win }) {   // eslint-disable-line
 
   return {
     id: 'system',
-    title: '系統',
+    title: '系統／廚房',
     icon: '💾',
     width: 520,
     height: 470,

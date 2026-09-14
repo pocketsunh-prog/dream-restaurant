@@ -6,12 +6,12 @@ import { DISHES, getDish, dishesForStars } from '../data/dishes.js';
 import { STAFF_POOL, staffById } from '../data/staff.js';
 import { LOCATIONS, getLocation, locationsForStars } from '../data/locations.js';
 import { FURNITURE, furnitureById } from '../data/furniture.js';
-import { defaultLayout, rebuildTables, canPlace, findAutoPlace, findItem, decorScore, seatCount, layoutValue, recomputeReachability, setTile as setTileRaw, tileAt } from '../sim/build.js';
+import { defaultLayout, rebuildTables, canPlace, findAutoPlace, findItem, decorScore, seatCount, layoutValue, recomputeReachability, setTile as setTileRaw, tileAt, autoPlaceChairs } from '../sim/build.js';
 import { clearPathCache } from '../sim/pathfind.js';
 import { beginDay, startBusiness, requestClose, nextDay, absMinute } from '../sim/simulation.js';
 import { buyCost, unitCost, clamp, dailyUtilities } from '../sim/economy.js';
 import { clickLure } from '../sim/attract.js';
-import { pushLog, emptyToday, makeStaffEntry, menuLimitFor, SAVE_VERSION } from './state.js';
+import { pushLog, emptyToday, makeStaffEntry, menuLimitFor, SAVE_VERSION, nextUid } from './state.js';
 import * as B from './balance.js';
 
 const ok = (info) => ({ ok: true, info });
@@ -224,9 +224,9 @@ export function reduce(state, action) {
       if (!check.ok) return fail(check.error);
       state.cash -= def.price;
       state.stats.today.spend += def.price;
+      const uid = 'f' + ((state.uidSeq = (state.uidSeq || 1) + 1));
       state.layout.items.push({
-        uid: `f${(state.uidSeq = (state.uidSeq || 1) + 1)}`,
-        typeId: def.id,
+        uid, typeId: def.id,
         x, y,
         w: def.w || 1,
         h: def.h || 1,
@@ -234,7 +234,14 @@ export function reduce(state, action) {
         durability: 100,
         broken: false
       });
-      return withLayoutChange(state, () => ok(`已購入 ${def.name}`));
+      const tableItem = state.layout.items.find(it => it.uid === uid);
+      let chairMsg = '';
+      if (def.category === 'table' && tableItem) {
+        const chairUids = autoPlaceChairs(state, tableItem, nextUid);
+        tableItem.chairUids = chairUids;
+        if (chairUids.length) chairMsg = `（自動配 ${chairUids.length} 張椅子）`;
+      }
+      return withLayoutChange(state, () => ok(`已購入 ${def.name}${chairMsg}`));
     }
     case 'MOVE_FURNITURE': {
       const item = findItem(state.layout, action.uid);
@@ -243,7 +250,13 @@ export function reduce(state, action) {
       const y = Math.round(action.y);
       const check = canPlace(state.layout, item.typeId, x, y, item.uid);
       if (!check.ok) return fail(check.error);
+      const dx = x - item.x, dy = y - item.y;
       item.x = x; item.y = y;
+      // 自動配來的椅子跟著搬
+      for (const cuid of (item.chairUids || [])) {
+        const chair = findItem(state.layout, cuid);
+        if (chair) { chair.x += dx; chair.y += dy; }
+      }
       return withLayoutChange(state, () => ok());
     }
     case 'ROTATE_FURNITURE': {
@@ -306,8 +319,9 @@ export function reduce(state, action) {
       const def = furnitureById(item.typeId);
       const refund = Math.round((def?.price || 0) * 0.5);
       state.cash += refund;
-      state.layout.items = state.layout.items.filter((i) => i.uid !== action.uid);
-      state.sim.tables = state.sim.tables.filter((t) => t.uid !== action.uid);
+      const removedUids = new Set([action.uid, ...(item.chairUids || [])]);
+      state.layout.items = state.layout.items.filter((i) => !removedUids.has(i.uid));
+      state.sim.tables = state.sim.tables.filter((t) => !removedUids.has(t.uid));
       return withLayoutChange(state, () => ok(`已拆除，退回 NT$ ${refund.toLocaleString('en-US')}`));
     }
     case 'CLEAR_LAYOUT': {
@@ -340,6 +354,18 @@ export function reduce(state, action) {
     }
 
     /* ------------------------------------------------------ 維修與清潔 */
+    case 'UPGRADE_KITCHEN': {
+      var target = action.target;
+      if (!B.KITCHEN_SPECS[target]) return fail('沒有這項設備');
+      var cur = (state.kitchen && state.kitchen[target]) || 1;
+      if (cur >= B.KITCHEN_MAX_LEVEL) return fail(B.KITCHEN_SPECS[target].name + ' 已達最高等級 ' + B.KITCHEN_MAX_LEVEL);
+      var cost = kitchenUpgradeCost(target, cur);
+      if (state.cash < cost) return fail('現金不足（需要 NT$ ' + cost.toLocaleString('en-US') + '）');
+      state.cash -= cost;
+      state.stats.today.spend += cost;
+      state.kitchen[target] = cur + 1;
+      return ok(B.KITCHEN_SPECS[target].name + ' 升至等級 ' + (cur + 1));
+    }
     case 'REPAIR': {
       if (action.target) {
         const t = action.target;
@@ -466,7 +492,7 @@ export function reduce(state, action) {
 }
 
 export const ACTION_TYPES = [
-  'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC', 'SET_FX',
+  'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC', 'SET_FX', 'UPGRADE_KITCHEN',
   'MENU_ADD', 'MENU_REMOVE', 'MENU_UPDATE', 'MENU_TOGGLE', 'BUY_STOCK',
   'HIRE', 'FIRE', 'SET_WAGE', 'SET_SHIFT', 'SET_DUTY',
   'PLACE_FURNITURE', 'MOVE_FURNITURE', 'ROTATE_FURNITURE', 'REPLACE_FURNITURE', 'REMOVE_FURNITURE', 'CLEAR_LAYOUT', 'SET_TILE',

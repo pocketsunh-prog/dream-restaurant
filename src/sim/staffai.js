@@ -458,7 +458,8 @@ export function enqueueKitchen(state, c, table, item) {
   const skill = bestChefOnShift(state);
   const speed = 0.72 + (skill / 200);
   const broken = state.sim.equipBroken?.stove ? 2.1 : 1;
-  const cookMinutes = Math.max(1.5, (item.cookTime ?? 25) * B.COOK_TIME_SCALE * (1 / speed) * broken);
+  const stoveLvl = (state.kitchen && state.kitchen.stove) || 1;
+  const cookMinutes = Math.max(1.5, (item.cookTime ?? 25) * B.COOK_TIME_SCALE * (1 / speed) * broken * B.kitchenStoveMultiplier(stoveLvl));
   state.sim.kitchen.push({
     id: `k${state.day}_${kitchenSeq++}`,
     dishId: item.dishId,
@@ -483,10 +484,11 @@ export function updateChef(state, st, dtMin) {
   st.x = home.x; st.y = home.y;
   st.frame = (st.frame + dtMin * 1.5) % 2;
 
-  // 一位廚師同時可顧 CHEF_POTS 個鍋子（多請廚師＝同時出更多菜）
+  // 一位廚師同時可顧的鍋子數受流理台等級影響（多請廚師＋升級流理台＝同時出更多菜）
+  const potsPerChef = B.kitchenPrepPots((state.kitchen && state.kitchen.prep) || 1);
   let mine = state.sim.kitchen.filter((k) => k.chefUid === st.uid);
   for (const job of mine) job.started = true;
-  while (mine.length < B.CHEF_POTS) {
+  while (mine.length < potsPerChef) {
     const free = state.sim.kitchen.find((k) => !k.chefUid);
     if (!free) break;
     free.chefUid = st.uid;
@@ -498,7 +500,8 @@ export function updateChef(state, st, dtMin) {
 
   // 爐具故障不是完全停擺，而是產能大幅下降（記得去修，否則客人等太久）
   const brokenMod = state.sim.equipBroken?.stove ? 0.6 : 1;
-  const speedMod = (0.75 + (st.skill ?? 50) / 200) * (st.speedMod || 1) * brokenMod;
+  const stoveMul = B.kitchenStoveMultiplier((state.kitchen && state.kitchen.stove) || 1);
+  const speedMod = (0.75 + (st.skill ?? 50) / 200) * (st.speedMod || 1) * brokenMod * stoveMul;
   const done = [];
   for (const job of mine) {
     job.remaining -= dtMin * speedMod;

@@ -5,7 +5,7 @@ import { getDish } from '../data/dishes.js';
 import { getLocation } from '../data/locations.js';
 import { decorScore } from './build.js';
 import {
-  UTILITY_BASE, UTILITY_PER_DEGREE, PERISHABLE_LOSS, PERISHABLE_CATEGORIES,
+  UTILITY_BASE, UTILITY_PER_DEGREE, PERISHABLE_LOSS, PERISHABLE_CATEGORIES, kitchenFridgeMultiplier, kitchenStoveMultiplier,
   COMFORT, WEATHER_COMFORT_SHIFT, DELIVERY_MINUTES
 } from '../core/balance.js';
 import { emptyToday, pushLog } from '../core/state.js';
@@ -45,18 +45,21 @@ export function dailyUtilities(state) {
     const id = i.typeId || '';
     return id.includes('lamp') || id.includes('light') || id.includes('chandelier');
   }).length;
-  const fridge = state.sim.equipBroken?.fridge ? 900 : 0;
+  const fridgeLvl = (state.kitchen && state.kitchen.fridge) || 1;
+  const fridge = state.sim.equipBroken?.fridge ? Math.round(900 * kitchenFridgeMultiplier(fridgeLvl)) : 0;
   return Math.round(UTILITY_BASE + dev * UTILITY_PER_DEGREE + lights * 45 + fridge);
 }
 
 /** 生鮮隔日折損 */
 export function applyPerishableLoss(state) {
   let lost = 0;
+  const lvl = (state.kitchen && state.kitchen.fridge) || 1;
+  const lossMul = kitchenFridgeMultiplier(lvl);
   for (const [dishId, qty] of Object.entries(state.stock || {})) {
     const def = getDish(dishId);
     if (!def) continue;
     if (!PERISHABLE_CATEGORIES.includes(def.category)) continue;
-    const gone = Math.floor(qty * PERISHABLE_LOSS);
+    const gone = Math.floor(qty * PERISHABLE_LOSS * lossMul);
     if (gone > 0) { state.stock[dishId] = qty - gone; lost += gone; }
   }
   return lost;

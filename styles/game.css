@@ -105,3 +105,61 @@
   border-right: 5px solid transparent;
   border-top: 5px solid var(--bevel-dark);
 }
+
+/* -------------------------------------------------------- 密技控制台 */
+.cheat-console {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  z-index: 9700;
+  width: 560px;
+  max-width: 94vw;
+  display: flex;
+  flex-direction: column;
+  background: rgba(20, 24, 32, 0.94);
+  border: 2px solid var(--gold);
+  box-shadow: 0 0 0 2px #000, 0 6px 24px rgba(0, 0, 0, 0.6);
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 12px;
+  color: #cfe8d0;
+}
+.cheat-head {
+  padding: 4px 10px;
+  background: var(--gold);
+  color: #1a1500;
+  font-weight: bold;
+  font-size: 12px;
+}
+.cheat-log {
+  flex: 1;
+  min-height: 120px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.cheat-line.cmd { color: #ffd98a; }
+.cheat-line.out { color: #cfe8d0; }
+.cheat-line.good { color: #8ef0a0; }
+.cheat-line.err { color: #ff9090; }
+.cheat-line.info { color: #9fb0c4; }
+.cheat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+.cheat-prompt { color: var(--gold); font-weight: bold; }
+.cheat-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.cheat-input::placeholder { color: rgba(207, 232, 208, 0.4); }

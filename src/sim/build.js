@@ -300,55 +300,48 @@ const SIDE_DIRS = [
 export function computeTables(layout) {
   const tables = [];
   const claimed = new Set();
-  const chairPositions = new Set();
-  for (const item of layout.items) {
-    const def = furnitureById(item.typeId);
-    if (def?.category === 'chair') chairPositions.add(`${item.x},${item.y}`);
-  }
 
   for (const item of layout.items) {
     const def = furnitureById(item.typeId);
     if (!def || def.category !== 'table') continue;
     const w = item.w || def.w || 1;
     const h = item.h || def.h || 1;
-    const baseSeats = def.seats || 2;
-    const chairSides = new Set();
-    const candidates = [];
+    const seats = [];
 
-    for (const side of SIDE_DIRS) {
-      for (let i = 0; i < w; i++) {
-        for (let j = 0; j < h; j++) {
-          const tx = item.x + i + side.dx;
-          const ty = item.y + j + side.dy;
-          if (!inBounds(layout, tx, ty)) continue;
-          if (tileAt(layout, tx, ty) !== 'floor') continue;
-          if (blockingItemAt(layout, tx, ty)) continue;
-          const key = `${tx},${ty}`;
-          const occupiedByTable = layout.items.some((other) => {
-            const od = furnitureById(other.typeId);
-            if (od?.category !== 'table') return false;
-            const ow = other.w || od.w || 1;
-            const oh = other.h || od.h || 1;
-            return tx >= other.x && tx < other.x + ow && ty >= other.y && ty < other.y + oh;
-          });
-          if (occupiedByTable) continue;
-          const hasChair = chairPositions.has(key);
-          if (hasChair) chairSides.add(key);
-          candidates.push({ x: tx, y: ty, facing: side.facing, chair: hasChair, key });
+    // 自動配來的椅子就是座位（每張椅子對應一個座位）
+    const chairDefs = (item.chairUids || []).map((uid) => layout.items.find((c) => c.uid === uid)).filter(Boolean);
+    for (const chair of chairDefs) {
+      const key = chair.x + ',' + chair.y;
+      if (claimed.has(key)) continue;
+      if (!isWalkableTileSimple(layout, chair.x, chair.y)) continue;
+      // 面向桌子中心
+      const cx = item.x + w / 2, cy = item.y + h / 2;
+      const dx = chair.x - cx, dy = chair.y - cy;
+      const facing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+      claimed.add(key);
+      seats.push({ x: chair.x, y: chair.y, facing, chair: true, key });
+    }
+
+    // 空位補齊：周圍可通行的地板格（桌子沒配滿椅子時的備位）
+    if (seats.length < (def.seats || 2)) {
+      const SIDE = [[0, -1, 'S'], [0, 1, 'N'], [-1, 0, 'E'], [1, 0, 'W']];
+      for (const [ddx, ddy, f] of SIDE) {
+        for (let i = 0; i < w && seats.length < (def.seats || 2); i++) {
+          for (let j = 0; j < h && seats.length < (def.seats || 2); j++) {
+            const tx = item.x + i + ddx;
+            const ty = item.y + j + ddy;
+            const key = tx + ',' + ty;
+            if (claimed.has(key)) continue;
+            if (!isWalkableTileSimple(layout, tx, ty)) continue;
+            claimed.add(key);
+            seats.push({ x: tx, y: ty, facing: f, chair: false, key });
+          }
         }
       }
     }
 
-    // 去重，椅子優先
-    const seen = new Set();
-    const unique = [];
-    for (const c of candidates.sort((a, b) => Number(b.chair) - Number(a.chair))) {
-      if (seen.has(c.key)) continue;
-      seen.add(c.key);
-      unique.push(c);
-    }
-    const maxSeats = Math.min(baseSeats + Math.min(2, chairSides.size), unique.length);
-    const seats = unique.slice(0, maxSeats).map((c) => {
+    const maxSeats = Math.min(def.seats || 2, seats.length);
+    const finalSeats = seats.slice(0, maxSeats).map((c) => {
       claimed.add(c.key);
       const reachDoor = isReachable(layout, c.x, c.y, 'door');
       const reachPass = isReachable(layout, c.x, c.y, 'pass');
@@ -362,9 +355,9 @@ export function computeTables(layout) {
       y: item.y,
       w, h,
       name: def.name,
-      seats,
-      usable: seats.length > 0 && seats.some((s) => s.reachDoor && s.reachPass),
-      serviceTile: seats.find((s) => s.reachPass) || seats[0] || null,
+      seats: finalSeats,
+      usable: finalSeats.length > 0 && finalSeats.some((s) => s.reachDoor && s.reachPass),
+      serviceTile: finalSeats.find((s) => s.reachPass) || finalSeats[0] || null,
       occupants: [],
       state: 'clean',
       dirtySince: null,
@@ -372,6 +365,14 @@ export function computeTables(layout) {
     });
   }
   return tables;
+}
+
+/** 檢查一格是否為可通行的地板（模組層級，供 canPlace 等使用） */
+function isWalkableTileSimple(layout, x, y) {
+  if (x < 0 || y < 0 || x >= layout.gridW || y >= layout.gridH) return false;
+  const t = layout.tiles[y * layout.gridW + x];
+  if (t !== 'floor') return false;
+  return !blockingItemAt(layout, x, y);
 }
 
 /** 裝潢分數（風格相符加成） */
@@ -481,6 +482,76 @@ export function rebuildTables(state) {
   state.layout.reach = layout.reach;
   state.layout.reachFromPass = layout.reachFromPass;
   return next;
+}
+
+
+/** 桌子周圍可通行的地板格（用來自動配椅子） */
+export function tableNeighborSpots(layout, item) {
+  const def = furnitureById(item.typeId);
+  const w = item.w || def?.w || 1;
+  const h = item.h || def?.h || 1;
+  const spots = [];
+  const SIDE_DIRS = [
+    { dx: 0, dy: -1, facing: 'S' },
+    { dx: 0, dy: 1, facing: 'N' },
+    { dx: -1, dy: 0, facing: 'E' },
+    { dx: 1, dy: 0, facing: 'W' }
+  ];
+  const inBounds = (x, y) => x >= 0 && y >= 0 && x < layout.gridW && y < layout.gridH;
+  const isFloor = (x, y) => {
+    if (!inBounds(x, y)) return false;
+    const t = layout.tiles[y * layout.gridW + x];
+    if (t !== 'floor') return false;
+    for (const it of layout.items) {
+      if (it.uid === item.uid) continue;
+      const d = furnitureById(it.typeId);
+      const iw = it.w || d?.w || 1;
+      const ih = it.h || d?.h || 1;
+      if (x >= it.x && x < it.x + iw && y >= it.y && y < it.y + ih) return false;
+    }
+    return true;
+  };
+  const seen = new Set();
+  for (const side of SIDE_DIRS) {
+    for (let i = 0; i < w; i++) {
+      for (let j = 0; j < h; j++) {
+        const tx = item.x + i + side.dx;
+        const ty = item.y + j + side.dy;
+        const key = tx + ',' + ty;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (isFloor(tx, ty)) spots.push({ x: tx, y: ty, facing: side.facing });
+      }
+    }
+  }
+  return spots;
+}
+
+/** 為一張桌子自動產生椅子（回傳新建的椅子 uid 陣列） */
+export function autoPlaceChairs(state, tableItem, nextUid) {
+  const def = furnitureById(tableItem.typeId);
+  const maxSeats = def?.seats || 2;
+  const spots = tableNeighborSpots(state.layout, tableItem);
+  const count = Math.min(maxSeats, spots.length);
+  const chairDef = (function () {
+    for (const f of (typeof FURNITURE !== 'undefined' ? FURNITURE : [])) if (f && f.category === 'chair') return f;
+    return null;
+  })();
+  if (!chairDef || count <= 0) return [];
+  const uids = [];
+  for (let i = 0; i < count; i++) {
+    const spot = spots[i];
+    const uid = nextUid(state);
+    state.layout.items.push({
+      uid, typeId: chairDef.id,
+      x: spot.x, y: spot.y,
+      w: 1, h: 1, rot: 0,
+      durability: 100, broken: false,
+      autoChair: true, chairFor: tableItem.uid
+    });
+    uids.push(uid);
+  }
+  return uids;
 }
 
 /** 取得或建立餐廳內可站立的最近格（給員工／顧客用） */

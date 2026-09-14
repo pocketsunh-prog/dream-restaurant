@@ -18,7 +18,7 @@ export const MINUTES_PER_SECOND = 1;          // 1 真實秒 = 1 遊戲分鐘（
 export const SPEEDS = [0, 1, 2, 4];
 export const SETTLE_MINUTE = 22 * 60;          // 週日 22:00 結算
 export const WEEKLY_BONUS = 200000;            // 每週一社區獎金（原作約 20 萬）
-export const START_CASH = 300000;
+export const START_CASH = 500000;
 export const BANKRUPT_DAYS = 7;                // 現金為負超過 7 天 → 破產
 
 /** 星級門檻（兩桶評價都必須達標） */
@@ -128,6 +128,31 @@ export const EATING_PER_GUEST = 1.0;
 /** 大組客人比較有耐心（都訂位了） */
 export const PARTY_PATIENCE_BONUS = 0.03;   // 每多一人 +3%
 
+/** 廚房設備：等級效果與升級費用 */
+export const KITCHEN_MAX_LEVEL = 5;
+export const KITCHEN_SPECS = {
+  stove:  { name: '爐具',   icon: '🔥', base: 18000, mult: 1.9,
+            desc: function(l){ return "煮菜速度 +" + (l*7) + "%（現在 " + (100-(1-Math.pow(0.93,l-1))*100).toFixed(0) + "% 加速）"; } },
+  fridge: { name: '冰箱',   icon: '❄', base: 15000, mult: 1.85,
+            desc: function(l){ return "食材折損 -" + (l*18) + "%（現在剩 " + Math.max(10,100-l*18) + "%）"; } },
+  prep:   { name: '流理台', icon: '🔪', base: 12000, mult: 1.8,
+            desc: function(l){ return "每位廚師多顧 " + (l-1) + " 個鍋（總鍋數 = 廚師 × " + (2+l-1) + "）"; } }
+};
+export function kitchenUpgradeCost(target, currentLevel) {
+  var spec = KITCHEN_SPECS[target];
+  if (!spec) return Infinity;
+  return Math.round(spec.base * Math.pow(spec.mult, currentLevel - 1));
+}
+export function kitchenStoveMultiplier(level) {
+  return Math.max(0.6, Math.pow(0.93, level - 1));
+}
+export function kitchenFridgeMultiplier(level) {
+  return Math.max(0.15, 1 - (level - 1) * 0.18);
+}
+export function kitchenPrepPots(level) {
+  return 2 + (level - 1);
+}
+
 /** 候位隊伍：從門口往外排，每格間隔 */
 export const QUEUE_STEP = 1.05;
 
@@ -161,7 +186,7 @@ export const DIRT_COMPLAIN = 60;
 export const DIRT_BAD = 78;
 
 /** 進貨 */
-export const DELIVERY_MINUTES = 30;
+export const DELIVERY_MINUTES = 12;          // 進貨到貨時間（遊戲分鐘）
 export const PERISHABLE_LOSS = 0.10;      // 生鮮隔日折損
 export const PERISHABLE_CATEGORIES = ['staple', 'side', 'soup'];
 

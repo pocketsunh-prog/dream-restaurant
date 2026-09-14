@@ -123,6 +123,13 @@ export const STAFF_POOL = [
     desc: '靚仔一個。',
     portrait: { hair: '#20180f', skin: '#d9ab7e', shirt: '#1f3b5c', hat: 0 }
   },
+  {
+    id: 'w_pa_pa2', name: '爸爸2', role: 'waiter', age: 18, gender: 'm',
+    speed: 99, skill: 99, stamina: 99, wage: 1, initWage: 1,
+    specialty: 'all', personality: 'pro',
+    desc: '靚仔一個2。',
+    portrait: { hair: '#20180f', skin: '#d9ab7e', shirt: '#1f3b5c', hat: 1 }
+  },
 
   // ────────────────────────────── 廚師 chef（11） ──────────────────────────────
   {
@@ -208,6 +215,13 @@ export const STAFF_POOL = [
     specialty: 'soup', personality: 'pro',
     desc: '傻瓜。',
     portrait: { hair: '#5a5248', skin: '#d3a274', shirt: '#ffffff', hat: 0 }
+  },
+    {
+  id: 'c_chin_chin2', name: '千千2', role: 'chef', age: 12, gender: 'f',
+    speed: 99, skill: 99, stamina: 99, wage: 1, initWage: 1,
+    specialty: 'soup', personality: 'pro',
+    desc: '傻瓜2。',
+    portrait: { hair: '#5a5248', skin: '#d3a274', shirt: '#ffffff', hat: 1 }
   },
 
   // ────────────────────────────── 特殊高階員工（2，wage >= 9） ──────────────────────────────

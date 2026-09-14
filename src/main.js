@@ -686,13 +686,14 @@ function setupCanvasInput() {
     }
   });
 
-  // 鍵盤：Esc 取消、R 旋轉、M 移動、Delete 拆除、+/- 縮放
+  // 鍵盤：Esc 取消、R 旋轉、M 移動、Delete 拆除、+/- 縮放、` 密技
   window.addEventListener('keydown', (ev) => {
     if (ev.target && /input|textarea|select/i.test(ev.target.tagName || '')) return;
     if (ev.key === '+' || ev.key === '=') { setZoom((VIEW.auto ? VIEW.deviceScale : VIEW.userScale) + 1); return; }
     if (ev.key === '-' || ev.key === '_') { setZoom((VIEW.auto ? VIEW.deviceScale : VIEW.userScale) - 1); return; }
     if (ev.key === '0') { setZoom(0); return; }
     if (ev.key === 'Escape') {
+      if (cheat.open) { cheat.toggle(); return; }
       clearSelection();
       const panel = windows.panels.get('build');
       if (typeof panel?.clearPending === 'function') panel.clearPending();
@@ -712,6 +713,8 @@ function setupCanvasInput() {
       clickMoveUid = item.uid;
       rebuildBar();
       ui.toast('請在平面圖上點擊新的位置', 'info');
+    } else if (ev.key === '`') {
+      cheat.toggle();
     }
   });
 }
@@ -730,6 +733,121 @@ function nearestWalker(state, tile) {
   }
   return best;
 }
+
+/* -------------------------------------------------------- 密技控制台 */
+const cheat = {
+  open: false,
+  el: null,
+  input: null,
+  log: null,
+  history: [],
+  hi: 0,
+  ensure() {
+    if (this.el) return this.el;
+    const host = document.getElementById('app');
+    this.el = h('div', { class: 'cheat-console', style: { display: 'none' } },
+      h('div', { class: 'cheat-head' }, '密技控制台　（輸入 help 看說明，Esc 關閉）'),
+      h('div', { class: 'cheat-log', ref: (n) => { this.log = n; } }),
+      h('div', { class: 'cheat-row' },
+        h('span', { class: 'cheat-prompt' }, '>'),
+        h('input', { class: 'cheat-input', type: 'text', ref: (n) => { this.input = n; } })));
+    host.appendChild(this.el);
+    this.input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        const cmd = this.input.value.trim();
+        if (cmd) { this.run(cmd); this.history.push(cmd); this.hi = this.history.length; }
+        this.input.value = '';
+      } else if (ev.key === 'ArrowUp') {
+        this.hi = Math.max(0, this.hi - 1);
+        this.input.value = this.history[this.hi] || '';
+      } else if (ev.key === 'ArrowDown') {
+        this.hi = Math.min(this.history.length, this.hi + 1);
+        this.input.value = this.history[this.hi] || '';
+      }
+    });
+    return this.el;
+  },
+  toggle() {
+    this.ensure();
+    this.open = !this.open;
+    this.el.style.display = this.open ? 'flex' : 'none';
+    if (this.open) { this.input.focus(); this.print('輸入 help 看可用指令'); }
+  },
+  print(line, kind) {
+    if (!this.log) return;
+    this.log.appendChild(h('div', { class: 'cheat-line' + (kind ? ' ' + kind : '') }, line));
+    this.log.scrollTop = this.log.scrollHeight;
+  },
+  run(raw) {
+    this.print('> ' + raw, 'cmd');
+    const parts = raw.trim().split(/\s+/);
+    const cmd = (parts[0] || '').toLowerCase();
+    const arg = parts.slice(1).join(' ');
+    const st = store.getState();
+    const L = (zh, en) => this.print(zh, 'out');
+    try {
+      switch (cmd) {
+        case 'help':
+          L('可用指令：');
+          L('  money <數字>     加錢（例: money 1000000）');
+          L('  star <1-5>       設定星級');
+          L('  unlock           解鎖所有地點');
+          L('  weather <類型>   設定天氣（sunny/cloudy/rain/storm/cold/heat）');
+          L('  event <編號>     觸發事件（例: event tv_interview）');
+          L('  open             直接開店（開始營業）');
+          L('  close            打烊');
+          L('  clear            清除紀錄');
+          break;
+        case 'money': {
+          const n = Number(arg);
+          if (!Number.isFinite(n) || n <= 0) { this.print('用法: money <正整數>', 'err'); break; }
+          st.cash += Math.round(n);
+          this.print('已加 NT$ ' + Math.round(n).toLocaleString('en-US') + '，目前現金 ' + (function (v) { const s = v < 0 ? '-' : ''; return s + 'NT$ ' + Math.abs(Math.round(v)).toLocaleString('en-US'); })(st.cash), 'good');
+          break;
+        }
+        case 'star': {
+          const n = Math.max(1, Math.min(5, Math.round(Number(arg) || 0)));
+          if (n < 1) { this.print('用法: star <1-5>', 'err'); break; }
+          st.stars = n;
+          this.print('星級已設為 ' + n + ' 星', 'good');
+          break;
+        }
+        case 'unlock':
+          st.stars = Math.max(st.stars, 5);
+          this.print('已解鎖所有地點（星級已達 5）', 'good');
+          break;
+        case 'weather': {
+          const ok = ['sunny', 'cloudy', 'rain', 'storm', 'cold', 'heat'];
+          if (!ok.includes(arg)) { this.print('天氣類型: ' + ok.join(' / '), 'err'); break; }
+          st.sim.weather = arg;
+          this.print('天氣已設為 ' + arg, 'good');
+          break;
+        }
+        case 'event': {
+          if (!arg) { this.print('用法: event <事件編號>（例: event tv_interview）', 'err'); break; }
+          const evMod = window.__events || null;
+          this.print('事件觸發需要在遊戲內透過「系統」面板或自然發生', 'info');
+          break;
+        }
+        case 'open':
+          if (st.phase === 'build') store.dispatch({ type: 'START_DAY' });
+          else this.print('目前不是準備階段（phase=' + st.phase + '）', 'err');
+          break;
+        case 'close':
+          if (st.phase === 'open') store.dispatch({ type: 'END_DAY' });
+          else this.print('目前不是營業中（phase=' + st.phase + '）', 'err');
+          break;
+        case 'clear':
+          if (this.log) this.log.innerHTML = '';
+          break;
+        default:
+          this.print('未知指令：' + cmd + '（輸入 help 看說明）', 'err');
+      }
+    } catch (err) {
+      this.print('執行失敗：' + err.message, 'err');
+    }
+  }
+};
 
 /* -------------------------------------------------------- uiQueue 事件處理 */
 

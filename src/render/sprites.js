@@ -3636,13 +3636,7 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
         }
       }
     }
-    // 浮塵
-    for (let i = 0; i < 18; i++) {
-      const x = (hash1(i * 7 + 1) * W + t * 0.35 * (1 + (i % 3))) % W;
-      const y = (hash1(i * 11 + 5) * H + t * 0.2) % H;
-      ctx.fillStyle = color(i & 1 ? 'lamp_hi' : 'white');
-      ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
-    }
+    // 浮塵（已移除：玩家反映光點干擾閱讀）
     return;
   }
   if (kind === 'cloudy') {
