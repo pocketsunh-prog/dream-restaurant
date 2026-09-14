@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>夢幻西餐廳 3D ─ 日本編 / Dream Restaurant 3D</title>
+<link rel="stylesheet" href="styles/app.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/environments/RoomEnvironment.js": "./vendor/RoomEnvironment.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<canvas id="view"></canvas>
+
+<!-- ── 頂部資訊條 ─────────────────────────────────────────────── -->
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-jp">夢幻西餐廳</span>
+    <span class="brand-3d">3D</span>
+    <span class="brand-sub">日本編</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><label>日付</label><b id="hud-day">1</b><i>日目</i></div>
+    <div class="stat"><label>時刻</label><b id="hud-clock">09:00</b></div>
+    <div class="stat"><label>天気</label><b id="hud-weather">晴れ</b></div>
+    <div class="stat"><label>所持金</label><b id="hud-cash">¥0</b></div>
+    <div class="stat"><label>評価</label><b id="hud-stars" class="stars">★☆☆☆☆</b></div>
+    <div class="stat"><label>来客</label><b id="hud-guests">0</b><i>人</i></div>
+    <div class="stat"><label>席</label><b id="hud-seats">0</b><i>席</i></div>
+  </div>
+  <div class="where">
+    <span id="hud-location">渋谷センター街</span>
+    <span id="hud-region" class="muted">関東 · 東京</span>
+  </div>
+</header>
+
+<!-- ── 底部操作列 ─────────────────────────────────────────────── -->
+<footer id="bottombar">
+  <div class="speeds" role="group" aria-label="速度">
+    <button data-speed="0" title="暫停">❚❚</button>
+    <button data-speed="1" class="on" title="1 倍速">1×</button>
+    <button data-speed="2" title="2 倍速">2×</button>
+    <button data-speed="4" title="4 倍速">4×</button>
+  </div>
+  <div class="actions">
+    <button id="btn-locations">🗾 立地 <kbd>L</kbd></button>
+    <button id="btn-menu">🍜 菜單 <kbd>M</kbd></button>
+    <button id="btn-camera">🎥 視角 <kbd>C</kbd></button>
+    <button id="btn-help">❔ 操作 <kbd>H</kbd></button>
+  </div>
+  <div class="hint" id="hud-hint">拖曳＝旋轉視角　滾輪＝縮放　右鍵拖曳＝平移</div>
+</footer>
+
+<!-- ── 面板：立地選擇 ─────────────────────────────────────────── -->
+<section class="panel" id="panel-locations" hidden>
+  <header class="panel-head">
+    <h2>立地を選ぶ<span>選擇店址</span></h2>
+    <button class="panel-close" data-close="panel-locations">✕</button>
+  </header>
+  <div class="panel-body">
+    <div class="loc-filter">
+      <label>地區
+        <select id="loc-region"><option value="">すべて</option></select>
+      </label>
+      <label>排序
+        <select id="loc-sort">
+          <option value="stars">解放順</option>
+          <option value="traffic">人通り</option>
+          <option value="rent">家賃</option>
+          <option value="spend">客単価</option>
+        </select>
+      </label>
+      <span class="muted" id="loc-count"></span>
+    </div>
+    <ul class="loc-list" id="loc-list"></ul>
+  </div>
+</section>
+
+<!-- ── 面板：菜單 ─────────────────────────────────────────────── -->
+<section class="panel" id="panel-menu" hidden>
+  <header class="panel-head">
+    <h2>品書き<span>菜單</span></h2>
+    <button class="panel-close" data-close="panel-menu">✕</button>
+  </header>
+  <div class="panel-body">
+    <p class="muted" id="menu-note"></p>
+    <ul class="menu-list" id="menu-list"></ul>
+  </div>
+</section>
+
+<!-- ── 面板：操作說明 ─────────────────────────────────────────── -->
+<section class="panel" id="panel-help" hidden>
+  <header class="panel-head">
+    <h2>操作<span>說明</span></h2>
+    <button class="panel-close" data-close="panel-help">✕</button>
+  </header>
+  <div class="panel-body help">
+    <table>
+      <tr><td>左鍵拖曳</td><td>旋轉視角（環繞餐廳）</td></tr>
+      <tr><td>滾輪 / 雙指</td><td>拉近拉遠</td></tr>
+      <tr><td>右鍵拖曳 / 中鍵拖曳</td><td>平移視角</td></tr>
+      <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></td><td>預設機位：全景／吧台／客席／廚房</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>暫停 / 繼續</td></tr>
+      <tr><td><kbd>L</kbd> <kbd>M</kbd> <kbd>H</kbd></td><td>立地 / 菜單 / 說明</td></tr>
+      <tr><td><kbd>F</kbd></td><td>切換晝夜光影（快看夜晚燈籠）</td></tr>
+    </table>
+    <p class="muted">遊戲以秒為單位推進：1 倍速時 1 秒＝1 遊戲分鐘。顧客會自己進店、入座、點餐、用餐、結帳；打烊後結算當日營業額。</p>
+  </div>
+</section>
+
+<!-- ── 結算畫面 ───────────────────────────────────────────────── -->
+<section class="settle" id="settle" hidden>
+  <div class="settle-card">
+    <h2 id="settle-title">本日の営業</h2>
+    <dl id="settle-list"></dl>
+    <button id="settle-next">翌日へ<span>進入隔天</span></button>
+  </div>
+</section>
+
+<div id="loading">
+  <div class="loading-inner">
+    <div class="loading-title">夢幻西餐廳 3D</div>
+    <div class="loading-sub">日本編 ─ 準備中…</div>
+    <div class="loading-bar"><i></i></div>
+    <div class="loading-step" id="loading-step">three.js を読み込み中</div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
