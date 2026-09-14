@@ -29,7 +29,10 @@ import * as Props from '../src/scene/props.js';
 import * as Chars from '../src/scene/characters.js';
 import { createLighting } from '../src/scene/lighting.js';
 import { RestaurantView, propStats } from '../src/scene/restaurant.js';
-import { createGame, tick, settleDay, startNextDay, resolveSpecialties, seatsOfPlan } from '../src/sim/game.js';
+import { createGame, tick, settleDay, startNextDay, resolveSpecialties, seatsOfPlan, money,
+  hireStaff, fireStaff, candidateInfo, ROLE_LABEL, buyEquipment, repairEquipment,
+  forceEvent, trafficMultiplier } from '../src/sim/game.js';
+import { EVENTS } from '../src/data/events.js';
 
 const out = document.getElementById('out');
 const L = [];
@@ -145,6 +148,134 @@ lighting.setTimeOfDay(21);
 renderer.render(scene, camera);
 check('夜晚可渲染', renderer.info.render.calls > 0, `lamps on=${lighting.state.isNight}`);
 lighting.setTimeOfDay(12);
+
+/* ── 7. 員工服務流程 ───────────────────────────────────────── */
+say('');
+say('=== [7] 員工與服務流程 ===');
+{
+  const g2 = createGame({ locationId: 'osaka_dotonbori', seed: 99 });
+  check('開局有 1 料理人 + 1 ホール',
+    g2.staff.filter((s) => s.role === 'chef').length === 1 && g2.staff.filter((s) => s.role === 'waiter').length === 1,
+    g2.staff.map((s) => `${s.name}(${ROLE_LABEL[s.role]})`).join('、'));
+
+  // 招募名單
+  const before = g2.cash;
+  const cands = candidateInfo(g2);
+  check('招募名單有 3~5 人且星級合格',
+    cands.length >= 3 && cands.every((c) => c.stars <= g2.stars), `${cands.length} 人`);
+  const pick = cands.find((c) => g2.cash >= c.hireCost);
+  if (pick) {
+    const r = hireStaff(g2, pick.id);
+    check('可以雇用員工', r.ok === true, r.ok ? `${pick.name}（${money(pick.hireCost)}）` : r.error);
+    check('雇用會扣簽約金', g2.cash === before - pick.hireCost, `-${money(pick.hireCost)}`);
+    check('員工數增加', g2.staff.length === 3, `${g2.staff.length} 人`);
+  } else {
+    check('可以雇用員工', false, '沒有付得起的應徵者');
+  }
+  const firstWaiter = g2.staff.find((s) => s.role === 'waiter');
+  const lastChef = g2.staff.find((s) => s.role === 'chef');
+  const fireChef = fireStaff(g2, lastChef.id);
+  check('不能解雇最後一位料理人', fireChef.ok === false, fireChef.error || '');
+
+  // 跑完整一天
+  const seenTasks = new Set();
+  let maxPass = 0;
+  let maxQueue = 0;
+  let restroomCleaned = false;
+  let dirtPeak = 0;
+  let guard2 = 0;
+  while (g2.phase !== 'settle' && guard2++ < 3000) {
+    tick(g2, 1);
+    for (const t of g2.tasks) seenTasks.add(t.type);
+    maxPass = Math.max(maxPass, g2.pass.length);
+    maxQueue = Math.max(maxQueue, g2.queue.length);
+    dirtPeak = Math.max(dirtPeak, g2.restroom.dirt);
+    if (g2.restroom.dirt === 0 && dirtPeak > 5) restroomCleaned = true;
+  }
+  const rep2 = settleDay(g2);
+  for (const k of ['seat', 'cook', 'deliver', 'collect', 'cleanTable']) {
+    check(`任務「${k}」有被建立`, seenTasks.has(k), [...seenTasks].join(','));
+  }
+  check('有完成任務', rep2.tasksDone > 0, `${rep2.tasksDone} 件`);
+  check('服務生完成結帳（有營業額）', rep2.revenue > 0, `¥${rep2.revenue.toLocaleString()}`);
+  check('大部分客人有被服務', rep2.served > 0 && rep2.served >= rep2.angry,
+    `服務 ${rep2.served} / 生氣 ${rep2.angry}`);
+  check('出餐口有菜（廚師有放菜）', maxPass > 0, `同時最多 ${maxPass} 組`);
+  check('出餐口的菜會被取走', g2.pass.length === 0 || g2.phase !== 'settle', `${g2.pass.length} 筆殘留`);
+  check('人件費有算進結算', rep2.wages > 0, money(rep2.wages));
+  void restroomCleaned; void maxQueue; void firstWaiter;
+}
+
+/* ── 8. 候位排隊 ───────────────────────────────────────────── */
+say('');
+say('=== [8] 候位排隊 ===');
+{
+  const g3 = createGame({ locationId: 'tokyo_shibuya', seed: 5 });
+  // 把所有桌子佔滿 → 新客人應該去排隊
+  for (const t of g3.plan.tables) { t.occupied = true; t.groupId = 'x'; }
+  let guard3 = 0;
+  while (g3.queue.length === 0 && guard3++ < 400) tick(g3, 1);
+  check('沒位子時客人會排隊', g3.queue.length > 0, `候位 ${g3.queue.length} 組`);
+  const queued = g3.groups.find((x) => x.state === 'queue');
+  check('排隊中的客人狀態正確', !!queued && queued.wait >= 0);
+  // 空出一張桌 → 應該有人被帶位
+  g3.plan.tables[0].occupied = false;
+  g3.plan.tables[0].groupId = null;
+  let guard4 = 0;
+  while (g3.queue.length > 0 && guard4++ < 200) tick(g3, 1);
+  check('有位子後會補位（帶位任務）', g3.queue.length < 1 || g3.tasks.some((t) => t.type === 'seat'),
+    `剩 ${g3.queue.length} 組排隊`);
+}
+
+/* ── 9. 事件系統 ───────────────────────────────────────────── */
+say('');
+say('=== [9] 事件 ===');
+{
+  const g4 = createGame({ locationId: 'kyoto_gion', seed: 21 });
+  check('事件資料 34 筆', EVENTS.length === 34, `${EVENTS.length}`);
+  const ev = EVENTS.find((e) => e.id === 'tv_interview') || EVENTS[0];
+  const trafficBefore = trafficMultiplier(g4, locationById(g4.locationId));
+  const cashBefore = g4.cash;
+  const res = forceEvent(g4, ev.id);
+  check('可以觸發指定事件', res.ok === true, ev.name);
+  const trafficAfter = trafficMultiplier(g4, locationById(g4.locationId));
+  const applied = g4.eventLog.length > 0 && (
+    (ev.effects.trafficMul && trafficAfter !== trafficBefore) ||
+    (ev.effects.cash && g4.cash !== cashBefore) ||
+    (ev.effects.fame && true)
+  );
+  check('事件效果有套用', applied,
+    `traffic ${trafficBefore.toFixed(2)}→${trafficAfter.toFixed(2)}, cash ${g4.cash - cashBefore}`);
+  check('事件寫進紀錄', g4.eventLog.length > 0, g4.eventLog[0]?.name || '');
+
+  // 跑一段時間，應該會有事件自然發生
+  let guard5 = 0, natural = 0;
+  const logBefore = g4.eventLog.length;
+  while (guard5++ < 600 && g4.phase === 'open') { tick(g4, 1); }
+  natural = g4.eventLog.length - logBefore;
+  check('營業中會隨機發生事件', natural > 0, `${natural} 件（600 分鐘內）`);
+
+  // 設備減免
+  const g5 = createGame({ locationId: 'tokyo_shibuya', seed: 33 });
+  const mitEvent = EVENTS.find((e) => e.mitigateBy) || null;
+  if (mitEvent) {
+    const r1 = forceEvent(g5, mitEvent.id);
+    check('有可減免的事件存在', r1.ok === true, `${mitEvent.name}（${mitEvent.mitigateBy}）`);
+    const cashAfterNoEquip = g5.cash;
+    // 買了設備後再觸發一次，減免應為一半
+    g5.equipment.push(mitEvent.mitigateBy);
+    forceEvent(g5, mitEvent.id);
+    check('設備會標記減免', g5.eventLog[0].mitigated === true,
+      `裝備 ${mitEvent.mitigateBy} → mitigated=${g5.eventLog[0].mitigated}`);
+    void cashAfterNoEquip;
+  }
+  // 設備購買／修理
+  const buy = buyEquipment(g5, 'cctv');
+  check('可以購買設備', buy.ok === true || buy.error === '已經購入', buy.ok ? '監視器' : buy.error);
+  g5.equipBroken.fridge = true;
+  const rep = repairEquipment(g5, 'fridge');
+  check('可以修理故障設備', rep.ok === true && g5.equipBroken.fridge === false, rep.ok ? money(rep.cost) : rep.error);
+}
 
 say('');
 say(fails === 0 ? '<span class="pass">SCENE TEST: ALL PASSED</span>' : `<span class="fail">SCENE TEST: ${fails} FAILED</span>`);

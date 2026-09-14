@@ -108,6 +108,11 @@ function rebuildPlan() {
     root: next.root,
     groupMeshes: next.groupMeshes,
     staffMeshes: next.staffMeshes,
+    staffGroup: next.staffGroup,
+    passDishes: next.passDishes,
+    dirtyMarks: next.dirtyMarks,
+    _passShown: -1,
+    _dirtyShown: '',
     lampPointers: next.lampPointers,
     tableProps: next.tableProps,
     porchLight: next.porchLight,
@@ -126,6 +131,7 @@ addEventListener('keydown', (e) => {
   if (k >= '1' && k <= '5') { gotoShot(Number(k) - 1); return; }
   if (k === ' ') { e.preventDefault(); const v = game.paused ? 1 : 0; game.speed = v; game.paused = v === 0; hud.update(); return; }
   if (k === 'l') hud.toggle('panel-locations');
+  else if (k === 's') hud.toggle('panel-staff');
   else if (k === 'm') hud.toggle('panel-menu');
   else if (k === 'h') hud.toggle('panel-help');
   else if (k === 'c') gotoShot(shotIdx + 1);
@@ -228,8 +234,24 @@ bindAudioUi();
 /* 事件 → 音效對照（模擬層只丟事件，這裡決定要播什麼） */
 const EVENT_SFX = {
   door: 'door', seat: 'seat', order: 'order', serve: 'serve',
-  pay: 'pay', angry: 'angry'
+  pay: 'pay', angry: 'angry', cooked: 'clink', clean: 'whoosh',
+  hired: 'happy', fired: 'error', equip: 'click', repair: 'clink'
 };
+
+/** 處理一筆模擬事件：播音效 + 需要時跳提示 */
+function handleSimEvent(ev) {
+  if (ev.type === 'event') {
+    const kind = ev.kind || 'neutral';
+    audio.playSfx(kind === 'positive' ? 'starup' : kind === 'negative' ? 'error' : 'click', { gain: 0.9 });
+    if (ev.phase === 'start') hud.toast(ev.message || ev.name, kind === 'positive' ? 'good' : kind === 'negative' ? 'bad' : '');
+    else hud.toast(ev.message || `${ev.name} が終わりました`, '');
+    return;
+  }
+  const name = EVENT_SFX[ev.type];
+  if (!name) return;
+  if (name === 'happy' || name === 'error') { audio.playSfx(name); return; }
+  audio.playSfx(name, { gain: 0.7 + Math.min(0.3, (ev.size || 1) * 0.05) });
+}
 
 /* ------------------------------------------------------------ 主迴圈 */
 
@@ -264,15 +286,9 @@ function frame(now) {
   lighting.setTimeOfDay(hour);
   game.__night = hour < 6.4 || hour > 18.4;
 
-  // 事件 → 音效（每幀清空）
+  // 事件 → 音效／提示（每幀清空）
   const evs = drainEvents(game);
-  for (const ev of evs) {
-    const name = EVENT_SFX[ev.type];
-    if (!name) continue;
-    if (name === 'angry') audio.playSfx('angry');
-    else if (name === 'pay') audio.playSfx('pay');
-    else audio.playSfx(name, { gain: 0.7 + Math.min(0.3, (ev.size || 1) * 0.05) });
-  }
+  for (const ev of evs) handleSimEvent(ev);
 
   // 環境音與音樂性格（依地點、時段、來客數）——每 0.5 秒更新一次即可
   audioTimer += dtRaw;
@@ -407,6 +423,14 @@ if (params.get('hour')) window.DREAM3D.setHour(Number(params.get('hour')));
 if (params.get('stars')) setStars(game, Number(params.get('stars')));
 if (params.get('speed')) { game.speed = Number(params.get('speed')); game.paused = game.speed === 0; }
 if (params.get('panel')) { try { hud.toggle('panel-' + params.get('panel')); } catch (e) { console.warn('panel open failed', e); } }
+// ?stafftab=roster|hire|shop → 員工面板直接開在指定分頁（測試用）
+if (params.get('stafftab')) {
+  try {
+    hud._staffTab = params.get('stafftab');
+    document.querySelectorAll('#staff-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === hud._staffTab));
+    hud.renderStaff();
+  } catch (e) { console.warn('stafftab failed', e); }
+}
 if (params.get('shot')) gotoShot(Number(params.get('shot')));
 // ?audio=1 → 啟動時就直接開啟音訊（測試用；正常情況要等使用者手勢）
 if (params.get('audio') === '1') {

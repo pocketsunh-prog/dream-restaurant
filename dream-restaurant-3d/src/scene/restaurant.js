@@ -133,7 +133,7 @@ export class RestaurantView {
     scene.add(this.root);
 
     this.groupMeshes = new Map();   // groupId -> [meshes]
-    this.staffMeshes = [];
+    this.staffMeshes = new Map();   // staffId -> mesh（buildStaff 會重建）
     this.lampPointers = [];         // 需要隨夜晚開關的發光體
     this.tableProps = [];
     this._tmp = new THREE.Vector3();
@@ -656,25 +656,113 @@ export class RestaurantView {
     this.porchLight = porch;
   }
 
-  /* ── 員工 ───────────────────────────────────────────────────── */
+  /* ── 員工（依 state.staff 動態建立／移除）───────────────────── */
 
   buildStaff() {
-    for (const s of this.plan.staffSpots) {
-      let mesh = null;
-      try {
-        mesh = Chars.makeCharacter({ kind: s.role === 'chef' ? 'chef' : 'waiter', seed: 1000 + this.staffMeshes.length * 77 });
-      } catch { mesh = null; }
-      if (!mesh || !mesh.isObject3D) {
-        mesh = new THREE.Mesh(
-          new THREE.CapsuleGeometry(0.24, 1.0, 4, 10),
-          new THREE.MeshStandardMaterial({ color: s.role === 'chef' ? 0xf0efe8 : 0x22262e, roughness: 0.7 })
-        );
-        mesh.position.y = 0.75;
+    this.staffMeshes = new Map();   // staffId -> mesh
+    this.staffGroup = new THREE.Group();
+    this.staffGroup.name = 'staff';
+    this.root.add(this.staffGroup);
+    // 出餐口的菜盤
+    this.passDishes = new THREE.Group();
+    this.passDishes.name = 'passDishes';
+    this.root.add(this.passDishes);
+    this._passShown = -1;
+    // 髒桌標記
+    this.dirtyMarks = new THREE.Group();
+    this.dirtyMarks.name = 'dirtyMarks';
+    this.root.add(this.dirtyMarks);
+    this._dirtyShown = '';
+  }
+
+  /** 毎幀依 state.staff 同步：新增／移除人物，更新位置與姿勢 */
+  syncStaff(state) {
+    if (!this.staffGroup) return;
+    const seen = new Set();
+    const staff = Array.isArray(state.staff) ? state.staff : [];
+    for (const s of staff) {
+      seen.add(s.id);
+      let mesh = this.staffMeshes.get(s.id);
+      if (!mesh) {
+        const kind = s.role === 'chef' ? 'chef' : 'waiter';
+        try {
+          mesh = Chars.makeCharacter({
+            kind,
+            seed: s.appearance?.seed ?? 1234,
+            height: s.appearance?.height ?? 1.68
+          });
+        } catch { mesh = null; }
+        if (!mesh || !mesh.isObject3D) {
+          mesh = new THREE.Mesh(
+            new THREE.CapsuleGeometry(0.24, 1.0, 4, 10),
+            new THREE.MeshStandardMaterial({ color: s.role === 'chef' ? 0xf0efe8 : 0x22262e, roughness: 0.7 })
+          );
+          mesh.position.y = 0.75;
+        }
+        shadowize(mesh);
+        this.staffGroup.add(mesh);
+        this.staffMeshes.set(s.id, mesh);
       }
-      place(mesh, s.x, this.floorY, s.z, s.ry || 0);
-      shadowize(mesh);
-      this.root.add(mesh);
-      this.staffMeshes.push({ mesh, spot: s, seed: Math.floor(Math.random() * 1e6) });
+      mesh.position.set(s.x ?? 0, this.floorY, s.z ?? 0);
+      mesh.rotation.y = s.dir ?? 0;
+      const pose = s.pose || 'stand';
+      const p = pose === 'walk' ? 'walk' : (s.carry > 0 && pose !== 'walk') ? 'carry' : (pose === 'wait' ? 'wait' : 'stand');
+      try { Chars.setPose(mesh, p, this._clock + (s.appearance?.seed ?? 0) % 7); } catch { /* ignore */ }
+    }
+    for (const [id, mesh] of this.staffMeshes) {
+      if (seen.has(id)) continue;
+      this.staffGroup.remove(mesh);
+      try { Chars.disposeCharacter?.(mesh); } catch { /* ignore */ }
+      this.staffMeshes.delete(id);
+    }
+  }
+
+  /** 出餐口上的菜（有幾組在等就放幾盤） */
+  syncPass(state) {
+    if (!this.passDishes) return;
+    const n = Array.isArray(state.pass) ? state.pass.reduce((a, p) => a + Math.max(1, (p.dishes || []).length), 0) : 0;
+    const shown = Math.min(6, n);
+    if (shown === this._passShown) return;
+    this._passShown = shown;
+    while (this.passDishes.children.length) {
+      const c = this.passDishes.children.pop();
+      c.geometry?.dispose?.();
+    }
+    const p = this.plan.pass;
+    for (let i = 0; i < shown; i++) {
+      const bowl = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.11, 0.08, 0.05, 12),
+        new THREE.MeshStandardMaterial({ color: i % 2 ? 0x2b2b30 : 0xd8cfc0, roughness: 0.4, metalness: 0.05 })
+      );
+      bowl.position.set(p.x - 0.4 + (i % 3) * 0.4, this.floorY + 0.98, p.z - 0.1 + Math.floor(i / 3) * 0.24);
+      bowl.castShadow = true;
+      this.passDishes.add(bowl);
+    }
+  }
+
+  /** 髒桌標記（碗盤堆） */
+  syncDirtyTables(state) {
+    if (!this.dirtyMarks) return;
+    const dirty = (state.plan?.tables || []).filter((t) => t.dirty > 0).map((t) => t.id).join(',');
+    if (dirty === this._dirtyShown) return;
+    this._dirtyShown = dirty;
+    while (this.dirtyMarks.children.length) {
+      const c = this.dirtyMarks.children.pop();
+      c.geometry?.dispose?.();
+    }
+    for (const t of state.plan.tables) {
+      if (!(t.dirty > 0)) continue;
+      const y = t.style === 'chabudai' ? this.tatamiY : this.floorY;
+      for (let i = 0; i < 3; i++) {
+        const plate = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.12, 0.1, 0.03, 10),
+          new THREE.MeshStandardMaterial({ color: 0xe4dccb, roughness: 0.5 })
+        );
+        plate.position.set(t.x + (i - 1) * 0.18, y + (t.style === 'chabudai' ? 0.38 : 0.76) + i * 0.028, t.z + (i % 2 ? 0.1 : -0.1));
+        plate.rotation.y = i * 0.6;
+        plate.castShadow = true;
+        this.dirtyMarks.add(plate);
+      }
     }
   }
 
@@ -739,17 +827,14 @@ export class RestaurantView {
   update(dt, state) {
     this._clock += dt;
     this.syncGroups(state, dt);
-
-    // 員工：輕微待機動作（若 characters 支援）
-    for (let i = 0; i < this.staffMeshes.length; i++) {
-      const s = this.staffMeshes[i];
-      try { Chars.setPose(s.mesh, s.spot.role === 'chef' ? 'stand' : 'wait', this._clock + i); } catch { /* ignore */ }
-    }
+    this.syncStaff(state);
+    this.syncPass(state);
+    this.syncDirtyTables(state);
 
     // 夜晚：燈籠與店外光
     const night = state.__night ?? false;
     const glow = night ? 1 : 0;
-    this.porchLight.intensity = glow * 9;
+    if (this.porchLight) this.porchLight.intensity = glow * 9;
     for (const p of this.lampPointers) {
       const emissiveBoost = p.kind === 'shoji' || p.kind === 'andon' || p.kind === 'lantern' || p.kind === 'vending' || p.kind === 'window';
       if (!emissiveBoost) continue;

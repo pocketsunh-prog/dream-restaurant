@@ -33,10 +33,13 @@
     <div class="stat"><label>評価</label><b id="hud-stars" class="stars">★☆☆☆☆</b></div>
     <div class="stat"><label>来客</label><b id="hud-guests">0</b><i>人</i></div>
     <div class="stat"><label>席</label><b id="hud-seats">0</b><i>席</i></div>
+    <div class="stat"><label>行列</label><b id="hud-queue">0</b><i>組</i></div>
+    <div class="stat"><label>従業員</label><b id="hud-staff">0</b><i>人</i></div>
   </div>
   <div class="where">
     <span id="hud-location">渋谷センター街</span>
     <span id="hud-region" class="muted">関東 · 東京</span>
+    <span id="hud-events"></span>
   </div>
 </header>
 
@@ -49,6 +52,7 @@
     <button data-speed="4" title="4 倍速">4×</button>
   </div>
   <div class="actions">
+    <button id="btn-staff">👥 従業員 <kbd>S</kbd></button>
     <button id="btn-locations">🗾 立地 <kbd>L</kbd></button>
     <button id="btn-menu">🍜 菜單 <kbd>M</kbd></button>
     <button id="btn-camera">🎥 視角 <kbd>C</kbd></button>
@@ -99,6 +103,24 @@
   </div>
 </section>
 
+<!-- ── 面板：従業員（現有／招募／設備・事件）──────────────────── -->
+<section class="panel" id="panel-staff" hidden>
+  <header class="panel-head">
+    <h2>従業員<span>員工</span></h2>
+    <button class="panel-close" data-close="panel-staff">✕</button>
+  </header>
+  <div class="panel-body">
+    <nav class="tabs" id="staff-tabs">
+      <button data-tab="roster" class="on">現有員工</button>
+      <button data-tab="hire">招募</button>
+      <button data-tab="shop">設備・事件</button>
+    </nav>
+    <div id="staff-roster"></div>
+    <div id="staff-hire" hidden></div>
+    <div id="staff-shop" hidden></div>
+  </div>
+</section>
+
 <!-- ── 面板：操作說明 ─────────────────────────────────────────── -->
 <section class="panel" id="panel-help" hidden>
   <header class="panel-head">
@@ -112,12 +134,16 @@
       <tr><td>右鍵拖曳 / 中鍵拖曳</td><td>平移視角</td></tr>
       <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></td><td>預設機位：全景／吧台／客席／廚房</td></tr>
       <tr><td><kbd>Space</kbd></td><td>暫停 / 繼續</td></tr>
-      <tr><td><kbd>L</kbd> <kbd>M</kbd> <kbd>H</kbd></td><td>立地 / 菜單 / 說明</td></tr>
+      <tr><td><kbd>L</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>H</kbd></td><td>立地 / 従業員 / 菜單 / 說明</td></tr>
       <tr><td><kbd>F</kbd></td><td>切換晝夜光影（快看夜晚燈籠）</td></tr>
       <tr><td><kbd>A</kbd></td><td>音效／BGM 開關（第一次互動後才會發聲，這是瀏覽器限制）</td></tr>
     </table>
     <p class="muted">遊戲以秒為單位推進：1 倍速時 1 秒＝1 遊戲分鐘。顧客會自己進店、入座、點餐、用餐、結帳；打烊後結算當日營業額。</p>
     <p class="muted">音樂為即時合成（箏、尺八、太鼓，使用日本音階），會依<b>立地風格</b>與<b>晝夜</b>改變音階與速度；店內人聲、廚房聲與雨聲也會跟著實際狀況變化。</p>
+    <p class="muted"><b>員工的分工</b>：<b>料理人</b>負責把菜煮好放上出餐口；<b>ホール（外場）</b>負責帶位、送菜、埋單、收拾桌面與清掃洗手間。
+    人手不足時客人會等不到位子或等不到菜而生气離開 —— 用「従業員」面板招募。</p>
+    <p class="muted"><b>事件</b>：營業中會隨機發生（颱風、電視採訪、食材漲價、衛生檢查、祭典人潮…），
+    效果會持續幾十分鐘；部分事件可以靠<b>設備</b>減免一半（監視器、滅火器、消防設備、保全系統…），設備在「従業員 → 設備・事件」購買。</p>
   </div>
 </section>
 

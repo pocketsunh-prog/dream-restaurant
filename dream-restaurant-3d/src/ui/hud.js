@@ -3,9 +3,15 @@
 // ============================================================================
 import { LOCATIONS, locationById, REGIONS } from '../data/locations.js';
 import { DISHES, dishById } from '../data/dishes.js';
-import { money, clockText, WEATHER_JP, CUSTOMER_KINDS } from '../sim/game.js';
+import {
+  money, clockText, WEATHER_JP, CUSTOMER_KINDS,
+  hireStaff, fireStaff, candidateInfo, ROLE_LABEL, STAFF_LIMIT,
+  EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
+  activeEventInfo, TASK_KINDS
+} from '../sim/game.js';
 
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class Hud {
   constructor(game, hooks = {}) {
@@ -13,7 +19,7 @@ export class Hud {
     this.hooks = hooks;
     this._locRegion = '';
     this._locSort = 'stars';
-    this._toastTimer = null;
+    this._staffTab = 'roster';
     this.bind();
   }
 
@@ -27,12 +33,21 @@ export class Hud {
       });
     });
     // 面板開關
+    $('btn-staff')?.addEventListener('click', () => this.toggle('panel-staff'));
     $('btn-locations')?.addEventListener('click', () => this.toggle('panel-locations'));
     $('btn-menu')?.addEventListener('click', () => this.toggle('panel-menu'));
     $('btn-help')?.addEventListener('click', () => this.toggle('panel-help'));
     $('btn-camera')?.addEventListener('click', () => this.hooks.onCycleCamera?.());
     document.querySelectorAll('[data-close]').forEach((b) => {
       b.addEventListener('click', () => this.close(b.dataset.close));
+    });
+    // 員工面板分頁
+    document.querySelectorAll('#staff-tabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this._staffTab = b.dataset.tab;
+        document.querySelectorAll('#staff-tabs button').forEach((x) => x.classList.toggle('on', x === b));
+        this.renderStaff();
+      });
     });
     // 立地篩選
     const sel = $('loc-region');
@@ -63,6 +78,7 @@ export class Hud {
     if (willOpen) {
       if (id === 'panel-locations') this.renderLocations();
       if (id === 'panel-menu') this.renderMenu();
+      if (id === 'panel-staff') this.renderStaff();
     }
   }
 
@@ -71,6 +87,189 @@ export class Hud {
   anyPanelOpen() { return [...document.querySelectorAll('.panel')].some((p) => !p.hidden); }
 
   closeAll() { document.querySelectorAll('.panel').forEach((p) => { p.hidden = true; }); }
+
+  /* ── 員工面板 ───────────────────────────────────────────────── */
+
+  renderStaff() {
+    const tab = this._staffTab;
+    const roster = $('staff-roster');
+    const hire = $('staff-hire');
+    const shop = $('staff-shop');
+    if (!roster) return;
+    roster.hidden = tab !== 'roster';
+    hire.hidden = tab !== 'hire';
+    shop.hidden = tab !== 'shop';
+    if (tab === 'roster') this.renderRoster();
+    else if (tab === 'hire') this.renderHire();
+    else this.renderShop();
+  }
+
+  _bar(label, value, max = 100) {
+    const pct = Math.max(0, Math.min(100, (value / max) * 100));
+    return `<div class="bar"><i>${label}</i><span class="track"><b style="width:${pct.toFixed(0)}%"></b></span><span>${Math.round(value)}</span></div>`;
+  }
+
+  renderRoster() {
+    const host = $('staff-roster');
+    if (!host) return;
+    const st = this.game;
+    const tasks = new Map((st.tasks || []).map((t) => [t.id, t]));
+    const byRole = (r) => st.staff.filter((s) => s.role === r).length;
+    let html = `<div class="section-title">現在のシフト　${st.staff.length} / ${STAFF_LIMIT} 人　（料理人 ${byRole('chef')}・ホール ${byRole('waiter')}）</div>`;
+    if (!st.staff.length) html += `<div class="empty">沒有員工。到「招募」分頁雇用。</div>`;
+    for (const s of st.staff) {
+      const t = s.taskId ? tasks.get(s.taskId) : null;
+      const doing = t ? (TASK_KINDS[t.type]?.jp || t.type) : '待機';
+      html += `
+      <div class="card" data-staff="${esc(s.id)}">
+        <div class="card-head">
+          <b>${esc(s.name)}</b><span class="kana">${esc(s.kana)}</span>
+          <span class="role ${s.role === 'chef' ? 'chef' : ''}">${ROLE_LABEL[s.role] || s.role}</span>
+        </div>
+        <div class="card-sub">
+          <span>${s.age} 歳</span>
+          <span>時給 <b>${money(s.wage)}</b></span>
+          <span>担当 <b>${esc(s.specialty)}</b></span>
+          <span>現在 <b>${esc(doing)}</b>${s.carry > 0 ? `（運搬 ${s.carry}）` : ''}</span>
+        </div>
+        <div class="bars">
+          ${this._bar('速度', s.speed)}
+          ${this._bar('手腕', s.skill)}
+          ${this._bar('体力', s.stamina)}
+          ${this._bar('疲労', s.fatigue)}
+        </div>
+        <div class="traits">${(s.traits || []).map((x) => `<span>${esc(x)}</span>`).join('')}</div>
+        <div class="card-desc">${esc(s.desc)}</div>
+        <div class="card-actions">
+          <button class="fire" data-fire="${esc(s.id)}">解雇（資遣費 ${money(s.wage * 4)}）</button>
+        </div>
+      </div>`;
+    }
+    html += `<div class="tagline">※ 人件費＝時給 × 營業時數，於打烊結算時支付。疲勞越高動作越慢。</div>`;
+    host.innerHTML = html;
+    host.querySelectorAll('[data-fire]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const res = fireStaff(this.game, b.dataset.fire);
+        if (res.ok) this.toast(`解雇しました（資遣費 ${money(res.severance)}）`, 'bad');
+        else this.toast(res.error, 'bad');
+        this.renderStaff();
+      });
+    });
+  }
+
+  renderHire() {
+    const host = $('staff-hire');
+    if (!host) return;
+    const st = this.game;
+    const cands = candidateInfo(st);
+    let html = `<div class="section-title">応募者　★${st.stars} までが出応募</div>`;
+    if (!cands.length) html += `<div class="empty">目前沒有應徵者（提升星級或隔天再來）。</div>`;
+    for (const c of cands) {
+      const afford = st.cash >= c.hireCost;
+      const full = st.staff.length >= STAFF_LIMIT;
+      html += `
+      <div class="card">
+        <div class="card-head">
+          <b>${esc(c.name)}</b><span class="kana">${esc(c.kana)}</span>
+          <span class="role ${c.role === 'chef' ? 'chef' : ''}">${ROLE_LABEL[c.role] || c.role}</span>
+        </div>
+        <div class="card-sub">
+          <span>${c.age} 歳 ★${c.stars}</span>
+          <span>時給 <b>${money(c.wage)}</b></span>
+          <span>担当 <b>${esc(c.specialty)}</b></span>
+        </div>
+        <div class="bars">
+          ${this._bar('速度', c.speed)}
+          ${this._bar('手腕', c.skill)}
+          ${this._bar('体力', c.stamina)}
+        </div>
+        <div class="traits">${(c.traits || []).map((x) => `<span>${esc(x)}</span>`).join('')}</div>
+        <div class="card-desc">${esc(c.desc)}</div>
+        <div class="card-actions">
+          <button class="buy" data-hire="${esc(c.id)}" ${(!afford || full) ? 'disabled' : ''}>
+            雇用（簽約金 ${money(c.hireCost)}）
+          </button>
+          ${!afford ? '<span class="tagline">資金不足</span>' : full ? '<span class="tagline">員工已滿</span>' : ''}
+        </div>
+      </div>`;
+    }
+    host.innerHTML = html;
+    host.querySelectorAll('[data-hire]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const res = hireStaff(this.game, b.dataset.hire);
+        if (res.ok) this.toast(`${res.staff.name} を雇いました（${ROLE_LABEL[res.staff.role]}）`, 'good');
+        else this.toast(res.error, 'bad');
+        this.hooks.onStaffChanged?.();
+        this.renderStaff();
+      });
+    });
+  }
+
+  renderShop() {
+    const host = $('staff-shop');
+    if (!host) return;
+    const st = this.game;
+    const owned = st.equipment || [];
+    let html = `<div class="section-title">設備（事件の被害を半分に）</div>`;
+    for (const [id, def] of Object.entries(EQUIPMENT_CATALOG)) {
+      const has = owned.includes(id);
+      const afford = st.cash >= def.price;
+      html += `
+      <div class="card">
+        <div class="card-head"><b>${esc(def.jp)}</b><span class="kana">${esc(def.zh)}</span>
+          <span class="role">${has ? '導入済み' : money(def.price)}</span></div>
+        <div class="card-desc">${esc(def.desc)}</div>
+        <div class="card-actions">
+          <button class="buy" data-buy="${esc(id)}" ${(has || !afford) ? 'disabled' : ''}>${has ? '已購入' : '購入する'}</button>
+        </div>
+      </div>`;
+    }
+    // 故障
+    const broken = Object.entries(st.equipBroken || {}).filter(([, v]) => v).map(([k]) => k);
+    if (broken.length) {
+      html += `<div class="section-title">故障中</div>`;
+      for (const id of broken) {
+        const name = EQUIPMENT_CATALOG[id]?.jp || { stove: 'コンロ', fridge: '冷蔵庫', ac_unit: '空調' }[id] || id;
+        const cost = id === 'stove' ? 90000 : id === 'fridge' ? 70000 : 120000;
+        html += `<div class="card"><div class="card-head"><b>${esc(name)}</b><span class="role">故障</span></div>
+          <div class="card-actions"><button class="buy" data-repair="${esc(id)}">修理する（${money(cost)}）</button></div></div>`;
+      }
+    }
+    // 進行中事件
+    const active = activeEventInfo(st);
+    html += `<div class="section-title">発生中イベント　${active.length}</div>`;
+    if (!active.length) html += `<div class="empty">目前沒有事件。</div>`;
+    for (const a of active) {
+      html += `<div class="evrow"><span class="k ${esc(a.kind)}">${a.kind === 'positive' ? '好' : a.kind === 'negative' ? '困' : '中'}</span>
+        <span>${esc(a.name)}</span><span class="t">残り ${a.left} 分</span></div>`;
+    }
+    // 紀錄
+    const log = st.eventLog || [];
+    html += `<div class="section-title">記録</div>`;
+    if (!log.length) html += `<div class="empty">還沒有事件紀錄。</div>`;
+    for (const e of log.slice(0, 12)) {
+      html += `<div class="evrow"><span class="k ${esc(e.kind)}">${e.kind === 'positive' ? '好' : e.kind === 'negative' ? '困' : '中'}</span>
+        <span>${esc(e.name)}${e.mitigated ? '（設備で軽減）' : ''}</span>
+        <span class="t">${clockText(e.at)}</span></div>`;
+    }
+    host.innerHTML = html;
+    host.querySelectorAll('[data-buy]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const res = buyEquipment(st, b.dataset.buy);
+        if (res.ok) this.toast(`${res.def.zh} を導入しました`, 'good');
+        else this.toast(res.error, 'bad');
+        this.renderShop();
+      });
+    });
+    host.querySelectorAll('[data-repair]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const res = repairEquipment(st, b.dataset.repair);
+        if (res.ok) this.toast(`修理しました（${money(res.cost)}）`, 'good');
+        else this.toast(res.error, 'bad');
+        this.renderShop();
+      });
+    });
+  }
 
   /* ── 立地面板 ───────────────────────────────────────────────── */
 
@@ -169,9 +368,23 @@ export class Hud {
     $('hud-stars').textContent = '★'.repeat(st.stars) + '☆'.repeat(5 - st.stars);
     $('hud-guests').textContent = String(st.today.guests);
     $('hud-seats').textContent = String(seatsOf(st));
+    const q = $('hud-queue');
+    if (q) {
+      q.textContent = String((st.queue || []).length);
+      q.style.color = (st.queue || []).length > 2 ? 'var(--shu-2)' : '';
+    }
+    const sf = $('hud-staff');
+    if (sf) sf.textContent = String((st.staff || []).length);
     if (loc) {
       $('hud-location').textContent = loc.name;
       $('hud-region').textContent = `${loc.region} · ${loc.city}`;
+    }
+    // 生效中的事件顯示在右上
+    const evHost = $('hud-events');
+    if (evHost) {
+      const act = activeEventInfo(st);
+      evHost.innerHTML = act.slice(0, 3).map((a) =>
+        `<span class="evchip ${a.kind}">${a.name}<i>${a.left}分</i></span>`).join('');
     }
     const speedBtn = document.querySelector(`.speeds button[data-speed="${st.speed}"]`);
     if (speedBtn && !speedBtn.classList.contains('on')) {

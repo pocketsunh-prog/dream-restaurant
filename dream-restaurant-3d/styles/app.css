@@ -107,6 +107,15 @@ html, body {
 .where #hud-location { font-family: var(--font-jp); font-size: 15px; letter-spacing: 1px; }
 .where .muted { font-size: 11px; color: var(--muted); }
 
+#hud-events { display: flex; gap: 4px; justify-content: flex-end; margin-top: 3px; flex-wrap: wrap; }
+.evchip {
+  font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  background: rgba(255,255,255,.1); border: 1px solid var(--line); color: var(--kinari);
+}
+.evchip i { font-style: normal; color: var(--muted); margin-left: 4px; }
+.evchip.positive { background: rgba(79,155,90,.3); border-color: #4f9b5a; }
+.evchip.negative { background: rgba(192,57,43,.35); border-color: var(--shu-2); }
+
 /* ── 底部操作列 ─────────────────────────────────────────────────── */
 #bottombar {
   position: fixed;
@@ -277,6 +286,64 @@ button kbd {
 .loc-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 4px; }
 .loc-meta b { color: var(--kinari); font-weight: 600; }
 .loc-desc { font-size: 11px; color: #b7ab9d; margin-top: 4px; line-height: 1.5; }
+
+/* ── 分頁／員工／設備 ──────────────────────────────────────────── */
+.tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.tabs button {
+  flex: 1;
+  background: rgba(255,255,255,.05);
+  border-color: rgba(255,255,255,.12);
+  font-size: 12px;
+  padding: 5px 6px;
+}
+.tabs button.on { background: var(--ai-2); border-color: var(--kin); color: #fff; }
+
+.card {
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 5px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,.03);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.card-head { display: flex; align-items: baseline; gap: 6px; }
+.card-head b { font-family: var(--font-jp); font-size: 14px; letter-spacing: .5px; }
+.card-head .kana { font-size: 10px; color: var(--muted); }
+.card-head .role {
+  margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  background: rgba(29,59,92,.8); border: 1px solid var(--line); color: var(--kinari);
+}
+.card-head .role.chef { background: rgba(192,57,43,.75); }
+.card-sub { font-size: 11px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.card-sub b { color: var(--kinari); }
+.bars { display: flex; flex-direction: column; gap: 2px; margin: 2px 0; }
+.bar { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted); }
+.bar i { font-style: normal; width: 42px; }
+.bar .track { flex: 1; height: 4px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
+.bar .track b { display: block; height: 100%; background: linear-gradient(90deg, var(--kin), var(--shu-2)); }
+.card-desc { font-size: 11px; color: #b7ab9d; }
+.card-actions { display: flex; gap: 6px; margin-top: 2px; }
+.card-actions button { font-size: 11px; padding: 4px 10px; }
+.card-actions .buy { background: var(--shu); border-color: var(--shu-2); }
+.card-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.tagline { font-size: 10px; color: var(--muted); }
+.traits { display: flex; gap: 4px; flex-wrap: wrap; }
+.traits span {
+  font-size: 10px; padding: 1px 5px; border-radius: 8px;
+  background: rgba(201,162,39,.16); border: 1px solid var(--line); color: var(--kin);
+}
+.evrow { display: flex; align-items: baseline; gap: 6px; font-size: 11px; padding: 3px 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
+.evrow .k { font-size: 10px; padding: 0 5px; border-radius: 3px; }
+.evrow .k.positive { background: rgba(79,155,90,.3); color: #a8e6b0; }
+.evrow .k.negative { background: rgba(192,57,43,.35); color: #f0a89e; }
+.evrow .k.neutral { background: rgba(160,160,170,.25); color: #cfd2d8; }
+.evrow .t { margin-left: auto; color: var(--muted); font-size: 10px; }
+.evrow.mit { color: #a8e6b0; }
+.empty { font-size: 12px; color: var(--muted); padding: 10px 2px; }
+.section-title { font-size: 11px; color: var(--kin); letter-spacing: 1px; margin: 10px 0 6px; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+.section-title:first-child { margin-top: 0; }
 
 .menu-row {
   display: flex; align-items: center; gap: 8px;
