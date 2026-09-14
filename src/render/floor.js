@@ -504,8 +504,14 @@ export class FloorRenderer {
     this._drawInteriorMood(ctx, L, gw, gh, tick, T, pal, fx);
     // 4b) 冷天吐氣、熱浪地面霧氣（天氣效果，不受光影開關影響）
     this._drawWeatherScene(ctx, S, gw, gh, tick, weather);
-    // 5) 天氣全畫面覆蓋
-    if (weather && weather !== 'none') drawWeather(ctx, weather, this.w, this.h, tick, { shafts: fx.shafts });
+    // 5) 天氣覆蓋層：只作用在店外（天空／街景／騎樓），房間剪影內完全不覆蓋
+    //    （玩家回報雨天／熱浪時店內糊掉 → 用 even-odd clip 把店內挖掉）
+    if (weather && weather !== 'none') {
+      drawWeather(ctx, weather, this.w, this.h, tick, {
+        shafts: fx.shafts,
+        excludePoly: roomSilhouette(gw, gh, this.wallHeight, this.originX, this.originY),
+      });
+    }
     // 6) 網格
     if (V.showGrid) this._drawGrid(ctx, L, gw, gh);
     // 7) 幽靈傢俱
@@ -1307,7 +1313,23 @@ export class FloorRenderer {
     // 椅子：有人坐 → 往外拉一點；空椅 → 稍微收進桌下（依 sim.customers[].seat）
     const isChair = key.indexOf('chair_') === 0 || key === 'sofa';
     const seatOccupied = !!(isChair && this._seats && this._seats.has(`${Math.round(num(item.x, 0))},${Math.round(num(item.y, 0))}`));
-    const box = drawFurniture(ctx, item.typeId, c.px, c.py, {
+    // 椅子往外挪：座位格緊貼桌子，貼圖中心會壓到桌面 → 沿「桌心 → 椅子」方向外推 18px
+    // （只影響繪製，不動 layout 與座位計算）
+    let chairDx = 0;
+    let chairDy = 0;
+    if (isChair && (item.tableUid || item.chairFor) && S && S.layout && Array.isArray(S.layout.items)) {
+      const tb = S.layout.items.find((x) => x && x.uid === (item.tableUid || item.chairFor));
+      if (tb) {
+        const c0 = footprintCenter(num(item.x, 0), num(item.y, 0), w, h);
+        const t0 = footprintCenter(num(tb.x, 0), num(tb.y, 0), num(tb.w, 1) || 1, num(tb.h, 1) || 1);
+        const ddx = c0.px - t0.px;
+        const ddy = c0.py - t0.py;
+        const len = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+        chairDx = Math.round((ddx / len) * 18);
+        chairDy = Math.round((ddy / len) * 18);
+      }
+    }
+    const box = drawFurniture(ctx, item.typeId, c.px + chairDx, c.py + chairDy, {
       w, h,
       // 椅子優先用 sim 算好的 rotAuto 面向桌子；玩家手動轉過的不會有 rotAuto
       rot: item.rotAuto != null ? item.rotAuto : item.rot,

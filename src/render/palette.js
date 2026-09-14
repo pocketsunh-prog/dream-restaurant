@@ -165,9 +165,9 @@ export const PALETTE = {
   // ── 傢俱輪廓與桌面（提高與木地板的辨識度）────────────────────
   furn_outline: '#1b1208', // 傢俱一律 1px 深色描邊（遠比地板暗）
   top_dark: '#1b1006', // 深色木桌面（宴會大桌；遠比地板暗）
-  cloth_cream: '#fffbef', // 淡米白桌布（提亮，讓桌面從壓暗後的地板上跳出來）
-  cloth_white: '#fffef8', // 純白桌布
-  cloth_hem: '#d6c69c', // 桌布滾邊（提亮，配合夜間桌面對地板的對比）
+  cloth_cream: '#f8f0dc', // 淡米白桌布（提亮，讓桌面從壓暗後的地板上跳出來）
+  cloth_white: '#faf7ee', // 純白桌布
+  cloth_hem: '#b9a67c', // 桌布滾邊（提亮，配合夜間桌面對地板的對比）
   cushion_red: '#a8241c', // 椅墊（深紅）
   cushion_teal: '#1d7a74', // 椅墊（深青）
   cushion_gry: '#5a5a58', // 椅墊（鐵椅）

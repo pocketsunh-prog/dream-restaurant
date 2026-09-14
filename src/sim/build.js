@@ -2,7 +2,7 @@
 // build.js — 餐廳平面：格局產生、擺放合法性、桌椅與座位推導、裝潢分數
 // 契約見 docs/ARCHITECTURE.md §3.5
 // ============================================================================
-import { furnitureById } from '../data/furniture.js';
+import { furnitureById, furnitureByCategory } from '../data/furniture.js';
 import { GRID_W, GRID_H } from '../core/balance.js';
 
 export const TILE_TYPES = ['floor', 'wall', 'door', 'kitchen', 'pass', 'restroom', 'void'];
@@ -73,8 +73,9 @@ export function defaultLayout(locationId) {
     }
   }
   // 出餐口（廚房下緣，服務生取餐處）
+  // 刻意選在「桌子的間隔欄」上（x0+2 起每 3 格），避免佔用靠牆那排桌子的北側座位格。
   const passXs = [];
-  for (let x = k.x0 + 1; x <= k.x1 - 1; x += 2) passXs.push(x);
+  for (let x = k.x0 + 2; x <= k.x1 - 1; x += 3) passXs.push(x);
   if (!passXs.length) passXs.push(k.x0);
   for (const px of passXs) {
     put(px, k.y1 + 1, 'pass');
@@ -533,17 +534,17 @@ export function autoPlaceChairs(state, tableItem, nextUid) {
   const maxSeats = def?.seats || 2;
   const spots = tableNeighborSpots(state.layout, tableItem);
   const count = Math.min(maxSeats, spots.length);
-  const chairDef = (function () {
-    for (const f of (typeof FURNITURE !== 'undefined' ? FURNITURE : [])) if (f && f.category === 'chair') return f;
-    return null;
-  })();
+  // 注意：這裡必須用 furnitureByCategory（build.js 沒有 import FURNITURE 本體，
+  // 先前用 typeof FURNITURE 判斷會靜默取不到椅子 → 開局完全沒有椅子）
+  const chairDef = furnitureByCategory('chair')[0] || null;
   if (!chairDef || count <= 0) return [];
+  const chairId = tableItem.chairTypeId || chairDef.id;
   const uids = [];
   for (let i = 0; i < count; i++) {
     const spot = spots[i];
     const uid = nextUid(state);
     state.layout.items.push({
-      uid, typeId: chairDef.id,
+      uid, typeId: chairId,
       x: spot.x, y: spot.y,
       w: 1, h: 1, rot: 0,
       durability: 100, broken: false,

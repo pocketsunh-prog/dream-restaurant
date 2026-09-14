@@ -17,8 +17,8 @@ export const MINUTES_PER_DAY = 1440;
 export const MINUTES_PER_SECOND = 1;          // 1 真實秒 = 1 遊戲分鐘（速度 1x）
 export const SPEEDS = [0, 1, 2, 4];
 export const SETTLE_MINUTE = 22 * 60;          // 週日 22:00 結算
-export const WEEKLY_BONUS = 200000;            // 每週一社區獎金（原作約 20 萬）
-export const START_CASH = 500000;
+export const WEEKLY_BONUS = 20000000;            // 每週一社區獎金（原作約 20 萬）
+export const START_CASH = 90000000;
 export const BANKRUPT_DAYS = 7;                // 現金為負超過 7 天 → 破產
 
 /** 星級門檻（兩桶評價都必須達標） */
@@ -227,21 +227,21 @@ export function hourFactor(minute) {
   const h = minute / 60;
   if (h < 6) return 0.15;
   if (h < 9) return 0.45;      // 早餐
-  if (h < 11) return 0.8;
-  if (h < 14) return 1.6;      // 午餐尖峰
-  if (h < 17) return 0.8;      // 下午
-  if (h < 21) return 1.8;      // 晚餐尖峰
+  if (h < 11) return 1.8;
+  if (h < 14) return 3.6;      // 午餐尖峰
+  if (h < 17) return 1.8;      // 下午
+  if (h < 21) return 3.8;      // 晚餐尖峰
   if (h < 23) return 1.0;      // 宵夜
   return 0.4;
 }
 
 export const WEATHER_TRAFFIC = {
-  sunny: 1.15,
-  cloudy: 1.0,
-  rain: 0.72,
-  storm: 0.5,
-  cold: 0.82,
-  heat: 0.9
+  sunny: 2.15,
+  cloudy: 2.0,
+  rain: 1.72,
+  storm: 1.5,
+  cold: 1.82,
+  heat: 1.9
 };
 
 export const WEATHER_NAME = {

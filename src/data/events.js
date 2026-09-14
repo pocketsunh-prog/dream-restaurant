@@ -16,7 +16,7 @@ export const EVENTS = [
     kind: 'positive', weight: 4, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '電視台聞風而來，攝影機對準了你的招牌菜！',
-    effects: { fame: 12, reputation: { community: 6, outside: 14 }, moodAll: 10, trafficMul: 1.8, trafficMulMinutes: 120 },
+    effects: { fame: 12, reputation: { community: 56, outside: 54 }, moodAll: 10, trafficMul: 1.8, trafficMulMinutes: 120 },
     log: '電視採訪：知名度大幅提升。'
   },
   {
@@ -24,7 +24,7 @@ export const EVENTS = [
     kind: 'positive', weight: 5, minStars: 2, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '戴著眼鏡的陌生人默默記著筆記，他點的每一道菜都被放大檢視。',
-    effects: { fame: 6, reputation: { community: 4, outside: 10 }, moodAll: 4 },
+    effects: { fame: 6, reputation: { community: 41, outside: 90 }, moodAll: 4 },
     log: '美食評論家突擊：區外評價提升。'
   },
   {
@@ -32,7 +32,7 @@ export const EVENTS = [
     kind: 'positive', weight: 5, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '一位常在電視上出現的大人物走進來，還指定要坐靠窗那桌。',
-    effects: { fame: 10, reputation: { community: 8, outside: 8 }, cash: 8000, moodAll: 12 },
+    effects: { fame: 10, reputation: { community: 80, outside: 80 }, cash: 8000, moodAll: 12 },
     log: '名人來訪：全場客人都在偷看。'
   },
   {
@@ -40,7 +40,7 @@ export const EVENTS = [
     kind: 'positive', weight: 4, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: false, mitigateBy: null,
     message: '里長親自送來一只信封，感謝你讓這條街晚上亮了起來。',
-    effects: { cash: 60000, reputation: { community: 12, outside: 0 } },
+    effects: { cash: 60000, reputation: { community: 52, outside: 50 } },
     log: '社區活動補助：收到補助款 NT$ 60,000。'
   },
   {
@@ -48,7 +48,7 @@ export const EVENTS = [
     kind: 'positive', weight: 3, minStars: 2, maxStars: 5,
     locations: null, onlyWhileOpen: false, mitigateBy: null,
     message: '隔壁的老店面悄悄拉下鐵門，原本的客人全往你這裡走。',
-    effects: { trafficMul: 1.35, trafficMulMinutes: 240, reputation: { community: 4, outside: 0 } },
+    effects: { trafficMul: 1.35, trafficMulMinutes: 240, reputation: { community: 54, outside: 50 } },
     log: '隔壁店家倒閉：客人轉往本店。'
   },
   {
@@ -194,7 +194,7 @@ export const EVENTS = [
     kind: 'negative', weight: 3, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '兩桌客人同時捂著肚子站起來，臉色比桌上的魚還白。',
-    effects: { cash: -30000, fame: -8, moodAll: -20, reputation: { community: -35, outside: -25 } },
+    effects: { cash: 30000, fame: 8, moodAll: -0, reputation: { community: 35, outside: 25 } },
     log: '食物中毒：評價重挫，還得賠醫藥費。'
   },
   {
@@ -202,7 +202,7 @@ export const EVENTS = [
     kind: 'negative', weight: 6, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '一位客人拍桌大吼說湯是涼的，還要把整桌的帳都算在你頭上。',
-    effects: { moodAll: -10, reputation: { community: -12, outside: -6 } },
+    effects: { moodAll: 10, reputation: { community: 12, outside: 6 } },
     log: '奧客鬧場：鄰桌客人也跟著心情變差。'
   },
   {
@@ -210,7 +210,7 @@ export const EVENTS = [
     kind: 'negative', weight: 5, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '廁所傳來一陣騷動，水已經慢慢從門縫底下流出來。',
-    effects: { cash: -3500, moodAll: -10, reputation: { community: -8, outside: -3 } },
+    effects: { cash: 3500, moodAll: 10, reputation: { community: 8, outside: 3 } },
     log: '廁所堵塞：清潔度崩盤。'
   },
   {
@@ -218,7 +218,7 @@ export const EVENTS = [
     kind: 'negative', weight: 4, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: ['fire_system'],
     message: '天花板開始滴水，正好滴在剛坐下的那桌客人頭上。',
-    effects: { cash: -12000, damage: 'random_item', moodAll: -6, reputation: { community: -5, outside: -2 } },
+    effects: { cash: 12000, damage: 'random_item', moodAll: 6, reputation: { community: 5, outside: 2 } },
     log: '漏水：裝潢受損，還得叫水電師傅。'
   },
   {
@@ -226,7 +226,7 @@ export const EVENTS = [
     kind: 'negative', weight: 3, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: ['fire_extinguisher', 'fire_system'],
     message: '廚房飄出濃濃的瓦斯味，所有人立刻被趕到街上。',
-    effects: { cash: -15000, moodAll: -12, reputation: { community: -8, outside: -4 }, damage: 'stove' },
+    effects: { cash: 15000, moodAll: 12, reputation: { community: 8, outside: 4 }, damage: 'stove' },
     log: '瓦斯外洩：緊急停業檢修。'
   },
   {
@@ -234,7 +234,7 @@ export const EVENTS = [
     kind: 'negative', weight: 2, minStars: 2, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: ['fire_extinguisher', 'fire_system'],
     message: '插座冒出火花，牆邊的延長線瞬間燒了起來！',
-    effects: { cash: -40000, damage: 'random_item', moodAll: -18, reputation: { community: -14, outside: -8 }, trafficMul: 0.6, trafficMulMinutes: 90 },
+    effects: { cash: 40000, damage: 'random_item', moodAll: 18, reputation: { community: 14, outside: 8 }, trafficMul: 1.6, trafficMulMinutes: 190 },
     log: '電線走火：設備燒毀，生意大受影響。'
   },
 

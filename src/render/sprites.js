@@ -246,6 +246,32 @@ function mkPainter(c, W, flip) {
       g.r(x, y, 1, h, col);
       g.r(x + w - 1, y, 1, h, col);
     },
+    /** 2px 直線：沿線蓋 2×2 方塊（粗筆觸，不會留下只有對角鄰居的 1px 孤立點）。 */
+    thick(x0, y0, x1, y1, col) {
+      let ax = Math.round(x0);
+      let ay = Math.round(y0);
+      const bx = Math.round(x1);
+      const by = Math.round(y1);
+      const dx = Math.abs(bx - ax);
+      const dy = Math.abs(by - ay);
+      const sx = ax < bx ? 1 : -1;
+      const sy = ay < by ? 1 : -1;
+      let err = dx - dy;
+      let guard = 4096;
+      for (;;) {
+        g.r(ax, ay, 2, 2, col);
+        if ((ax === bx && ay === by) || guard-- <= 0) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) {
+          err -= dy;
+          ax += sx;
+        }
+        if (e2 < dx) {
+          err += dx;
+          ay += sy;
+        }
+      }
+    },
     /** Bresenham 直線（1px）。 */
     line(x0, y0, x1, y1, col) {
       let ax = Math.round(x0);
@@ -327,7 +353,7 @@ function mkPainter(c, W, flip) {
     },
     /** 菱形網點（只畫遮罩為 1 的點，其餘保持透明）→ 硬邊影子。 */
     diaMask(cx, topY, w, h, col, pattern) {
-      const p = typeof pattern === 'object' && pattern.length === 4 ? pattern : DITHER[pattern] || DITHER.b50;
+      const p = typeof pattern === 'object' && pattern.length === 4 ? pattern : DITHER[pattern] || DITHER.block50;
       g.rows(cx, topY, w, h, (x, y, ww) => {
         const row = p[((y % 4) + 4) % 4];
         let run = 0;
@@ -662,7 +688,7 @@ function paintPerson(c, o) {
   g.r(15, torsoTop + 1, 2, torH - 2, mixHex(shHi, '#ffffff', 0.28)); // 門襟
   // 布料：白色網點打亮（人物必須從地板色調裡跳出來；地板在早晨／傍晚偏亮，
   // 所以衣料整體偏亮、再由深色袖側與輪廓收邊）
-  g.dith(10, torsoTop + 2, 12, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.55), 'clear', DITHER.b50);
+  g.dith(10, torsoTop + 2, 12, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.55), 'clear', DITHER.block50);
   g.r(10, torsoTop + 2, 2, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.25)); // 左肩受光
   g.r(20, torsoTop + 2, 2, Math.max(2, torH - 3), mixHex(sh, '#ffffff', 0.25)); // 右肩受光
   // 領口
@@ -883,8 +909,8 @@ function paintPerson(c, o) {
   // ── 生氣：臉部泛紅 + 頭側怒氣符號（眼睛必須保持看得見）─────────────────
   if (pose === 'angry') {
     // 兩頰網點泛紅（只蓋臉頰，不蓋眼睛）
-    g.dith(11, ft + 5, 3, 3, 'red_hi', 'clear', DITHER.b50);
-    g.dith(18, ft + 5, 3, 3, 'red_hi', 'clear', DITHER.b50);
+    g.dith(11, ft + 5, 3, 3, 'red_hi', 'clear', DITHER.block50);
+    g.dith(18, ft + 5, 3, 3, 'red_hi', 'clear', DITHER.block50);
     // 怒眉（內低外高）＋ < > 眼型
     g.r(12, ft + 1, 3, 1, OL);
     g.r(17, ft + 1, 3, 1, OL);
@@ -1323,18 +1349,16 @@ function paintFloorTile(c, o) {
   const us = grain === 0 ? [0.45] : grain === 1 ? [0.28, 0.62] : grain === 2 ? [0.2, 0.5, 0.8] : [0.35];
   for (let i = 0; i < us.length; i++) {
     const t = us[i];
-    if (grain === 3) isoLine2(g, cx - g.u(9) + g.u(4) * i, g.u(2) + g.u(3) * i, cx + g.u(9) - g.u(4) * i, H - g.u(3) - g.u(3) * i, seam);
-    else isoLine2(g, cx - TILE_W / 2 * t, THH * t, W - TILE_W / 2 * t, THH + THH * t, seam);
+    if (grain === 3) g.thick(cx - g.u(9) + g.u(4) * i, g.u(2) + g.u(3) * i, cx + g.u(9) - g.u(4) * i, H - g.u(3) - g.u(3) * i, seam);
+    else g.thick(cx - TILE_W / 2 * t, THH * t, W - TILE_W / 2 * t, THH + THH * t, seam);
   }
   // 木紋：2px 實色板條 + 2px 淡色刷痕（全部粗筆觸，不留 1px 細線把色塊切碎）
-  isoLine2(g, cx - g.u(7), g.u(2), cx - g.u(7), g.u(6), grainDark);
-  isoLine2(g, cx + g.u(6), g.u(8), cx + g.u(6), g.u(12), grainDark);
-  g.r(cx - g.u(4), g.u(4), g.u(2), g.u(5), brush);
-  g.r(cx + g.u(2), g.u(3), g.u(2), g.u(4), brush);
+  g.thick(cx - g.u(7), g.u(2), cx - g.u(7), g.u(6), grainDark);
+  g.thick(cx + g.u(6), g.u(8), cx + g.u(6), g.u(12), grainDark);
+  g.thick(cx - g.u(4), g.u(4), cx - g.u(4), g.u(7), brush);
   // 磨損與刮痕（固定變體，不隨時間變）：實色短痕
   if (v >= 4) {
-    isoLine2(g, cx - g.u(6), g.u(9), cx + g.u(2), g.u(5), brush);
-    isoLine2(g, cx + g.u(1), g.u(12), cx + g.u(5), g.u(10), shade(base, 'black', 0.22));
+    g.thick(cx - g.u(5), g.u(9), cx + g.u(1), g.u(6), brush);
   }
   // 收邊／踢腳帶（房間最外圈地板，比室內深一階）：實色 2px 帶
   if (o.edge) {
@@ -1348,11 +1372,11 @@ function paintFloorTile(c, o) {
   if (dirt > 0) {
     const stain = mixHex(base, '#2a1c0e', 0.6);
     const stainLo = shade(stain, 'black', 0.3);
-    // 大面積污斑：2×2 塊狀（dirt 2 = 25%；dirt 3 疊三層 ≈ 81% 覆蓋率 → 髒／乾淨暗色像素比 ≥ 3×）
-    if (dirt >= 2) g.dith(0, 0, W, H, stain, 'clear', dirt >= 3 ? DITHER.block50 : DITHER.block25);
+    // 大面積污斑：只鋪在自己的菱形內（不會溢出到隔壁格），越髒越接近整格污損
+    if (dirt === 2) g.diaMask(cx, 0, W - 4, H - 4, stain, DITHER.block25);
     if (dirt >= 3) {
-      g.dith(0, 0, W, H, stain, 'clear', DITHER.block50);
-      g.dith(0, 0, W, H, stain, 'clear', DITHER.block25);
+      g.dia(cx, 0, W - 4, H - 4, stain);
+      g.diaMask(cx, 1, W - 8, H - 8, stainLo, DITHER.block25);
     }
     const count = dirt === 1 ? 4 : dirt === 2 ? 10 : 20;
     for (let i = 0; i < count; i++) {
@@ -1374,12 +1398,14 @@ function paintFloorTile(c, o) {
   // 鎢絲燈由上而下的明暗：上下各一道 2px 實色帶（不用網點，也不用 1px 細線）
   g.r(4, H - 6, W - 8, 2, shade(base, 'black', 0.12));
   g.r(6, 2, W - 12, 2, shade(base, 'white', 0.1));
-  // 邊界描邊（1px 實色暗邊：基色暗 20%）
+  // 邊界描邊（2px 實色暗邊：基色暗 20%）——用 2px 才不會留下 1px 孤立尖角
   const edgeCol = pal.floorEdge || seam;
-  g.line(1, THH, cx, H, edgeCol);
-  g.line(cx, H, W - 1, THH, edgeCol);
-  g.line(1, THH, cx, 0, edgeCol);
-  g.line(cx, 0, W - 1, THH, edgeCol);
+  g.thick(1, THH - 1, cx, H - 2, edgeCol);
+  g.thick(cx, H - 2, W - 2, THH - 1, edgeCol);
+  g.thick(1, THH, cx, 1, edgeCol);
+  g.thick(cx, 1, W - 2, THH, edgeCol);
+  g.r(cx - 1, 0, 2, 2, edgeCol);
+  g.r(cx - 1, H - 2, 2, 2, edgeCol);
 }
 
 function paintKitchenTile(c, o) {
@@ -1388,19 +1414,29 @@ function paintKitchenTile(c, o) {
   const g = mkPainter(c, W, false);
   const cx = TCX;
   const blk = g.u(4);
-  if (o.variant & 1) g.diaChecker(cx, 0, W - 2, H - 2, 'tile_k', 'tile_k_hi', blk);
-  else g.diaChecker(cx, 0, W - 2, H - 2, 'tile_k', 'tile_k_lo', blk);
+  const patA = o.variant & 1 ? 'tile_k_hi' : 'tile_k_lo';
+  g.dia(cx, 0, W - 2, H - 2, 'tile_k');
+  // 棋盤只鋪中央矩形（用菱形鋪滿會被裁出 1px 碎片 = 雜點）
+  const bw2 = Math.round(W * 0.28);
+  const bh2 = Math.round(H * 0.28);
+  for (let yy = -bh2; yy < bh2; yy += blk) {
+    for (let xx = -bw2; xx < bw2; xx += blk) {
+      if ((((xx / blk) | 0) + ((yy / blk) | 0)) & 1) continue;
+      g.r(cx + xx, THH + yy, blk, blk, patA);
+    }
+  }
   // 排水孔 / 不鏽鋼格柵
   if (o.variant === 2) {
     g.dia(cx, THH - g.u(2), g.u(6), g.u(4), 'metal_sh');
-    g.r(cx - g.u(3), THH - g.u(2), g.u(7), 1, 'metal_lo');
+    g.r(cx - g.u(3), THH - g.u(2), g.u(7), 2, 'metal_lo');
     for (let i = 0; i < 3; i++) g.r(cx - g.u(2) + i * g.u(2), THH - g.u(1), 1, g.u(3), 'metal_hi');
   }
-  g.r(2, H - 4, W - 4, 1, 'metal_sh');
-  g.line(1, THH, cx, H, 'metal_sh');
-  g.line(cx, H, W - 1, THH, 'metal_sh');
-  g.line(1, THH, cx, 0, 'metal_lo');
-  g.line(cx, 0, W - 1, THH, 'metal_lo');
+  g.thick(1, THH - 1, cx, H - 2, 'metal_sh');
+  g.thick(cx, H - 2, W - 2, THH - 1, 'metal_sh');
+  g.thick(1, THH, cx, 1, 'metal_lo');
+  g.thick(cx, 1, W - 2, THH, 'metal_lo');
+  g.r(cx - 1, 0, 2, 2, 'metal_sh');
+  g.r(cx - 1, H - 2, 2, 2, 'metal_sh');
 }
 
 function paintRestroomTile(c, o) {
@@ -1411,18 +1447,24 @@ function paintRestroomTile(c, o) {
   const v = ((o.variant | 0) % 4 + 4) % 4;
   g.diaChecker(cx, 0, W - 2, H - 2, 'tile', 'tile_hi', g.u(4));
   // 地磚縫（十字縫）
-  g.line(cx - g.u(5), g.u(3), cx - g.u(5), H - g.u(3), 'tile_md');
-  g.line(cx + g.u(5), g.u(3), cx + g.u(5), H - g.u(3), 'tile_md');
-  g.line(cx - g.u(8), THH, cx + g.u(8), THH, 'tile_md');
+  g.thick(1, THH - 1, cx, H - 2, 'tile_md');
+  g.thick(cx, H - 2, W - 2, THH - 1, 'tile_md');
+  g.thick(1, THH, cx, 1, 'tile_lo');
+  g.thick(cx, 1, W - 2, THH, 'tile_lo');
+  g.r(cx - 1, 0, 2, 2, 'tile_md');
+  g.r(cx - 1, H - 2, 2, 2, 'tile_md');
+  g.r(cx - g.u(5), g.u(3), 2, Math.max(2, H - g.u(6)), 'tile_md');
+  g.r(cx + g.u(5), g.u(3), 2, Math.max(2, H - g.u(6)), 'tile_md');
+  g.r(cx - g.u(8), THH, g.u(16), 2, 'tile_md');
   // 排水孔（每 4 格一個）
   if (v === 1) {
     g.dia(cx, THH - g.u(2), g.u(6), g.u(4), 'metal_sh');
-    g.r(cx - g.u(3), THH - g.u(2), g.u(6), 1, 'metal_lo');
+    g.r(cx - g.u(3), THH - g.u(2), g.u(6), 2, 'metal_lo');
     for (let i = 0; i < 3; i++) g.r(cx - g.u(2) + i * g.u(2), THH - g.u(1), 1, g.u(3), 'metal_hi');
   }
   if (v === 2) {
     g.dia(cx, THH - g.u(2), g.u(7), g.u(4), 'tile_lo');
-    g.r(cx - g.u(3), THH - g.u(2), g.u(7), 1, 'metal_lo');
+    g.r(cx - g.u(3), THH - g.u(2), g.u(7), 2, 'metal_lo');
   }
   // 廁所污漬（dirt 0..3 桶）：實色污塊
   const dirt = Math.max(0, Math.min(3, o.dirt | 0));
@@ -1434,7 +1476,7 @@ function paintRestroomTile(c, o) {
       g.r(px, py, g.u(3) + (i & 1), g.u(2), stain);
     }
   }
-  g.dith(2, H - 5, W - 4, 2, 'tile_lo', 'clear', DITHER.sparse);
+  g.dith(2, H - 5, W - 4, 2, 'tile_lo', 'clear', DITHER.block12);
   g.line(1, THH, cx, H, 'tile_lo');
   g.line(cx, H, W - 1, THH, 'tile_lo');
   g.line(1, THH, cx, 0, 'tile_md');
@@ -1476,8 +1518,8 @@ function wallWindow(g, face, h, tod, glow, pal, frost, frame) {
   g.r(x0 - 1, y0 + wh + 1, ww + 2, 1, P.trimHi);
   // 寒流：窗角結霜
   if (frost) {
-    g.dith(x0, y0 + 1, g.u(3), g.u(3), 'white', 'clear', DITHER.b50);
-    g.dith(x0 + ww - g.u(3), y0 + wh - g.u(3), g.u(3), g.u(3), 'tile_hi', 'clear', DITHER.b37);
+    g.dith(x0, y0 + 1, g.u(3), g.u(3), 'white', 'clear', DITHER.block50);
+    g.dith(x0 + ww - g.u(3), y0 + wh - g.u(3), g.u(3), g.u(3), 'tile_hi', 'clear', DITHER.block25);
     g.r(x0 + 1, y0 + wh - 1, 2, 1, 'white');
   }
 }
@@ -1499,27 +1541,35 @@ function paintWallBody(g, h, opts) {
   const seamA = [WALL_XL, yMid + Math.round(h * 0.42)];
   const seamB = [cx, yBot + Math.round(h * 0.42)];
   const seamC = [WALL_XR, yMid + Math.round(h * 0.42)];
-  g.line(seamA[0], seamA[1], seamB[0], seamB[1], seamCol);
-  g.line(seamB[0], seamB[1], seamC[0], seamC[1], seamCol);
+  g.thick(seamA[0], seamA[1], seamB[0], seamB[1], seamCol);
+  g.thick(seamB[0], seamB[1], seamC[0], seamC[1], seamCol);
   const seamD = [WALL_XL, yMid + Math.round(h * 0.78)];
   const seamE = [cx, yBot + Math.round(h * 0.78)];
   const seamF = [WALL_XR, yMid + Math.round(h * 0.78)];
-  if (seamD[1] < yMid + h - 3) g.line(seamD[0], seamD[1], seamE[0], seamE[1], seamCol);
-  if (seamE[1] < yBot + h - 3) g.line(seamE[0], seamE[1], seamF[0], seamF[1], seamCol);
+  if (seamD[1] < yMid + h - 3) g.thick(seamD[0], seamD[1], seamE[0], seamE[1], seamCol);
+  if (seamE[1] < yBot + h - 3) g.thick(seamE[0], seamE[1], seamF[0], seamF[1], seamCol);
   // 踢腳／護牆板（跟著地板色走）
   const wain = Math.min(g.u(7), Math.max(g.u(3), Math.round(h * 0.34)));
   g.poly([[WALL_XL, yMid + h - wain], [cx, yBot + h - wain], [cx, yBot + h], [WALL_XL, yMid + h]], P.trim);
   g.poly([[cx, yBot + h - wain], [WALL_XR, yMid + h - wain], [WALL_XR, yMid + h], [cx, yBot + h]], P.trimDark);
+  // 斜邊的 1px 階梯用同色補掉（避免出現孤立點）
+  for (let i = 0; i <= TILE_W; i += 2) {
+    const t = i / TILE_W;
+    const y1 = Math.round(yMid + h - wain + (yBot - yMid) * t);
+    const y2 = Math.round(yMid + h - wain + (yBot - yMid) * (1 - t));
+    g.r(Math.round(WALL_XL + (cx - WALL_XL) * t), y1 - 1, 3, 2, P.trim);
+    g.r(Math.round(cx + (WALL_XR - cx) * t), y2 + 1, 3, 2, P.trimDark);
+  }
   // 護牆板壓條：2px 實色（避免 1px 細線把實色塊切碎）
   for (let i = 0; i < 3; i++) {
     const x = WALL_XL + g.u(4) + i * g.u(7);
     g.r(x, yMid + h - wain + 1, 2, Math.max(1, yBot + h - 1 - (yMid + h - wain + 1)), P.trimDark);
   }
-  g.line(WALL_XL, yBot + h - wain, cx, yBot + h - wain, P.trimDark);
-  g.line(cx, yBot + h - wain, WALL_XR, yMid + h - wain, 'wood_dark');
+  g.thick(WALL_XL, yBot + h - wain, cx, yBot + h - wain, P.trimDark);
+  g.thick(cx, yBot + h - wain, WALL_XR, yMid + h - wain, 'wood_dark');
   // 明暗：實色帶（上緣受光 = 基色 +12%、下緣壓暗 = 基色 −18%），不用網點
-  g.poly([[WALL_XL + 2, yMid + 2], [cx, yBot + 2], [cx, yBot + g.u(2)], [WALL_XL + 2, yMid + g.u(2)]], shade(left, 'white', 0.12));
-  g.poly([[cx + 2, yBot + g.u(1)], [WALL_XR - 2, yMid + g.u(1)], [WALL_XR - 2, yMid + g.u(3)], [cx + 2, yBot + g.u(3)]], P.wallLo);
+  g.thick(WALL_XL + 2, yMid + 3, cx, yBot + 3, shade(left, 'white', 0.12));
+  g.thick(cx + 2, yBot + 2, WALL_XR - 3, yMid + 2, P.wallLo);
   // 垂直刷痕：每 4–6 格一道（由 seed 決定），2px 實色；其餘牆面保持乾淨純色
   const sd = ((opts.seed | 0) % 6 + 6) % 6;
   if (sd === 0 || sd === 3) {
@@ -1528,19 +1578,24 @@ function paintWallBody(g, h, opts) {
   } else if (sd === 1) {
     g.r(cx + g.u(6), yMid + g.u(4), 2, Math.max(1, yBot + h - wain - (yMid + g.u(4))), shade(right, 'black', 0.14));
   }
-  // 頂面
+  // 頂面：整塊實色菱形（外框 2px 粗線畫在上面，不留 1px 縫）
   g.dia(cx, 0, TILE_W - 2, TILE_H - 2, top);
-  g.r(WALL_XL + 3, 2, TILE_W - 8, 1, shade(top, 'white', 0.14));
-  g.r(WALL_XL + 3, TILE_H - 5, TILE_W - 8, 1, P.wallSh);
-  // 描邊
-  g.line(WALL_XL, yMid, cx, yBot, 'outline');
-  g.line(cx, yBot, WALL_XR, yMid, 'outline');
-  g.line(WALL_XL, yMid + h, cx, yBot + h, 'outline');
-  g.line(cx, yBot + h, WALL_XR, yMid + h, 'outline');
-  g.line(WALL_XL, yMid, WALL_XL, yMid + h, 'outline');
-  g.line(WALL_XR, yMid, WALL_XR, yMid + h, 'outline');
-  g.line(WALL_XL, yMid, cx, 0, 'outline');
-  g.line(cx, 0, WALL_XR, yMid, 'outline');
+  g.r(WALL_XL + 4, 3, TILE_W - 10, 1, shade(top, 'white', 0.14));
+  g.r(WALL_XL + 4, TILE_H - 6, TILE_W - 10, 1, P.wallSh);
+  // 描邊：頂面用兩圈實色菱形（2px，無縫隙），側面用 2px 粗線
+  g.thick(WALL_XL, THH - 1, cx, 0, 'outline');
+  g.thick(cx, 0, WALL_XR - 1, THH - 1, 'outline');
+  g.thick(WALL_XL, THH, cx, 1, 'outline');
+  g.thick(cx, 1, WALL_XR - 1, THH, 'outline');
+  g.r(cx - 1, 0, 2, 2, 'outline');
+  g.thick(WALL_XL, yMid, cx, yBot, 'outline');
+  g.thick(cx, yBot, WALL_XR, yMid, 'outline');
+  g.thick(WALL_XL, yMid + h - 1, cx, yBot + h - 1, 'outline');
+  g.thick(cx, yBot + h - 1, WALL_XR, yMid + h - 1, 'outline');
+  g.thick(WALL_XL, yMid, WALL_XL, yMid + h - 1, 'outline');
+  g.thick(WALL_XR - 1, yMid, WALL_XR - 1, yMid + h - 1, 'outline');
+  g.thick(WALL_XL, yMid - 1, cx, 0, 'outline');
+  g.thick(cx, 0, WALL_XR - 1, yMid - 1, 'outline');
   // 壁燈（有開燈時牆面上一點暖光）：實色小方塊
   if (opts.glow) {
     g.r(WALL_XL + 3, yMid + g.u(4), g.u(3), g.u(2), 'lamp');
@@ -1573,7 +1628,7 @@ function paintDoor(c, o) {
   const postW = g.u(3);
   // 門檻地板 + 暖光外洩
   g.dia(WCX, 0, TILE_W - 2, TILE_H - 2, P.trim);
-  g.dith(WALL_XL + 2, 3, TILE_W - 4, TILE_H - 2, 'lamp', 'clear', DITHER.b25);
+  g.dith(WALL_XL + 2, 3, TILE_W - 4, TILE_H - 2, 'lamp', 'clear', DITHER.block25);
   // 門柱
   const post = (x0) => {
     g.poly([[x0, THH], [x0 + postW, THH + postW / 2], [x0 + postW, THH + postW / 2 + h], [x0, THH + h]], P.wall);
@@ -1587,7 +1642,7 @@ function paintDoor(c, o) {
   g.r(2, 1, TILE_W + 2, g.u(3), P.accentLo);
   g.r(2, 1, TILE_W + 2, 1, P.accent);
   g.r(4, g.u(4), TILE_W - 2, 1, 'outline');
-  g.dith(4, 2, TILE_W - 2, 2, P.accentHi, 'clear', DITHER.sparse);
+  g.dith(4, 2, TILE_W - 2, 2, P.accentHi, 'clear', DITHER.block12);
   for (let i = 0; i < 5; i++) g.r(6 + i * 7, 2, 5, 2, P.accent);
   // 「歡迎光臨」小燈籠
   const lx = WCX - g.u(4);
@@ -1595,7 +1650,7 @@ function paintDoor(c, o) {
   g.r(lx, g.u(6), g.u(8), g.u(6), lanternCol);
   g.r(lx + 1, g.u(6), g.u(6), g.u(6), lanternHi);
   g.r(lx, g.u(12), g.u(8), 1, 'lantern_lo');
-  g.dith(lx - 2, g.u(14), g.u(12), g.u(4), 'lamp', 'clear', DITHER.b25);
+  g.dith(lx - 2, g.u(14), g.u(12), g.u(4), 'lamp', 'clear', DITHER.block25);
 }
 
 function paintPass(c, o) {
@@ -1608,12 +1663,12 @@ function paintPass(c, o) {
   const oy2 = THH + g.u(4);
   g.poly([[WALL_XL + 2, THH], [WCX, TILE_H], [WALL_XR - 2, THH], [WALL_XR - 2, openY], [WCX, openY + oy2 * 0.25], [WALL_XL + 2, openY]], 'outline');
   g.poly([[WALL_XL + 3, THH], [WCX, TILE_H - 0.5], [WALL_XR - 3, THH], [WALL_XR - 3, openY + 1], [WCX, openY + oy2 * 0.25 + 1], [WALL_XL + 3, openY + 1]], 'lamp_lo');
-  g.dith(WALL_XL + 4, openY + 1, TILE_W - 2, Math.round(oy2 * 1.4), 'lamp', 'lamp_lo', DITHER.checker);
-  g.dith(WALL_XL + 6, openY + 2, TILE_W - 8, oy2, 'lamp_hi', 'lamp', DITHER.sparse);
+  g.dith(WALL_XL + 4, openY + 1, TILE_W - 2, Math.round(oy2 * 1.4), 'lamp', 'lamp_lo', DITHER.block50);
+  g.dith(WALL_XL + 6, openY + 2, TILE_W - 8, oy2, 'lamp_hi', 'lamp', DITHER.block12);
   // 熱氣
   for (let i = 0; i < 3; i++) {
     const x = WALL_XL + g.u(5) + i * g.u(5);
-    g.dith(x, openY + 1 + (o.frame & 1), 2, g.u(5) - (i & 1) * 2, 'lamp_hi', 'clear', DITHER.sparse);
+    g.dith(x, openY + 1 + (o.frame & 1), 2, g.u(5) - (i & 1) * 2, 'lamp_hi', 'clear', DITHER.block12);
   }
   // 檯面 + 地點強調色標牌
   const shelfY = TILE_H - g.u(4);
@@ -1716,13 +1771,15 @@ function clampDim(v) {
   return n > 4 ? 4 : n;
 }
 
-function artGeo(w, h, hgt, mount) {
+function artGeo(w, h, hgt, mount, pad) {
+  const H0 = Number.isFinite(hgt) ? hgt : 24;
   const bw = (w + h) * HALF_W;
   const bh = (w + h) * HALF_H;
-  const W = Math.round(bw) + 8;
-  const H = Math.round(bh) + Math.round(hgt) + Math.round(mount) + 8;
+  const p = Math.max(0, Math.round(pad || 0));
+  const W = Math.round(bw) + 8 + p * 2;
+  const H = Math.round(bh) + Math.round(H0) + Math.round(mount || 0) + 8 + p * 2;
   return {
-    W, H, cx: W / 2, gy: H - 4 - bh / 2, bw, bh, hgt, mount, w, h,
+    W, H, cx: W / 2, gy: H - 4 - p - bh / 2, bw, bh, hgt: H0, mount, w, h,
   };
 }
 
@@ -1767,7 +1824,7 @@ function paintDish(g, cx, cy, category, seed) {
   } else if (cat === 'soup') {
     g.dia(cx, cy - g.u(4), g.u(9), g.u(6), OL);
     g.dia(cx, cy - g.u(3), g.u(7), g.u(4), 'tile_hi');
-    g.dith(cx - g.u(3), cy - g.u(3), g.u(6), g.u(3), 'lamp_md', 'clear', DITHER.b37);
+    g.dith(cx - g.u(3), cy - g.u(3), g.u(6), g.u(3), 'lamp_md', 'clear', DITHER.block25);
   } else if (cat === 'drink') {
     g.r(cx - g.u(2), cy - g.u(7), g.u(4), g.u(7), OL);
     g.r(cx - g.u(2) + 1, cy - g.u(6), Math.max(2, g.u(2)), g.u(5), ['shirt_org', 'teal_hi', 'lamp_md'][s]);
@@ -1788,7 +1845,71 @@ function paintDish(g, cx, cy, category, seed) {
   }
 }
 
-/** 桌面：米白桌布（亮）或深色木桌（暗）二選一，一律帶 1px 深色外框與 2px 板厚。 */
+/** 桌布織紋：以「實色條帶」表現（不用網點）——亮度差足以讀出布料，又不會變雜點。 */
+function clothWeave(g, cx, cy, rx, ry, topFill) {
+  const dark = mixHex(topFill, '#000000', 0.12);
+  const light = mixHex(topFill, '#ffffff', 0.22);
+  const step = Math.max(4, Math.round(ry / 3));
+  for (let dy = -ry + 3; dy <= ry - 3; dy += step) {
+    const t = 1 - (dy * dy) / (ry * ry + ry);
+    const w = Math.round(rx * Math.sqrt(Math.max(0, t)));
+    if (w <= 6) continue;
+    g.r(Math.round(cx - w + 3), Math.round(cy + dy), w * 2 - 6, 2, dark);
+    g.r(Math.round(cx - w + 4), Math.round(cy + dy + 2), w * 2 - 8, 1, light);
+  }
+}
+
+/** 轉盤（宴會圓桌）：同心實色環 + 上緣高光 + 下緣暗邊，中心一顆實色旋鈕。 */
+function lazySusan(g, cx, cy, r) {
+  const OL = 'furn_outline';
+  const ry = Math.max(3, Math.round(r * 0.5));
+  g.ell(cx, cy, r, ry, OL);
+  g.ell(cx, cy, r - 1, ry - 1, 'wood_md');
+  g.ell(cx, cy - 1, r - 3, ry - 2, 'wood_hi');
+  g.ell(cx, cy - 2, Math.max(3, r - 6), Math.max(2, ry - 3), 'wood');
+  // 內圈（放菜的位置）
+  g.ell(cx, cy - 2, Math.max(3, Math.round(r * 0.5)), Math.max(2, Math.round(ry * 0.5)), 'wood_md');
+  // 高光／暗邊（實色弧線）
+  for (let i = -r + 2; i <= r - 2; i++) {
+    const t = 1 - (i * i) / ((r - 1) * (r - 1));
+    const yy = Math.round(cy - 1 - Math.sqrt(Math.max(0, t)) * (ry - 1));
+    if (i > -r + 3 && i < r - 3) g.p(Math.round(cx + i), yy, 'wood_hi');
+  }
+  g.r(cx - 1, cy - ry + 1, 3, 2, 'wood_sh');
+  g.r(cx - 1, cy - 2, 3, 3, 'metal_md');
+  g.p(cx - 1, cy - 2, 'metal_hi');
+}
+
+/** 一副餐具（實色）：盤子（1px 外框＋內圈）＋筷子或刀叉＋杯子＋紙巾。 */
+function tableSetting(g, cx, cy, side, plateHi, darkTable) {
+  const OL = 'furn_outline';
+  const pw = g.u(6);
+  const ph = g.u(3);
+  // 紙巾
+  g.r(cx - g.u(6), cy - g.u(2), g.u(4), g.u(2), darkTable ? 'wood_sh' : 'cloth_hem');
+  g.r(cx - g.u(6), cy - g.u(2), g.u(4), 1, darkTable ? 'wood_lo' : 'cloth_cream');
+  // 盤子：外框 1px + 盤面 + 內圈
+  g.dia(cx, cy - ph, pw, ph, OL);
+  g.dia(cx, cy - ph + 1, pw - 2, ph - 2, plateHi);
+  g.dia(cx, cy - ph + 2, Math.max(3, pw - 6), Math.max(2, ph - 4), darkTable ? 'gray_30' : 'gray_70');
+  // 筷子／刀叉（依座位方向擺在盤子旁）
+  const chop = side === 'W' || side === 'E';
+  if (chop) {
+    g.r(cx - g.u(1), cy - g.u(1), g.u(8), 1, 'wood_dark');
+    g.r(cx - g.u(1), cy, g.u(8), 1, 'wood_sh');
+  } else {
+    g.r(cx + g.u(5), cy - g.u(3), 1, g.u(5), 'gray_70');
+    g.r(cx + g.u(6), cy - g.u(2), 1, g.u(3), 'gray_70');
+  }
+  // 杯子（深色木面桌不放亮杯：會把「深色桌面」的暗度吃掉，只留盤＋筷子＋紙巾）
+  if (!darkTable) {
+    g.r(cx + g.u(3), cy - g.u(6), g.u(3), g.u(4), OL);
+    g.r(cx + g.u(3) + 1, cy - g.u(5), Math.max(1, g.u(3) - 2), g.u(3), 'gray_50');
+    g.r(cx + g.u(3) + 1, cy - g.u(6), Math.max(1, g.u(3) - 2), 1, 'gray_90');
+  }
+}
+
+/** 桌面：米白桌布（亮）或深色木桌（暗）二選一，一律帶 2px 深色外框與實色材質。 */
 function paintTable(g, geo, o) {
   const round = !!o.round;
   const topFill = o.topFill || 'cloth_cream';
@@ -1803,6 +1924,9 @@ function paintTable(g, geo, o) {
   const tw = geo.bw - 4;
   const th = geo.bh - 2;
   const topY = topCy - th / 2;
+  // 圓桌：桌面橢圓半徑上限 = 0.42 × footprint 寬（桌緣到格邊留 4–6px，椅子才看得見）
+  const rx = round ? Math.min(tw / 2, Math.round(geo.bw * 0.32)) : tw / 2;
+  const ry = round ? Math.min(th / 2, Math.round(rx / 2)) : th / 2;
   const bw2 = geo.bw / 2;
   const bh2 = geo.bh / 2;
 
@@ -1815,112 +1939,106 @@ function paintTable(g, geo, o) {
   // ── 桌板：1px 外框（上表面 + 板厚下緣各一圈）→ 桌裙 → 板厚側面 → 上表面 ──
   const skirt = isCloth ? shade(topFill, '#000000', 0.22) : mixHex(PALETTE.top_dark, '#000000', 0.5);
   if (round) {
-    const rx = tw / 2;
-    const ry = th / 2;
     // 桌裙（比桌面暗一階，形成「桌面＋桌裙」兩層）
-    g.ell(geo.cx, topCy + g.u(5), rx + 1, ry + 1, OL);
-    g.ell(geo.cx, topCy + g.u(4), rx, ry, skirt);
-    // 右下側 1px 暗色桌緣／陰影帶（先畫，之後被桌面蓋住，只露出右下 1px）
+    g.ell(geo.cx, topCy + g.u(5), rx + 2, ry + 2, OL);
+    g.ell(geo.cx, topCy + g.u(5), rx + 1, ry + 1, skirt);
+    // 右下側暗色桌緣／陰影帶（先畫，之後被桌面蓋住，只露出右下 2px）
     g.ell(geo.cx + 1, topCy + 1, rx + 1, ry + 1, shade(topEdge, '#000000', 0.25));
+    // 桌面：2px 實色外框（描邊）→ 板厚側面 → 上表面
     g.ell(geo.cx, topCy + 2, rx + 1, ry + 1, OL);
     g.ell(geo.cx, topCy, rx + 1, ry + 1, OL);
-    g.ell(geo.cx, topCy + 2, rx - 1, ry, topEdge);
+    g.ell(geo.cx, topCy + 2, rx, ry, topEdge);
     g.ell(geo.cx, topCy, rx - 1, ry, topFill);
+    g.ell(geo.cx, topCy, rx - 2, ry - 1, OL);
+    g.ell(geo.cx, topCy, rx - 3, ry - 1, topFill);
     if (hem) {
-      // 雙色調網點編織紋（不是平塗）：兩色交錯的 bayer 織紋 + 滾邊
+      // 桌布滾邊（實色環）＋實色織紋條帶
       g.ell(geo.cx, topCy, rx - 2, ry - 1, hem);
-      g.ell(geo.cx, topCy, rx - 3, ry - 2, topFill);
-      g.dith(geo.cx - rx * 0.7, topCy - ry * 0.5, rx * 1.4, ry, mixHex(topFill, '#000000', 0.11), 'clear', DITHER.b25);
-      g.dith(geo.cx - rx * 0.5, topCy - ry * 0.2, rx, Math.max(1, ry * 0.6), mixHex(topFill, '#ffffff', 0.40), 'clear', DITHER.b37);
+      g.ell(geo.cx, topCy, rx - 4, ry - 2, topFill);
+      clothWeave(g, geo.cx, topCy, rx - 5, ry - 3, topFill);
     }
-    g.dith(geo.cx - rx / 2, topCy - ry + 1, rx, Math.max(1, ry - 1), 'lamp_hi', 'clear', DITHER.sparse);
+    // 上緣高光（實色弧）＋下緣暗邊
+    g.r(geo.cx - Math.round(rx * 0.5), topCy - ry + 1, Math.round(rx), 2, mixHex(topFill, '#ffffff', 0.30));
+    g.r(geo.cx - Math.round(rx * 0.4), topCy + ry - 2, Math.round(rx * 0.8), 2, mixHex(topFill, '#000000', 0.16));
+    // 宴會圓桌：加轉盤（六人桌看得懂是「合菜桌」）
+    if (o.susan !== false && rx >= 34) lazySusan(g, geo.cx, topCy - 2, Math.max(9, Math.round(rx * 0.40)));
   } else {
-    g.dia(geo.cx, topY - 1, tw + 2, th + 2, OL); // 上表面外框
+    g.dia(geo.cx, topY - 2, tw + 4, th + 4, OL); // 上表面外框（2px）
     g.dia(geo.cx, topY + g.u(4), tw + 2, th + 2, OL); // 桌裙下緣外框
     g.dia(geo.cx, topY + g.u(3), tw, th, skirt); // 桌裙
     g.dia(geo.cx, topY + 1, tw + 2, th + 2, OL); // 板厚下緣外框
     g.dia(geo.cx, topY + 2, tw, th, topEdge); // 板厚側面
     g.dia(geo.cx, topY, tw, th, topFill); // 上表面
+    g.dia(geo.cx, topY + 1, tw - 4, th - 2, OL); // 內側暗線（桌緣 2px）
+    g.dia(geo.cx, topY + 2, tw - 6, th - 3, topFill);
     if (hem) {
       g.dia(geo.cx, topY + 1, tw - 2, th - 2, hem); // 桌布滾邊
       g.dia(geo.cx, topY + 2, tw - 4, th - 4, topFill);
-      // 雙色調網點編織紋
-      g.dith(geo.cx - tw / 4, topY + 2, tw / 2, Math.max(2, th - 6), mixHex(topFill, '#000000', 0.11), 'clear', DITHER.b25);
-      g.dith(geo.cx - tw / 6, topY + 3, tw / 3, Math.max(2, th - 8), mixHex(topFill, '#ffffff', 0.40), 'clear', DITHER.b37);
+      // 實色織紋條帶（2px 一組，等距；取代原本的網點編織）
+      for (let i = -2; i <= 2; i++) {
+        const y = Math.round(topY + th / 2 + i * g.u(4));
+        g.r(geo.cx - Math.round(tw * 0.32), y, Math.round(tw * 0.64), 2, mixHex(topFill, '#000000', 0.12));
+        g.r(geo.cx - Math.round(tw * 0.28), y + 2, Math.round(tw * 0.56), 1, mixHex(topFill, '#ffffff', 0.22));
+      }
     } else {
-      // 深色木桌的木紋（淡一階，但維持整體偏暗）
+      // 深色木桌的木紋（2px 實線）
       g.line(geo.cx - tw / 4, topY + 2, geo.cx + tw / 4, topY + th / 2, mixHex(PALETTE.top_dark, PALETTE.wood_md, 0.35));
       g.line(geo.cx - tw / 4 + 1, topY + 3, geo.cx + tw / 4 + 1, topY + th / 2 + 1, mixHex(PALETTE.top_dark, PALETTE.wood_md, 0.35));
     }
-    // 右下側 1px 暗色桌緣
+    // 右下側 2px 暗色桌緣
     g.line(geo.cx, topY + th + 1, geo.cx + tw / 2, topY + th / 2 + 1, shade(topEdge, '#000000', 0.3));
-    g.dith(geo.cx - tw / 4, topY + 1, Math.max(2, tw / 2), 3, 'lamp_hi', 'clear', DITHER.sparse);
+    g.line(geo.cx, topY + th + 2, geo.cx + tw / 2, topY + th / 2 + 2, shade(topEdge, '#000000', 0.3));
+    // 上緣高光（實色帶）：桌布打亮、深色木桌只做木色光澤，維持「深色桌面」的暗度
+    g.r(geo.cx - Math.round(tw * 0.3), topY + 2, Math.round(tw * 0.6), 2,
+      isCloth ? mixHex(topFill, '#ffffff', 0.28) : mixHex(topFill, PALETTE.wood_md, 0.18));
   }
 
-  // ── 座位提示（餐具／坐位記號）：一律留在桌面內緣，不壓到 1px 外框 ──
-  // 有人坐（o.occupied > 0）→ 盤 + 杯 + 調味罐；空桌 → 只有一副餐具
+  // ── 餐具／坐位記號：一律留在桌面內緣，不壓到外框；全部是實色小物 ──
+  // 有人坐（o.occupied > 0）→ 盤 + 杯 + 紙巾＋筷子／刀叉；空桌 → 一副餐具
   const fac = o.facings && o.facings.length ? o.facings : ['N', 'S'];
   const busy = Math.max(0, Number(o.occupied) | 0);
-  const plateHi = isCloth ? 'gray_70' : 'gray_50';
-  const pw = g.u(5);
-  const ph = g.u(3);
-  for (let i = 0; i < fac.length; i++) {
-    const d = fac[i];
-    const seated = busy > 0;
-    if (d === 'N') {
-      g.dia(geo.cx, topY + 1, pw, ph, OL);
-      g.dia(geo.cx, topY + 2, pw - 2, ph - 2, plateHi);
-      if (seated) {
-        g.r(geo.cx - g.u(5), topY + 2, 2, 2, 'teal_md');
-        g.r(geo.cx + g.u(3), topY + 3, 2, g.u(3), 'shirt_wht'); // 杯
-      } else {
-        g.r(geo.cx - g.u(4), topY + 3, g.u(4), 1, 'gray_30'); // 筷子
-      }
-    } else if (d === 'S') {
-      g.dia(geo.cx, topY + th - ph - g.u(2), pw, ph, OL);
-      g.dia(geo.cx, topY + th - ph - g.u(1), pw - 2, ph - 2, plateHi);
-      if (seated) {
-        g.r(geo.cx + g.u(3), topY + th - ph - g.u(2), 2, 2, 'teal_md');
-        g.r(geo.cx - g.u(5), topY + th - ph, 2, g.u(3), 'shirt_wht');
-      } else {
-        g.r(geo.cx, topY + th - ph - g.u(2), g.u(4), 1, 'gray_30');
-      }
-    } else if (d === 'W') {
-      g.dia(geo.cx - g.u(7), topY + th / 2 - 2, pw, ph, OL);
-      g.dia(geo.cx - g.u(7), topY + th / 2 - 1, pw - 2, ph - 2, plateHi);
-      if (seated) {
-        g.r(geo.cx - g.u(10), topY + th / 2 - 3, 2, 2, 'teal_md');
-        g.r(geo.cx - g.u(9), topY + th / 2 + 1, 2, g.u(3), 'shirt_wht');
-      } else {
-        g.r(geo.cx - g.u(9), topY + th / 2, g.u(4), 1, 'gray_30');
-      }
-    } else {
-      g.dia(geo.cx + g.u(7), topY + th / 2 - 2, pw, ph, OL);
-      g.dia(geo.cx + g.u(7), topY + th / 2 - 1, pw - 2, ph - 2, plateHi);
-      if (seated) {
-        g.r(geo.cx + g.u(8), topY + th / 2 - 3, 2, 2, 'teal_md');
-        g.r(geo.cx + g.u(7), topY + th / 2 + 1, 2, g.u(3), 'shirt_wht');
-      } else {
-        g.r(geo.cx + g.u(5), topY + th / 2, g.u(4), 1, 'gray_30');
-      }
+  const plateHi = isCloth ? 'gray_50' : 'gray_15';
+  // 圓桌（宴會桌）：餐具沿桌緣均勻擺 6 副；方桌：依 facings 擺在四邊
+  const seats = round && rx >= 34
+    ? [
+      { side: 'N', x: geo.cx, y: topCy - ry + g.u(3) },
+      { side: 'S', x: geo.cx, y: topCy + ry - g.u(5) },
+      { side: 'W', x: geo.cx - rx + g.u(4), y: topCy },
+      { side: 'E', x: geo.cx + rx - g.u(4), y: topCy },
+      { side: 'N', x: geo.cx - Math.round(rx * 0.55), y: topCy - Math.round(ry * 0.62) + g.u(1) },
+      { side: 'S', x: geo.cx + Math.round(rx * 0.55), y: topCy + Math.round(ry * 0.62) - g.u(3) },
+    ]
+    : null;
+  if (seats) {
+    for (let i = 0; i < seats.length; i++) {
+      const st2 = seats[i];
+      tableSetting(g, Math.round(st2.x), Math.round(st2.y), st2.side, plateHi, !isCloth);
+    }
+  } else {
+    for (let i = 0; i < fac.length; i++) {
+      const d = fac[i];
+      if (d === 'N') tableSetting(g, geo.cx, Math.round(topY + g.u(3)), 'N', plateHi, !isCloth);
+      else if (d === 'S') tableSetting(g, geo.cx, Math.round(topY + th - g.u(4)), 'S', plateHi, !isCloth);
+      else if (d === 'W') tableSetting(g, Math.round(geo.cx - tw * 0.28), Math.round(topY + th / 2), 'W', plateHi, !isCloth);
+      else tableSetting(g, Math.round(geo.cx + tw * 0.28), Math.round(topY + th / 2), 'E', plateHi, !isCloth);
     }
   }
-  // 桌上調味罐（有人坐時多一罐醬油）
-  g.r(geo.cx - 1, topY + g.u(3), g.u(2), g.u(3), 'gray_90');
-  g.r(geo.cx - 2, topY + g.u(2), g.u(4), 1, '#ffffff');
-  g.r(geo.cx - 1, topY + g.u(6), g.u(2), 1, OL);
+  // 桌上調味罐（有人坐時多一罐醬油）：實色
+  g.r(geo.cx - g.u(6), topY + g.u(3), g.u(2), g.u(3), 'gray_90');
+  g.r(geo.cx - g.u(7), topY + g.u(2), g.u(4), 1, '#ffffff');
+  g.r(geo.cx - g.u(6), topY + g.u(6), g.u(2), 1, OL);
   if (busy > 0) {
     g.r(geo.cx + g.u(4), topY + g.u(3), g.u(2), g.u(4), 'red_md');
     g.r(geo.cx + g.u(4), topY + g.u(2), g.u(2), 1, 'red_hi');
   }
-  // 客人實際點的菜（o.dishes = ['staple','soup',...]）
+  // 客人實際點的菜（o.dishes = ['staple','soup',...]）：擺在轉盤上或桌面中央
   const dishes = o.dishes;
   if (dishes && dishes.length) {
     const n = Math.min(4, dishes.length);
-    const y0 = topY + th / 2 - g.u(3);
+    const cyDish = round && rx >= 40 ? topCy - 2 : topY + th / 2 - g.u(3);
     for (let i = 0; i < n; i++) {
       const dx = (i - (n - 1) / 2) * g.u(8);
-      paintDish(g, Math.round(geo.cx + dx), Math.round(y0 + (i & 1 ? g.u(5) : 0)), dishes[i], i);
+      paintDish(g, Math.round(geo.cx + dx), Math.round(cyDish + (i & 1 ? g.u(5) : 0)), dishes[i], i);
     }
   }
 }
@@ -1933,7 +2051,7 @@ function paintTable(g, geo, o) {
 
 /** 座墊色票（variant 0 = 既有色；同型椅子只做同色系微調，不同型之間保持辨識度）。 */
 const CHAIR_SEAT_VARIANTS = {
-  wood: ['teal', 'teal_md', 'cushion_teal', 'teal_lo'],
+  wood: ['cushion_red', 'red', 'cushion_red', 'red'],
   iron: ['cushion_gry', 'gray_50', 'gray_70', 'cushion_gry'],
   soft: ['red', 'red_md', 'cushion_red', 'red_lo'],
 };
@@ -1959,13 +2077,14 @@ function taperedLeg(g, x, yTop, yBot, col, o) {
     const y0 = Math.round(yTop + (h * i) / steps);
     const y1 = Math.round(yTop + (h * (i + 1)) / steps);
     const w = Math.round(wTop + ((wBot - wTop) * i) / steps);
-    g.r(x + Math.round((wTop - w) / 2), y0, w, Math.max(1, y1 - y0), col);
-    g.r(x + Math.round((wTop - w) / 2), y0, 1, Math.max(1, y1 - y0), 'furn_outline');
-    g.r(x + Math.round((wTop - w) / 2) + w - 1, y0, 1, Math.max(1, y1 - y0), shade(col, 'black', 0.3));
+    const segH = Math.max(2, y1 - y0 + 1);
+    g.r(x + Math.round((wTop - w) / 2), y0, w, segH, col);
+    g.r(x + Math.round((wTop - w) / 2), y0, 2, segH, 'furn_outline');
+    g.r(x + Math.round((wTop - w) / 2) + w - 2, y0, 2, segH, shade(col, 'black', 0.3));
   }
   // 腳底接地（深色）
-  g.r(x, Math.round(yBot) - g.u(1), wBot + 1, g.u(1), shade(col, 'black', 0.62));
-  if (o && o.cap) g.r(x, Math.round(yBot) - g.u(1) - g.u(1), wBot + 1, g.u(1), 'black');
+  g.r(x, Math.round(yBot) - g.u(1), wBot + 1, Math.max(2, g.u(1)), shade(col, 'black', 0.62));
+  if (o && o.cap) g.r(x, Math.round(yBot) - g.u(2), wBot + 1, 2, 'black');
 }
 
 /** 椅腳的 4 個等角位置（座面四角，往下就是地板上的落點）。 */
@@ -2011,19 +2130,19 @@ function paintChairWood(g, geo, o) {
   const d = o.dir || 'S';
   const OL = 'furn_outline';
   const varN = o.variant | 0;
-  const frameCol = varN === 1 ? 'wood_md' : 'wood';
-  const frameHi = 'wood_hi';
-  const frameLo = 'wood_sh';
+  const frameCol = varN === 1 ? 'wood_sh' : 'wood_dark';
+  const frameHi = 'wood_sh';
+  const frameLo = 'wood_dark';
   const seatCol = seatVariant('wood', varN);
   baseShadow(g, geo, 0.7);
 
-  const seatLift = g.u(6); // 座面離地
-  const seatW = geo.bw - g.u(7);
-  const seatH = geo.bh - g.u(4);
+  const seatLift = g.u(5); // 座面離地
+  const seatW = g.u(10);
+  const seatH = g.u(6);
   const seatTop = geo.gy - seatLift - g.u(2);
 
   // ── 椅腳（斜削，四隻都在座面四角正下方）──
-  const spots = chairLegSpots(geo, g.u(4), seatLift);
+  const spots = chairLegSpots(geo, g.u(5), seatLift);
   const backLegs = d === 'S' ? [3, 0] : d === 'N' ? [2, 1] : d === 'E' ? [2, 3] : [1, 0];
   const frontLegs = d === 'S' ? [1, 2] : d === 'N' ? [0, 3] : d === 'E' ? [0, 1] : [2, 3];
   for (const i of backLegs) taperedLeg(g, Math.round(spots[i].x - g.u(1)), spots[i].y, spots[i].y + seatLift, frameLo, null);
@@ -2033,6 +2152,8 @@ function paintChairWood(g, geo, o) {
 
   // ── 座面（等角薄板：1px 描邊＋頂面木紋＋倒角）──
   g.dia(geo.cx, seatTop, seatW + 2, seatH + 2, OL);
+  g.r(geo.cx - 1, seatTop, 2, 2, OL);
+  g.r(geo.cx - 1, seatTop + seatH, 2, 2, OL);
   g.dia(geo.cx, seatTop + 1, seatW, seatH, frameHi);
   g.dia(geo.cx, seatTop + 1 + g.u(1), seatW - g.u(3), seatH - g.u(1), frameCol);
   // 前緣厚度帶
@@ -2040,26 +2161,28 @@ function paintChairWood(g, geo, o) {
   g.dia(geo.cx, seatTop + g.u(2) + 1, seatW - g.u(1), seatH - g.u(2), frameCol);
   // 木紋（等角方向 2 條，隨 variant 位移）
   const grain = (varN & 1) ? 1 : 0;
-  g.line(geo.cx - seatW / 2 + g.u(3), seatTop + seatH / 2 + grain, geo.cx, seatTop + seatH - g.u(1) + grain, frameLo);
-  g.line(geo.cx, seatTop + g.u(1) + grain, geo.cx + seatW / 2 - g.u(3), seatTop + seatH / 2 + grain, frameLo);
+  g.thick(geo.cx - seatW / 2 + g.u(2), seatTop + seatH / 2 + grain, geo.cx, seatTop + seatH - g.u(1) + grain, frameLo);
+  g.thick(geo.cx, seatTop + g.u(1) + grain, geo.cx + seatW / 2 - g.u(2), seatTop + seatH / 2 + grain, frameLo);
   // 倒角：遠邊亮、近邊暗
-  g.line(geo.cx - seatW / 2, seatTop + seatH / 2 + 1, geo.cx, seatTop + 1, 'wood_hi');
-  g.line(geo.cx, seatTop + seatH + 1, geo.cx + seatW / 2, seatTop + seatH / 2 + 1, frameLo);
+  g.thick(geo.cx - seatW / 2, seatTop + seatH / 2 + 1, geo.cx, seatTop + 1, 'wood_hi');
+  g.thick(geo.cx, seatTop + seatH + 1, geo.cx + seatW / 2, seatTop + seatH / 2 + 1, frameLo);
   // 椅墊（每一種 variant 都有墊子，只是顏色／織紋不同）
-  g.dia(geo.cx, seatTop + g.u(1), seatW - g.u(4), seatH - g.u(3), seatCol);
-  g.dith(geo.cx - seatW / 2 + g.u(4), seatTop + g.u(2), seatW - g.u(8), g.u(3), mixHex(seatCol, '#ffffff', 0.35), 'clear', DITHER.b25);
-  g.dith(geo.cx - seatW / 2 + g.u(4), seatTop + g.u(2), seatW - g.u(8), g.u(3), shade(seatCol, 'black', 0.35), 'clear', varN & 1 ? DITHER.b12 : DITHER.sparse);
-  g.r(geo.cx - g.u(4), seatTop + g.u(1), g.u(3), 1, mixHex(seatCol, '#ffffff', 0.45));
+  g.dia(geo.cx, seatTop + 2, Math.max(6, seatW - g.u(1)), Math.max(4, seatH - 2), seatCol);
+  g.r(geo.cx - 1, seatTop + g.u(1), 2, 2, seatCol);
+  g.r(geo.cx - 1, seatTop + g.u(1) + seatH - g.u(3) - 2, 2, 2, seatCol);
+  g.dith(geo.cx - seatW / 2 + g.u(4), seatTop + g.u(2), seatW - g.u(8), g.u(3), mixHex(seatCol, '#ffffff', 0.35), 'clear', DITHER.block25);
+  g.dith(geo.cx - seatW / 2 + g.u(4), seatTop + g.u(2), seatW - g.u(8), g.u(3), shade(seatCol, 'black', 0.35), 'clear', varN & 1 ? DITHER.block12 : DITHER.block12);
+  g.r(geo.cx - g.u(3), seatTop + g.u(1), g.u(2), 2, mixHex(seatCol, '#ffffff', 0.45));
   // 有人坐 → 坐墊中間壓出凹痕（不用擦除，直接蓋深色帶）
   if (o.seatOccupied) {
-    g.r(geo.cx - g.u(4), seatTop + g.u(2), g.u(8), 1, shade(seatCol, 'black', 0.42));
-    g.r(geo.cx - g.u(5), seatTop + g.u(3), g.u(10), 1, shade(seatCol, 'black', 0.28));
+    g.r(geo.cx - g.u(3), seatTop + g.u(2), g.u(6), 1, shade(seatCol, 'black', 0.42));
+    g.r(geo.cx - g.u(4), seatTop + g.u(3), g.u(8), 1, shade(seatCol, 'black', 0.28));
   }
 
   // ── 椅背：2 立柱 + 3 橫板條 + 圓角頂 ──
-  const backH = g.u(12) + (varN === 2 ? g.u(1) : 0);
+  const backH = g.u(8) + (varN === 2 ? 1 : 0);
   const postW = g.u(2);
-  const gap = g.u(8);
+  const gap = g.u(4);
   const bxc = geo.cx;
   const byBot = seatTop + g.u(1);
   const byTop = byBot - backH;
@@ -2100,8 +2223,8 @@ function paintChairIron(g, geo, o) {
   baseShadow(g, geo, 0.6);
 
   const seatLift = g.u(8);
-  const seatW = geo.bw - g.u(8);
-  const seatH = geo.bh - g.u(5);
+  const seatW = g.u(10);
+  const seatH = g.u(6);
   const seatTop = geo.gy - seatLift - g.u(1);
   const tw = g.u(1) + 1; // 管徑（細管但至少 3px 才看得出高光／暗面）
 
@@ -2115,7 +2238,7 @@ function paintChairIron(g, geo, o) {
   // 座面（繃布：網點織紋 + 深色邊框）
   g.dia(geo.cx, seatTop, seatW + 2, seatH + 2, OL);
   g.dia(geo.cx, seatTop + 1, seatW, seatH, fabric);
-  g.dith(geo.cx - seatW / 2 + g.u(3), seatTop + g.u(2), seatW - g.u(6), seatH - g.u(4), shade(fabric, 'black', 0.3), 'clear', DITHER.b12);
+  g.dith(geo.cx - seatW / 2 + g.u(3), seatTop + g.u(2), seatW - g.u(6), seatH - g.u(4), shade(fabric, 'black', 0.3), 'clear', DITHER.block12);
   g.r(geo.cx - Math.round(seatW / 2) + g.u(4), seatTop + g.u(1), seatW - g.u(8), 1, mixHex(fabric, '#ffffff', 0.45));
   if (o.seatOccupied) {
     // 有人坐：繃布被壓出皺褶
@@ -2125,7 +2248,7 @@ function paintChairIron(g, geo, o) {
   for (const i of frontLegs) tubeLeg(g, spots[i].x, spots[i].y, spots[i].y + seatLift, tw, tube, tubeHi, tubeLo, true);
 
   // ── 彎管靠背：兩根立管向上，頂端一段半圓彎管 ──
-  const backH = g.u(12) + (varN & 1);
+  const backH = g.u(7) + (varN & 1);
   const postW = Math.max(2, g.u(1) + 1);
   const gap = g.u(7);
   const bxc = geo.cx;
@@ -2153,15 +2276,17 @@ function paintChairSoft(g, geo, o) {
   const d = o.dir || 'S';
   const OL = 'furn_outline';
   const varN = o.variant | 0;
-  const fabric = seatVariant('soft', varN);
-  const fabHi = mixHex(fabric, '#ffffff', 0.3);
-  const fabLo = shade(fabric, 'black', 0.32);
-  const woodCol = 'wood_md';
+  // 沙發椅（layout 未使用）：繃布與木框都壓暗，和木地板保持亮度分離
+  const fabric = mixHex(seatVariant('soft', varN), '#000000', 0.5);
+  const fabHi = mixHex(fabric, '#ffffff', 0.22);
+  const fabLo = shade(fabric, 'black', 0.4);
+  const woodCol = 'wood_dark';
   baseShadow(g, geo, 0.8);
 
   const seatLift = g.u(4);
-  const seatW = geo.bw - g.u(6);
-  const seatH = geo.bh - g.u(4);
+  void 0;
+  const seatW = g.u(9);
+  const seatH = g.u(5);
   const seatTop = geo.gy - seatLift - g.u(3);
 
   // 椅腳（短木腳）
@@ -2172,7 +2297,7 @@ function paintChairSoft(g, geo, o) {
   for (const i of frontLegs) taperedLeg(g, Math.round(spots[i].x - g.u(1)), spots[i].y, spots[i].y + seatLift, woodCol, null);
 
   // ── 椅背軟墊（先畫，扶手才會壓在前面）──
-  const backH = g.u(12) + (varN === 1 ? g.u(1) : 0);
+  const backH = g.u(7) + (varN === 1 ? g.u(1) : 0);
   const bwid = Math.round(seatW - g.u(2));
   const bx = Math.round(geo.cx - bwid / 2);
   const byBot = seatTop + g.u(1);
@@ -2180,14 +2305,15 @@ function paintChairSoft(g, geo, o) {
   g.r(bx - 1, byTop, bwid + 2, backH + 2, OL);
   g.r(bx, byTop + 1, bwid, backH, fabric);
   g.r(bx + 1, byTop, bwid - 2, g.u(1) + 1, fabHi);
-  g.r(bx, byTop + 1, 1, backH, fabHi);
-  g.r(bx + bwid - 1, byTop + 1, 1, backH, fabLo);
-  g.r(bx, byBot, bwid, 1, fabLo);
+  g.r(bx, byTop + 1, 2, backH, fabHi);
+  g.r(bx, byTop, bwid, 2, fabHi);
+  g.r(bx + bwid - 2, byTop + 1, 2, backH, fabLo);
+  g.r(bx, byBot, bwid, 2, fabLo);
   // 橫向壓紋（3 條）+ 鈕扣
   for (let i = 0; i < 3; i++) {
     const y = byTop + g.u(3) + i * g.u(3);
-    g.r(bx + 1, y, bwid - 2, 1, fabLo);
-    g.r(bx + 1, y + 1, bwid - 2, 1, shade(fabric, 'black', 0.16));
+    g.r(bx + 1, y, bwid - 2, 2, fabLo);
+    g.r(bx + 1, y + 2, bwid - 2, 2, shade(fabric, 'black', 0.16));
     if (i === 1) {
       g.p(bx + Math.round(bwid / 2) - 1, y + 1, shade(fabric, 'black', 0.6));
       g.p(bx + Math.round(bwid / 2), y + 1, shade(fabric, 'black', 0.6));
@@ -2299,11 +2425,11 @@ function paintCounter(g, geo, o) {
     const x = 6 + t * (geo.bw - 12);
     g.line(x, geo.gy - bodyH + 4, x, geo.gy - 1, 'wood_sh');
   }
-  g.dith(4, geo.gy - bodyH + 2, geo.bw - 8, bodyH - 6, 'lamp_hi', 'clear', DITHER.sparse);
+  g.dith(4, geo.gy - bodyH + 2, geo.bw - 8, bodyH - 6, 'lamp_hi', 'clear', DITHER.block12);
   // 檯面（大理石化：灰底 + 網點）
   g.dia(geo.cx, geo.gy - bodyH - (geo.bh - 6) / 2, geo.bw - 2, geo.bh - 6, 'outline');
   g.dia(geo.cx, geo.gy - bodyH + 1 - (geo.bh - 8) / 2, geo.bw - 4, geo.bh - 8, 'gray_90');
-  g.dith(6, geo.gy - bodyH - 3, geo.bw - 12, geo.bh - 8, 'gray_30', 'clear', DITHER.sparse);
+  g.dith(6, geo.gy - bodyH - 3, geo.bw - 12, geo.bh - 8, 'gray_30', 'clear', DITHER.block12);
   if (o.cashier) {
     // 收銀機
     const rx = geo.cx + 2;
@@ -2346,14 +2472,14 @@ function paintStove(g, geo, o) {
     g.dia(geo.cx + dx, t + dy, 7, 4, 'metal_sh');
     const on = ((o.frame | 0) + i) % 4 < 2;
     if (on) {
-      g.dith(geo.cx + dx - 2, t + dy, 5, 3, 'fire', 'clear', DITHER.b50);
+      g.dith(geo.cx + dx - 2, t + dy, 5, 3, 'fire', 'clear', DITHER.block50);
       g.r(geo.cx + dx - 1, t + dy + 1, 2, 1, 'fire_hi');
     }
   }
   // 湯鍋
   g.r(geo.cx - 8, t - 5, 7, 5, 'metal_lo');
   g.r(geo.cx - 7, t - 6, 5, 1, 'metal');
-  g.dith(geo.cx - 7, t - 8, 5, 2, 'gray_90', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 7, t - 8, 5, 2, 'gray_90', 'clear', DITHER.block12);
   // 控制旋鈕
   g.r(3, geo.gy - geo.hgt + 8, 12, 1, 'metal_sh');
   for (let i = 0; i < 4; i++) g.r(5 + i * 3, geo.gy - geo.hgt + 6, 2, 2, 'gray_30');
@@ -2382,7 +2508,7 @@ function paintSink(g, geo, o) {
   cuboid(g, geo.cx, geo.gy, geo.bw - 6, geo.bh - 4, geo.hgt - 4, 'metal_hi', 'metal', 'metal_md', 'outline');
   const t = geo.gy - geo.hgt + 3;
   g.dia(geo.cx, t - 3, geo.bw - 12, geo.bh - 8, 'metal_sh');
-  g.dith(geo.cx - 5, t - 3, 10, 4, 'water', 'clear', DITHER.b37);
+  g.dith(geo.cx - 5, t - 3, 10, 4, 'water', 'clear', DITHER.block25);
   g.r(geo.cx - 2, t - 9, 2, 6, 'metal_hi'); // 水龍頭
   g.r(geo.cx - 2, t - 10, 5, 2, 'metal_hi');
   g.r(geo.cx + 1, t - 9, 1, 2, 'water_hi');
@@ -2409,7 +2535,7 @@ function paintFridge(g, geo, o) {
   g.r(geo.cx + 2, t + 2, 2, 2, ((o.frame | 0) & 1) ? 'hp_ok' : 'teal_md');
   if (o.broken) {
     g.r(geo.cx - 2, t + 10, 8, 1, 'hp_bad');
-    g.dith(6, t + 12, 10, 8, 'gray_30', 'clear', DITHER.b25);
+    g.dith(6, t + 12, 10, 8, 'gray_30', 'clear', DITHER.block25);
   }
 }
 
@@ -2429,7 +2555,7 @@ function paintHood(g, geo, o) {
   g.poly([[geo.cx - 9, y - 1], [geo.cx, y + 4], [geo.cx + 9, y - 1], [geo.cx + 6, y - 5], [geo.cx - 6, y - 5]], 'metal_hi');
   g.r(geo.cx - 5, y - 12, 10, 7, 'metal_md');
   g.r(geo.cx - 4, y - 11, 8, 5, 'metal_lo');
-  g.dith(geo.cx - 8, y + 1, 16, 3, 'gray_70', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 8, y + 1, 16, 3, 'gray_70', 'clear', DITHER.block12);
 }
 
 function paintFryer(g, geo, o) {
@@ -2437,7 +2563,7 @@ function paintFryer(g, geo, o) {
   cuboid(g, geo.cx, geo.gy, geo.bw - 6, geo.bh - 4, geo.hgt - 2, 'metal', 'metal', 'metal_md', 'outline');
   const t = geo.gy - geo.hgt + 2;
   g.dia(geo.cx, t - 2, geo.bw - 12, geo.bh - 6, 'lamp_sh');
-  g.dith(geo.cx - 5, t - 2, 10, 4, 'lamp_md', 'clear', DITHER.checker);
+  g.dith(geo.cx - 5, t - 2, 10, 4, 'lamp_md', 'clear', DITHER.block50);
   g.r(geo.cx - 8, t - 8, 8, 6, 'metal_lo');
   g.r(geo.cx - 8, t - 9, 8, 1, 'metal_hi');
 }
@@ -2479,7 +2605,7 @@ function paintToilet(g, geo, o) {
   g.r(geo.cx - 5, y - 8, 10, 6, 'white');
   g.dia(geo.cx, y - 4, 16, 8, 'outline');
   g.dia(geo.cx, y - 3, 13, 6, 'tile_hi');
-  g.dith(geo.cx - 4, y - 2, 8, 2, 'tile_lo', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 4, y - 2, 8, 2, 'tile_lo', 'clear', DITHER.block12);
   g.r(geo.cx - 3, y + 2, 6, 2, 'tile');
   g.r(geo.cx - 3, y + 4, 6, 1, 'outline');
   // 沖水鈕
@@ -2494,7 +2620,7 @@ function paintWashbasin(g, geo, o) {
   g.r(geo.cx - 4, y - 3, 8, 3, 'tile_lo');
   g.dia(geo.cx, t - 2, 18, 9, 'outline');
   g.dia(geo.cx, t - 1, 16, 7, 'tile_hi');
-  g.dith(geo.cx - 5, t + 1, 10, 3, 'water', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 5, t + 1, 10, 3, 'water', 'clear', DITHER.block12);
   g.r(geo.cx - 1, t - 8, 2, 6, 'metal_hi');
   g.r(geo.cx - 1, t - 9, 6, 2, 'metal_hi');
   g.r(geo.cx + 3, t - 8, 1, 2, 'water_hi');
@@ -2523,7 +2649,7 @@ function paintMirror(g, geo, o) {
   const y = geo.gy - geo.mount - geo.hgt;
   g.r(geo.cx - 10, y, 21, geo.hgt, 'wood_dark');
   g.r(geo.cx - 9, y + 1, 19, geo.hgt - 2, 'sky_lo');
-  g.dith(geo.cx - 9, y + 1, 19, geo.hgt - 2, 'sky_hi', 'clear', DITHER.diag);
+  g.dith(geo.cx - 9, y + 1, 19, geo.hgt - 2, 'sky_hi', 'clear', DITHER.block50);
   g.line(geo.cx - 8, y + geo.hgt - 2, geo.cx + 8, y + 2, 'white');
 }
 
@@ -2575,7 +2701,7 @@ function paintAircon(g, geo, o) {
   const ph = (o.frame | 0) & 3;
   for (let i = 0; i < 4; i++) {
     const len = u(4) + ((i + ph) % 3) * u(3);
-    g.dith(geo.cx - u(9) + i * u(5), y + geo.hgt, u(3), len, 'sky_hi', 'clear', DITHER.b37);
+    g.dith(geo.cx - u(9) + i * u(5), y + geo.hgt, u(3), len, 'sky_hi', 'clear', DITHER.block25);
   }
 }
 
@@ -2587,7 +2713,7 @@ function paintSpeaker(g, geo, o) {
   g.r(geo.cx - bw / 2 + 1, y + 1, bw - 2, geo.hgt, 'wood_dark');
   g.r(geo.cx - bw / 2 + 2, y + 2, bw - 4, geo.hgt - 2, 'wood_sh');
   // 喇叭網格 + 單體
-  g.dith(geo.cx - bw / 2 + 3, y + 3, bw - 6, geo.hgt - 4, 'gray_30', 'clear', DITHER.checker);
+  g.dith(geo.cx - bw / 2 + 3, y + 3, bw - 6, geo.hgt - 4, 'gray_30', 'clear', DITHER.block50);
   g.dia(geo.cx, y + u(4), u(9), u(7), 'gray_15');
   g.dia(geo.cx, y + u(5), u(6), u(5), 'gray_30');
   g.r(geo.cx - bw / 2 + 2, y + geo.hgt - 3, bw - 4, 1, 'wood_hi');
@@ -2612,7 +2738,7 @@ function paintExtinguisher(g, geo, o) {
   // 瓶身
   g.r(geo.cx - bw / 2, y - h, bw, h, 'outline');
   g.r(geo.cx - bw / 2 + 1, y - h + 1, bw - 2, h - 3, 'red');
-  g.dith(geo.cx - bw / 2 + 2, y - h + 2, u(3), h - 5, 'red_hi', 'clear', DITHER.sparse);
+  g.dith(geo.cx - bw / 2 + 2, y - h + 2, u(3), h - 5, 'red_hi', 'clear', DITHER.block12);
   g.r(geo.cx + bw / 2 - 3, y - h + 2, 1, h - 5, 'red_lo');
   // 壓力錶
   g.r(geo.cx + 1, y - h + u(3), u(4), u(4), 'gray_15');
@@ -2659,8 +2785,8 @@ function paintInfrared(g, geo, o) {
   g.r(geo.cx - u(3), y + 2, u(3), u(2), 'red');
   g.r(geo.cx + u(2), y + 2, u(3), u(2), 'gray_30');
   // 紅外線光束
-  g.dith(geo.cx - u(12), y + geo.hgt - 2, u(25), 1, 'red_hi', 'clear', DITHER.checker);
-  g.dith(geo.cx - u(10), y + geo.hgt - 1, u(21), 1, 'red_lo', 'clear', DITHER.sparse);
+  g.dith(geo.cx - u(12), y + geo.hgt - 2, u(25), 1, 'red_hi', 'clear', DITHER.block50);
+  g.dith(geo.cx - u(10), y + geo.hgt - 1, u(21), 1, 'red_lo', 'clear', DITHER.block12);
 }
 
 /**
@@ -2683,8 +2809,8 @@ function paintCeilingLamp(g, geo, o) {
   const on = ((o.frame | 0) & 3) !== 3;
   g.r(geo.cx - 1, y + geo.hgt - u(5), 3, u(4), on ? 'lamp_hi' : 'gray_70');
   if (on) {
-    g.dith(geo.cx - u(10), y + geo.hgt, u(20), u(8), 'lamp', 'clear', DITHER.b37);
-    g.dith(geo.cx - u(7), y + geo.hgt + u(6), u(14), u(6), 'lamp_glow', 'clear', DITHER.b25);
+    g.dith(geo.cx - u(10), y + geo.hgt, u(20), u(8), 'lamp', 'clear', DITHER.block25);
+    g.dith(geo.cx - u(7), y + geo.hgt + u(6), u(14), u(6), 'lamp_glow', 'clear', DITHER.block25);
   }
 }
 
@@ -2704,9 +2830,9 @@ function paintLamp(g, geo, o) {
   // 燈泡 + 光芒
   const flick = ((o.frame | 0) & 3) === 3 ? 1 : 0;
   g.r(geo.cx - 1, ty + u(3), 2, 2, flick ? 'lamp_md' : 'lamp_hi');
-  g.dith(geo.cx - u(9), ty + u(6), u(18), u(5) + flick, 'lamp', 'clear', DITHER.b37);
-  g.dith(geo.cx - u(6), ty + u(10), u(12), u(4), 'lamp_glow', 'clear', DITHER.b25);
-  g.dith(geo.cx - u(12), ty + u(8), u(24), u(3), 'lamp_hi', 'clear', DITHER.sparse);
+  g.dith(geo.cx - u(9), ty + u(6), u(18), u(5) + flick, 'lamp', 'clear', DITHER.block25);
+  g.dith(geo.cx - u(6), ty + u(10), u(12), u(4), 'lamp_glow', 'clear', DITHER.block25);
+  g.dith(geo.cx - u(12), ty + u(8), u(24), u(3), 'lamp_hi', 'clear', DITHER.block12);
 }
 
 function paintTrashBin(g, geo, o) {
@@ -2714,7 +2840,7 @@ function paintTrashBin(g, geo, o) {
   const y = geo.gy;
   g.r(geo.cx - 6, y - geo.hgt, 13, geo.hgt, 'outline');
   g.r(geo.cx - 5, y - geo.hgt + 1, 11, geo.hgt - 2, 'metal_md');
-  g.dith(geo.cx - 4, y - geo.hgt + 2, 9, geo.hgt - 4, 'metal_hi', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 4, y - geo.hgt + 2, 9, geo.hgt - 4, 'metal_hi', 'clear', DITHER.block12);
   g.r(geo.cx - 7, y - geo.hgt - 2, 15, 3, 'metal_lo');
   g.r(geo.cx - 6, y - geo.hgt - 1, 13, 1, 'metal_hi');
   g.r(geo.cx - 1, y - geo.hgt - 4, 4, 2, 'gray_50');
@@ -2727,7 +2853,7 @@ function paintHeater(g, geo, o) {
   const y = geo.gy;
   g.r(geo.cx - 8, y - geo.hgt, 17, geo.hgt, 'outline');
   g.r(geo.cx - 7, y - geo.hgt + 1, 15, geo.hgt - 2, 'gray_50');
-  g.dith(geo.cx - 6, y - geo.hgt + 2, 13, geo.hgt - 4, 'fire', 'clear', DITHER.checker);
+  g.dith(geo.cx - 6, y - geo.hgt + 2, 13, geo.hgt - 4, 'fire', 'clear', DITHER.block50);
   g.r(geo.cx - 6, y - geo.hgt + 2, 13, 1, 'gray_70');
   g.r(geo.cx - 2, y - 3, 4, 2, 'gray_15');
 }
@@ -2762,7 +2888,7 @@ function paintPainting(g, geo, o) {
   g.r(geo.cx - w / 2 + 2, y + 2, w - 2, geo.hgt - 2, 'sky_md');
   // 風景
   g.r(geo.cx - w / 2 + 2, y + 2, w - 2, 3, 'dusk_org');
-  g.dith(geo.cx - w / 2 + 2, y + 2, w - 2, 4, 'neon_yel', 'clear', DITHER.sparse);
+  g.dith(geo.cx - w / 2 + 2, y + 2, w - 2, 4, 'neon_yel', 'clear', DITHER.block12);
   g.poly([
     [geo.cx - w / 2 + 2, y + geo.hgt], [geo.cx - 4, y + 4],
     [geo.cx + 2, y + geo.hgt],
@@ -2781,7 +2907,7 @@ function paintRug(g, geo, o) {
   g.dia(cx, gy - geo.bh / 2 + 1, geo.bw - 4, geo.bh - 3, o.rugCol || 'red_md');
   g.dia(cx, gy - geo.bh / 2 + 2, geo.bw - 10, geo.bh - 7, 'red_lo');
   g.dia(cx, gy - geo.bh / 2 + 3, geo.bw - 14, geo.bh - 9, 'lamp_md');
-  g.dith(cx - geo.bw / 4, gy - 3, geo.bw / 2, 5, 'red_hi', 'clear', DITHER.sparse);
+  g.dith(cx - geo.bw / 4, gy - 3, geo.bw / 2, 5, 'red_hi', 'clear', DITHER.block12);
   // 流蘇
   for (let i = 0; i < 5; i++) {
     g.r(cx - geo.bw / 2 + 3 + i * 5, gy + 1, 2, 1, 'lamp_lo');
@@ -2803,7 +2929,7 @@ function paintNeonSign(g, geo, o) {
   g.r(geo.cx - w / 2 + 3, y + 3, w - 6, 2, c1);
   g.r(geo.cx - w / 2 + 3, y + 7, 8, 2, c2);
   g.r(geo.cx + 3, y + 7, 6, 2, 'neon_yel');
-  g.dith(geo.cx - w / 2 - 3, y, w + 6, geo.hgt + 2, c1, 'clear', DITHER.sparse);
+  g.dith(geo.cx - w / 2 - 3, y, w + 6, geo.hgt + 2, c1, 'clear', DITHER.block12);
   g.r(geo.cx - 1, y - 2, 2, 2, 'metal_lo');
 }
 
@@ -2814,7 +2940,7 @@ function paintAquarium(g, geo, o) {
   const t = y - 4;
   g.r(geo.cx - 10, t - geo.hgt, 21, geo.hgt, 'outline');
   g.r(geo.cx - 9, t - geo.hgt + 1, 19, geo.hgt - 2, 'water');
-  g.dith(geo.cx - 9, t - geo.hgt + 1, 19, geo.hgt - 2, 'water_hi', 'clear', DITHER.b37);
+  g.dith(geo.cx - 9, t - geo.hgt + 1, 19, geo.hgt - 2, 'water_hi', 'clear', DITHER.block25);
   // 魚
   const ph = (o.frame | 0) & 3;
   for (let i = 0; i < 3; i++) {
@@ -2825,7 +2951,7 @@ function paintAquarium(g, geo, o) {
     g.r(fx + 1, fy, 1, 1, 'outline');
   }
   g.r(geo.cx - 9, t - geo.hgt + 1, 19, 1, 'white');
-  g.dith(geo.cx - 9, t - 4, 19, 4, 'leaf_lo', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 9, t - 4, 19, 4, 'leaf_lo', 'clear', DITHER.block12);
   g.r(geo.cx - 11, t - geo.hgt - 3, 23, 3, 'wood_sh');
   g.r(geo.cx - 10, t - geo.hgt - 3, 21, 1, 'lamp_hi');
 }
@@ -2841,7 +2967,7 @@ function paintPartition(g, geo, o) {
     g.r(x + 1, y - geo.hgt + 1, pw - 2, geo.hgt - 2, i & 1 ? 'wall_hi' : 'wall');
     g.r(x + 1, y - geo.hgt + 1, pw - 2, 1, 'wood_hi');
     g.r(x + 1, y - 6, pw - 2, 5, 'wood_md');
-    g.dith(x + 2, y - geo.hgt + 4, pw - 4, geo.hgt - 12, 'lamp_hi', 'clear', DITHER.sparse);
+    g.dith(x + 2, y - geo.hgt + 4, pw - 4, geo.hgt - 12, 'lamp_hi', 'clear', DITHER.block12);
   }
 }
 
@@ -2849,7 +2975,7 @@ function paintMenuBoard(g, geo, o) {
   const y = geo.gy - geo.mount - geo.hgt;
   g.r(geo.cx - 11, y, 23, geo.hgt, 'wood_dark');
   g.r(geo.cx - 10, y + 1, 21, geo.hgt - 2, 'gray_15');
-  g.dith(geo.cx - 10, y + 1, 21, geo.hgt - 2, 'gray_30', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 10, y + 1, 21, geo.hgt - 2, 'gray_30', 'clear', DITHER.block12);
   // 粉筆字（標題用場地強調色）
   const acc = typeof o.accent === 'string' ? o.accent : 'neon_yel';
   for (let i = 0; i < 5; i++) {
@@ -2865,7 +2991,7 @@ function paintTV(g, geo, o) {
   g.r(geo.cx - 9, y + 1, 19, geo.hgt, 'gray_30');
   g.r(geo.cx - 8, y + 2, 15, geo.hgt - 3, 'window_dk');
   const ph = (o.frame | 0) & 3;
-  g.dith(geo.cx - 8, y + 2, 15, 5, ph & 1 ? 'teal' : 'shirt_prp', 'clear', DITHER.checker);
+  g.dith(geo.cx - 8, y + 2, 15, 5, ph & 1 ? 'teal' : 'shirt_prp', 'clear', DITHER.block50);
   g.r(geo.cx - 6, y + 7, 10, 1, 'white');
   g.r(geo.cx + 8, y + 3, 2, 2, 'gray_70');
   g.r(geo.cx + 8, y + 6, 2, 2, 'gray_70');
@@ -2944,7 +3070,7 @@ function paintWaterCooler(g, geo, o) {
   const t = y - 14;
   g.r(geo.cx - 5, t - 8, 11, 9, 'outline');
   g.r(geo.cx - 4, t - 7, 9, 7, 'water_hi');
-  g.dith(geo.cx - 4, t - 7, 9, 7, 'water', 'clear', DITHER.b25);
+  g.dith(geo.cx - 4, t - 7, 9, 7, 'water', 'clear', DITHER.block25);
   g.r(geo.cx - 2, t, 5, 3, 'gray_30');
   g.r(geo.cx - 1, t + 1, 1, 6, 'water_hi');
   g.r(geo.cx + 2, t + 1, 1, 4, 'red_hi');
@@ -2978,7 +3104,7 @@ function paintSofa(g, geo, o) {
   g.r(geo.cx - geo.bw / 2 + 3, t - 6, geo.bw - 6, 1, 'red_hi');
   g.r(geo.cx - geo.bw / 2 + 2, t - 3, 3, 5, 'red_md');
   g.r(geo.cx + geo.bw / 2 - 5, t - 3, 3, 5, 'red_md');
-  g.dith(geo.cx - geo.bw / 4, t - 5, geo.bw / 2, 4, 'red_hi', 'clear', DITHER.sparse);
+  g.dith(geo.cx - geo.bw / 4, t - 5, geo.bw / 2, 4, 'red_hi', 'clear', DITHER.block12);
 }
 
 function paintPodium(g, geo, o) {
@@ -3006,7 +3132,7 @@ function paintLanternString(g, geo, o) {
     g.r(x - 2, y - 4 + dy, 5, 8, bodyHi);
     g.r(x - 3, y + 4 + dy, 7, 1, 'lantern_lo');
     g.r(x - 2, y - 6 + dy, 5, 2, 'red_lo');
-    g.dith(x - 6, y + 4 + dy, 13, 5, 'lamp', 'clear', DITHER.b25);
+    g.dith(x - 6, y + 4 + dy, 13, 5, 'lamp', 'clear', DITHER.block25);
   }
 }
 
@@ -3021,7 +3147,7 @@ function paintFountain(g, geo, o) {
   const t = y - 5;
   g.dia(geo.cx, t - bh / 2 - 4, bw - 2, bh - 2, 'metal_sh');
   g.dia(geo.cx, t - bh / 2 - 3, bw - 4, bh - 4, 'water');
-  g.dith(geo.cx - bw / 4, t - 4, bw / 2, Math.max(2, bh / 2 - 2), 'water_hi', 'clear', DITHER.b37);
+  g.dith(geo.cx - bw / 4, t - 4, bw / 2, Math.max(2, bh / 2 - 2), 'water_hi', 'clear', DITHER.block25);
   // 中央石柱與水柱
   g.r(geo.cx - 2, t - 12, 4, 8, 'gray_70');
   g.r(geo.cx - 1, t - 12, 2, 8, 'gray_90');
@@ -3030,14 +3156,14 @@ function paintFountain(g, geo, o) {
   g.p(geo.cx - 3, t - 13 + ((ph + 1) & 1), 'water_hi');
   g.p(geo.cx + 2, t - 12 + ((ph + 2) & 1), 'water_hi');
   g.p(geo.cx, t - 17 + (ph & 1), 'white');
-  g.dith(geo.cx - 8, t - 3, 16, 4, 'water_hi', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 8, t - 3, 16, 4, 'water_hi', 'clear', DITHER.block12);
 }
 
 function paintUnknown(g, geo, o) {
   baseShadow(g, geo, 0.9);
   cuboid(g, geo.cx, geo.gy, geo.bw - 6, geo.bh - 4, geo.hgt, 'gray_70', 'gray_50', 'gray_30', 'outline');
   const t = geo.gy - geo.hgt;
-  g.dith(geo.cx - 6, t + 2, 12, geo.hgt - 4, 'gray_90', 'clear', DITHER.sparse);
+  g.dith(geo.cx - 6, t + 2, 12, geo.hgt - 4, 'gray_90', 'clear', DITHER.block12);
   g.r(geo.cx - 1, t + 3, 3, 1, 'gray_15');
   g.r(geo.cx + 1, t + 4, 1, 2, 'gray_15');
   g.r(geo.cx, t + 6, 1, 1, 'gray_15');
@@ -3053,8 +3179,15 @@ const FURNITURE_ART = {
   table_2b: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_cream', facings: ['N', 'S'] }) },
   table_4a: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S', 'E', 'W'] }) },
   table_4b: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }) },
-  table_6a: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'top_dark', facings: ['N', 'S', 'E', 'W'] }) },
-  table_6b: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }) },
+  // 六人宴會桌：桌椅一體繪製（pad 讓貼圖容得下桌緣外側的 6 張椅子）
+  table_6a: {
+    hgt: 24, takesOccupancy: true,
+    paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'top_dark', facings: ['N', 'S', 'E', 'W'] }),
+  },
+  table_6b: {
+    hgt: 24, takesOccupancy: true,
+    paint: (g, geo, o) => paintTable(g, geo, { ...o, round: true, topFill: 'cloth_white', facings: ['N', 'S', 'E', 'W'] }),
+  },
   table_long: { hgt: 24, takesOccupancy: true, paint: (g, geo, o) => paintTable(g, geo, { ...o, topFill: 'cloth_cream', facings: ['N', 'S', 'E', 'W'] }) },
 
   // 椅（3）＋沙發／長凳：三種椅子各自手繪（木椅斜削腳＋板條背、鐵管椅彎管＋繃布、
@@ -3203,7 +3336,7 @@ export function drawFurniture(ctx, typeId, x, y, opts = {}) {
   // 壁掛：緊鄰牆壁的裝飾品改畫在牆面上（整張圖往上抬，中心落在牆面區域）
   const wall = typeof o.wall === 'string' && o.wall ? o.wall : null;
   const lift = wall ? Math.round(WALL_H * 0.72) : 0;
-  const geo = artGeo(gw, gh, art.hgt, (art.mount || 0) + lift);
+  const geo = artGeo(gw, gh, art.hgt, (art.mount || 0) + lift, art.pad || 0);
   const dir = art.dirs ? rotToDir(o.rot) : 'S';
   const frame = art.anim ? ((Number(o.frame) | 0) & 3) : 0;
   // 接觸陰影（view.fx.shadows）
@@ -3629,7 +3762,7 @@ export const WEATHER_KINDS = ['sunny', 'cloudy', 'rain', 'storm', 'cold', 'heat'
 
 function vignette(ctx, w, h, dark, light, maxBand) {
   // 只壓「左右緣與下緣」：天空／街景帶（上半部）永遠不受影響
-  const bands = [[6, DITHER.b12], [5, DITHER.b25], [5, DITHER.b25]];
+  const bands = [[6, DITHER.block12], [5, DITHER.block25], [5, DITHER.block25]];
   let y = h;
   for (let i = 0; i < bands.length; i++) {
     const bh = bands[i][0];
@@ -3637,7 +3770,7 @@ function vignette(ctx, w, h, dark, light, maxBand) {
     ditherPattern(ctx, 0, y - bh, w, bh, dark, light, bands[i][1]);
     y -= bh;
   }
-  const cols = [[6, DITHER.b12], [5, DITHER.b25]];
+  const cols = [[6, DITHER.block12], [5, DITHER.block25]];
   let x = 0;
   for (let i = 0; i < cols.length; i++) {
     ditherPattern(ctx, x, 0, cols[i][0], h, dark, light, cols[i][1]);
@@ -3660,14 +3793,43 @@ export const SUN_SHAFTS = false;
  * @param {string} weather sunny|cloudy|rain|storm|cold|heat
  * @param {number} w @param {number} h 邏輯尺寸
  * @param {number} tick 影格計數（60fps）
- * @param {{shafts?: boolean}} [opts] 可覆寫光柱開關
+ * @param {{shafts?: boolean, excludePoly?: Array<{x:number,y:number}>}} [opts]
+ *        shafts     可覆寫光柱開關
+ *        excludePoly 要「挖掉」的多邊形（房間剪影）：給了就用 even-odd clip 讓天氣效果
+ *                    只落在店外，店內完全不受影響。沒給＝照舊全畫面（向後相容）。
  */
 export function drawWeather(ctx, weather, w, h, tick, opts) {
+  if (!ctx) return;
+  const o = opts || {};
+  const poly = Array.isArray(o.excludePoly) ? o.excludePoly : null;
+  if (poly && poly.length >= 3) {
+    // 外框矩形 ＋ 內挖房間多邊形（even-odd）→ 店內不畫任何天氣像素
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, Math.round(w), Math.round(h));
+    ctx.moveTo(Math.round(poly[0].x), Math.round(poly[0].y));
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(Math.round(poly[i].x), Math.round(poly[i].y));
+    ctx.closePath();
+    try {
+      ctx.clip('evenodd');
+    } catch (e) {
+      ctx.restore();
+      return; // 環境不支援 even-odd clip → 寧可不畫，也不要蓋住店內
+    }
+    drawWeatherBody(ctx, weather, w, h, tick, o);
+    ctx.restore();
+    return;
+  }
+  drawWeatherBody(ctx, weather, w, h, tick, o);
+}
+
+function drawWeatherBody(ctx, weather, w, h, tick, o) {
   if (!ctx) return;
   const kind = WEATHER_KINDS.indexOf(weather) >= 0 ? weather : 'sunny';
   const W = Math.round(w);
   const H = Math.round(h);
   const t = Number(tick) || 0;
+  const opts = o || {};
   if (kind === 'sunny') {
     // 光柱（預設關閉，見 SUN_SHAFTS；玩家反映會干擾閱讀店內配置）
     const shafts = (opts && opts.shafts !== undefined) ? opts.shafts : SUN_SHAFTS;
@@ -3678,7 +3840,7 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
         for (let y = 0; y < H * 0.78; y += 3) {
           const x = x0 + Math.round(y * 0.42);
           if (x > W) break;
-          ditherPattern(ctx, x, y, Math.min(wdt, W - x), 3, 'lamp_md', 'clear', s & 1 ? DITHER.sparse : DITHER.b12);
+          ditherPattern(ctx, x, y, Math.min(wdt, W - x), 3, 'lamp_md', 'clear', s & 1 ? DITHER.block12 : DITHER.block12);
         }
       }
     }
@@ -4104,9 +4266,9 @@ function paintKitchenPropBody(g, k, bx, by, o, fr) {
       g.r(cx2 - u(4), by - u(25), u(8), u(1), 'metal_hi');
       g.r(cx2 + u(5), by - u(24), u(4), u(2), 'metal_sh');
       if (o.cooking) {
-        g.dith(cx2 - u(4), by - u(24), u(8), u(3), 'fire', 'clear', fr & 1 ? DITHER.b50 : DITHER.b37);
+        g.dith(cx2 - u(4), by - u(24), u(8), u(3), 'fire', 'clear', fr & 1 ? DITHER.block50 : DITHER.block25);
         g.r(cx2 - 1, by - u(24), 2, 2, 'fire_hi');
-        g.dith(cx2 - u(3), by - u(30) - fr, u(6), u(4), 'steam', 'clear', DITHER.sparse);
+        g.dith(cx2 - u(3), by - u(30) - fr, u(6), u(4), 'steam', 'clear', DITHER.block12);
       }
     }
     // 抽屜與把手
@@ -4119,7 +4281,7 @@ function paintKitchenPropBody(g, k, bx, by, o, fr) {
     g.poly([[bx - u(20), by - 3], [bx + u(20), by - 3], [bx + u(12), by - u(14)], [bx - u(12), by - u(14)]], 'metal');
     g.r(bx - u(6), by - u(30), u(12), u(15), 'metal_md');
     g.r(bx - u(5), by - u(29), u(10), u(13), 'metal_sh');
-    g.dith(bx - u(22), by - 1, u(44), u(2), 'gray_70', 'clear', DITHER.sparse);
+    g.dith(bx - u(22), by - 1, u(44), u(2), 'gray_70', 'clear', DITHER.block12);
   } else if (k === 'rack') {
     // 掛桿 + 鍋具／刀具
     g.r(bx - u(20), by - u(22), u(40), 2, 'metal_sh');
@@ -4140,7 +4302,7 @@ function paintKitchenPropBody(g, k, bx, by, o, fr) {
     g.r(bx - u(17), by - u(15), u(34), u(2), 'metal_hi');
     g.dia(bx - u(4), by - u(14), u(18), u(8), 'outline');
     g.dia(bx - u(4), by - u(13), u(15), u(6), 'metal_sh');
-    g.dith(bx - u(9), by - u(12), u(11), u(4), 'water', 'clear', DITHER.b37);
+    g.dith(bx - u(9), by - u(12), u(11), u(4), 'water', 'clear', DITHER.block25);
     g.r(bx + u(2), by - u(24), 3, u(9), 'metal_hi');
     g.r(bx + u(2), by - u(26), u(8), 3, 'metal_hi');
     g.r(bx + u(9), by - u(25), 1, u(3), 'water_hi');
@@ -4170,7 +4332,7 @@ function paintKitchenPropBody(g, k, bx, by, o, fr) {
     // 牆上菜單牌
     g.r(bx - u(14), by - u(24), u(28), u(20), 'wood_dark');
     g.r(bx - u(13), by - u(23), u(26), u(18), 'gray_15');
-    g.dith(bx - u(13), by - u(23), u(26), u(18), 'gray_30', 'clear', DITHER.sparse);
+    g.dith(bx - u(13), by - u(23), u(26), u(18), 'gray_30', 'clear', DITHER.block12);
     for (let i = 0; i < 5; i++) {
       g.r(bx - u(11), by - u(21) + i * u(3), u(12) + (i % 3) * u(3), 1, i === 0 ? 'neon_yel' : 'white');
       g.r(bx + u(6), by - u(21) + i * u(3), u(4), 1, 'gray_70');
@@ -4206,7 +4368,7 @@ export function drawAOOverlay(ctx, cx, cy, edges) {
     const g = mkPainter(c, w, false);
     const mx = w / 2;
     const my = h / 2;
-    g.diaMask(mx, 1, TILE_W - 2, TILE_H - 2, AO_INK, DITHER.b50);
+    g.diaMask(mx, 1, TILE_W - 2, TILE_H - 2, AO_INK, DITHER.block50);
     // 貼牆那一側：整條邊往內側連畫 4 排實色暗線（第 4 排減半密度做漸層），
     // 這是 AO 的主要壓暗來源 —— 實色暗線比堆細網點乾淨，也保證貼牆格暗 ≥ 5。
     const band = (x0, y0, x1, y1, toward) => {
@@ -4287,5 +4449,5 @@ export const FURNITURE_ART_KEYS = Object.keys(FURNITURE_ART);
 
 export function drawShadow(ctx, cx, cy, w, h) {
   if (!ctx) return;
-  ditherRect(ctx, Math.round(cx - w / 2), Math.round(cy - h / 2), Math.round(w), Math.round(h), 'shadow', 'clear', DITHER.b50);
+  ditherRect(ctx, Math.round(cx - w / 2), Math.round(cy - h / 2), Math.round(w), Math.round(h), 'shadow', 'clear', DITHER.block50);
 }

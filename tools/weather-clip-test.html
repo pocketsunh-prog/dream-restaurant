@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>天氣覆蓋層裁切測試 — 店內是否被天氣影響</title>
+<style>
+  body { background: #20242d; color: #cfe8d0; font: 13px/1.6 Consolas, monospace; margin: 0; padding: 12px; }
+  h1 { font-size: 15px; margin: 0 0 8px; color: #ffd98a; }
+  canvas { display: block; border: 1px solid #555; image-rendering: pixelated; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pass { color: #8ef0a0; } .fail { color: #ff9090; }
+  #out { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>天氣覆蓋層裁切測試：店內（房間剪影內）不應被天氣覆蓋層影響</h1>
+<pre id="out">running…</pre>
+<div class="row">
+  <canvas id="cSunny" width="1280" height="800"></canvas>
+  <canvas id="cRain" width="1280" height="800"></canvas>
+</div>
+<script type="module">
+import { createNewGame } from '../src/core/state.js';
+import { FloorRenderer } from '../src/render/floor.js';
+import { roomSilhouette, LOGICAL_W, LOGICAL_H } from '../src/render/iso.js';
+
+const out = document.getElementById('out');
+const lines = [];
+let fails = 0;
+const say = (t, cls) => lines.push(cls ? `<span class="${cls}">${t}</span>` : t);
+function check(name, ok, detail) {
+  if (!ok) fails += 1;
+  say(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' :: ' + detail : ''}`, ok ? 'pass' : 'fail');
+}
+
+const state = createNewGame(20240101);
+const cSunny = document.getElementById('cSunny');
+const cRain = document.getElementById('cRain');
+const rSunny = new FloorRenderer(cSunny);
+const rRain = new FloorRenderer(cRain);
+
+const baseFx = { pools: true, shadows: false, ao: false, vignette: false, outsideShade: false, shafts: false };
+const baseView = { frame: 0, tick: 0, showGrid: false, timeOfDay: 'noon', fx: baseFx };
+
+function grab(renderer, canvas, weather) {
+  renderer.render(state, { ...baseView, weather });
+  return canvas.getContext('2d').getImageData(0, 0, LOGICAL_W, LOGICAL_H).data;
+}
+
+const A = grab(rSunny, cSunny, 'sunny');
+const B = grab(rRain, cRain, 'rain');
+
+const wallH = rSunny.wallHeight;
+const poly = roomSilhouette(state.layout.gridW, state.layout.gridH, wallH, rSunny.originX, rSunny.originY);
+
+function inPoly(px, py, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (((yi > py) !== (yj > py)) && (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+let inDiff = 0, inTotal = 0, outDiff = 0, outTotal = 0, inAny = 0;
+let deepAny = 0, edgeAny = 0;
+const deepSamples = [];
+for (let y = 0; y < LOGICAL_H; y += 1) {
+  for (let x = 0; x < LOGICAL_W; x += 1) {
+    const i = (y * LOGICAL_W + x) * 4;
+    const d = Math.abs(A[i] - B[i]) + Math.abs(A[i + 1] - B[i + 1]) + Math.abs(A[i + 2] - B[i + 2]);
+    if (inPoly(x, y, poly)) {
+      inTotal += 1;
+      if (d > 0) {
+        inAny += 1;
+        // 是否緊鄰剪影邊界？鄰域有任何一點在剪影外 → 算邊界像素
+        let nearEdge = false;
+        for (let dy = -2; dy <= 2 && !nearEdge; dy += 1) {
+          for (let dx = -2; dx <= 2; dx += 1) {
+            if (!inPoly(x + dx, y + dy, poly)) { nearEdge = true; break; }
+          }
+        }
+        if (nearEdge) edgeAny += 1;
+        else { deepAny += 1; if (deepSamples.length < 5) deepSamples.push(`${x},${y}`); }
+      }
+      if (d > 6) inDiff += 1;
+    } else {
+      outTotal += 1;
+      if (d > 6) outDiff += 1;
+    }
+  }
+}
+
+const inPct = inTotal ? (inDiff / inTotal) * 100 : 0;
+const outPct = outTotal ? (outDiff / outTotal) * 100 : 0;
+
+say('=== 天氣覆蓋層裁切檢查（晴天 vs 雨天，同場景同時段） ===');
+say(`  房間剪影內 ${inTotal} 像素、店外 ${outTotal} 像素（全畫面逐點比較）`);
+check('店內像素不被天氣覆蓋層影響（差異像素 < 1%）', inPct < 1, `店內差異 ${inPct.toFixed(2)}%`);
+check('店外仍保有明顯天氣效果（差異 >= 5%）', outPct >= 5, `店外差異 ${outPct.toFixed(2)}%`);
+say(`  （邊界 2px 內相異 ${edgeAny} 個像素：剪影裁切的硬邊，視為正常）`);
+check('店內「非邊界」像素與晴天相同（容差 20px：門口雨滴濺入等極小溢漏）', deepAny <= 20,
+  deepAny === 0 ? '深處相異像素 0 個' : `深處相異 ${deepAny} 個（例如 ${deepSamples.join(' / ')}）`);
+check('店內相異像素 < 0.5%（含邊界硬邊）', inTotal ? (inAny / inTotal) * 100 < 0.5 : false, `${inAny} 個（${(inTotal ? (inAny / inTotal) * 100 : 0).toFixed(2)}%）`);
+say('');
+// 寒流刻意會在店內畫「人物吐白煙」（局部、實色），不屬於全畫面覆蓋層，因此給容差；
+// 熱浪則完全不該動到店內（夜間地板暖色調是繪製在地板層之前的局部效果，晴天沒有）。
+const extra = [
+  { w: 'heat', limit: 0, note: '店內完全不該被動到' },
+  { w: 'cold', limit: 600, note: '允許人物吐白煙（局部實色效果）' }
+];
+for (const { w, limit, note } of extra) {
+  const C = grab(rRain, cRain, w);
+  let any = 0;
+  for (let y = 0; y < LOGICAL_H; y += 1) {
+    for (let x = 0; x < LOGICAL_W; x += 1) {
+      if (!inPoly(x, y, poly)) continue;
+      const i = (y * LOGICAL_W + x) * 4;
+      if (A[i] !== C[i] || A[i + 1] !== C[i + 1] || A[i + 2] !== C[i + 2]) any += 1;
+    }
+  }
+  check(`${w}：店內相異像素 ≤ ${limit}（${note}）`, any <= limit, `相異像素 ${any} 個`);
+}
+say('');
+say(fails === 0 ? '<span class="pass">WEATHER CLIP: ALL PASSED</span>' : `<span class="fail">WEATHER CLIP: ${fails} FAILED</span>`);
+out.innerHTML = lines.join('\n');
+window.__weatherClipResult = { fails, inPct, outPct, inAny };
+</script>
+</body>
+</html>
