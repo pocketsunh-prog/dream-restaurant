@@ -163,3 +163,26 @@
   outline: none;
 }
 .cheat-input::placeholder { color: rgba(207, 232, 208, 0.4); }
+
+/* -------------------------------------------------------- 配色 */
+.color-preview {
+  width: 28px; height: 28px; flex: 0 0 28px;
+  box-shadow: inset -1px -1px 0 var(--bevel-dark), inset 1px 1px 0 var(--bevel-light);
+}
+.color-input {
+  width: 60px; height: 22px; padding: 0;
+  background: var(--field); border: 0;
+  box-shadow: inset 1px 1px 0 var(--bevel-mid), inset -1px -1px 0 var(--bevel-light);
+  cursor: pointer;
+}
+.color-preset {
+  min-width: 60px; padding: 3px 8px;
+  background: var(--face); border: 0; cursor: pointer;
+  font-size: 12px;
+  box-shadow: inset -1px -1px 0 var(--bevel-dark), inset 1px 1px 0 var(--bevel-light);
+}
+.color-preset:hover { background: #e3e0d5; }
+.color-preset:active {
+  box-shadow: inset 1px 1px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light);
+  padding: 4px 7px 2px 9px;
+}

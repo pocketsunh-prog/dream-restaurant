@@ -101,7 +101,9 @@ export function createNewGame(seed = newSeed(), opts = {}) {
       closeMinute: 23 * 60,
       acTemp: 24,
       music: 'lazy',
-      openDays: [true, true, true, true, true, true, true]
+      openDays: [true, true, true, true, true, true, true],
+      wallColor: '#c9a26b',
+      floorColor: '#8c6a44'
     },
     menu: [],
     stock: {},

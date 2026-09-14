@@ -232,13 +232,22 @@ export function createStaffPanel({ store, ui }) {
     }
     if (ok) ui.toast(`已把 ${ok} 位員工的班表設為 ${clockOf(open)}–${clockOf(close)}。`, 'good');
   }, { small: true, kind: 'primary' });
+  const autoShiftBtn = button('⚡ 自動排班（8 小時輪班）', () => {
+    const st = state();
+    if (!st) return;
+    const list = st.staff || [];
+    if (!list.length) { ui.toast('目前沒有員工可以排班。', 'warn'); return; }
+    const res = dispatch({ type: 'AUTO_SHIFT' });
+    if (res && res.ok) ui.toast(res.info || '已自動排班', 'good');
+    else if (res && res.error) ui.toast(res.error, 'bad');
+  }, { small: true, title: '把全部員工排成 8 小時一班、錯開覆蓋全日營業時段' });
 
   const hoursLabel = h('span', { class: 'right' }, '');
   const openDaysRow = h('div', { class: 'row wrap', style: { gap: '4px' } });
   const shiftHost = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } });
   const coverageHost = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px' } });
   const shiftTab = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-    toolbar(applyAllBtn, h('span', { class: 'muted' }, '（把所有人的上下班時間對齊營業時間）')),
+    toolbar(applyAllBtn, autoShiftBtn, h('span', { class: 'muted' }, '（把所有人的上下班時間對齊營業時間／或自動 8 小時輪班）')),
     h('div', { class: 'section' }, h('div', { class: 'section-head' }, '營業日（唯讀，於設定面板調整）', hoursLabel), openDaysRow),
     h('div', { class: 'section' }, h('div', { class: 'section-head' }, '班表'), shiftHost),
     h('div', { class: 'section' }, h('div', { class: 'section-head' }, '人力覆蓋表（每小時在班人數）'), coverageHost));

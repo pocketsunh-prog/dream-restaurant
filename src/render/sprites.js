@@ -1262,18 +1262,25 @@ export function makeTilePalette(spec, key) {
     floorLo: mixHex(fl, '#3b2510', 0.44),
     floorDk: fDk,
     floorSeam: seam,
-    wallHi: mixHex(wl, '#ffffff', 0.18),
+    // 地板邊緣：基色暗 20%（1px 實色暗邊，不用網點）
+    floorEdge: mixHex(fl, '#000000', 0.20),
+    // 牆面：頂面（受光）基色 +12%、側面基色、右側（背光）基色 −18%、
+    //       磚縫 1px 基色 −25%；全部是實色平塗
+    wallHi: mixHex(wl, '#ffffff', 0.12),
     wall: wl,
-    wallLo: mixHex(wl, '#000000', 0.22),
+    wallLo: mixHex(wl, '#000000', 0.18),
     wallSh: mixHex(wl, '#000000', 0.44),
+    wallSeam: mixHex(wl, '#000000', 0.25),
     trim: mixHex(fl, '#000000', 0.34),
     trimHi: mixHex(fl, '#ffffff', 0.12),
     trimDark: mixHex(fl, '#000000', 0.56),
     accent: ac,
     accentHi: mixHex(ac, '#ffffff', 0.38),
     accentLo: mixHex(ac, '#000000', 0.32),
-    tones: [mixHex(fl, '#000000', 0.10), mixHex(fl, '#000000', 0.36), mixHex(fl, '#000000', 0.24), fl, mixHex(fl, '#ffffff', 0.02)].slice(0, 4),
-    seams: [seam, mixHex(fl, '#000000', 0.58), seam, mixHex(fl, '#000000', 0.32)],
+    // 地板基色：4 個變體都維持在「暗但不到黑」的區間（單格不會整片低於暗色門檻），
+    // 這樣髒污連動的對比才能拉開（dirt 0 的暗色像素只來自木板接縫）
+    tones: [mixHex(fl, '#000000', 0.20), mixHex(fl, '#000000', 0.32), mixHex(fl, '#000000', 0.26), mixHex(fl, '#000000', 0.14)],
+    seams: [seam, mixHex(fl, '#000000', 0.62), seam, mixHex(fl, '#000000', 0.40)],
   };
   if (TILE_PAL_CACHE.size > 32) TILE_PAL_CACHE.clear();
   TILE_PAL_CACHE.set(k, pal);
@@ -1293,6 +1300,12 @@ const WCX = WALL_CW / 2; // 24
 const WALL_XL = WCX - TILE_W / 2; // 3  頂面西頂點
 const WALL_XR = WCX + TILE_W / 2; // 45 頂面東頂點
 
+/** 2px 寬的等角實線（兩條相鄰 1px 線）；玩家反映細網點太雜 → 木紋一律用實線。 */
+function isoLine2(g, x0, y0, x1, y1, col) {
+  g.line(x0, y0, x1, y1, col);
+  g.line(x0, y0 + 1, x1, y1 + 1, col);
+}
+
 function paintFloorTile(c, o) {
   const W = TILE_W;
   const H = TILE_H;
@@ -1302,61 +1315,71 @@ function paintFloorTile(c, o) {
   const v = ((o.variant | 0) % 8 + 8) % 8;
   const base = o.edge ? pal.tones[1] : pal.tones[v % 4];
   const seam = pal.seams[v % 4];
+  const brush = shade(base, 'white', 0.14); // 淡色刷痕
+  const grainDark = shade(base, 'black', 0.16);
   g.dia(cx, 0, W - 2, H - 2, base);
-  // 木板接縫（依變體換方向：橫向 / 縱向 / 斜向拼法）
+  // 木板接縫（依變體換方向：橫向 / 縱向 / 斜向拼法）— 改成 2px 實線
   const grain = v % 4;
   const us = grain === 0 ? [0.45] : grain === 1 ? [0.28, 0.62] : grain === 2 ? [0.2, 0.5, 0.8] : [0.35];
   for (let i = 0; i < us.length; i++) {
     const t = us[i];
-    if (grain === 3) g.line(cx - g.u(9) + g.u(4) * i, g.u(2) + g.u(3) * i, cx + g.u(9) - g.u(4) * i, H - g.u(3) - g.u(3) * i, seam);
-    else g.line(cx - TILE_W / 2 * t, THH * t, W - TILE_W / 2 * t, THH + THH * t, seam);
+    if (grain === 3) isoLine2(g, cx - g.u(9) + g.u(4) * i, g.u(2) + g.u(3) * i, cx + g.u(9) - g.u(4) * i, H - g.u(3) - g.u(3) * i, seam);
+    else isoLine2(g, cx - TILE_W / 2 * t, THH * t, W - TILE_W / 2 * t, THH + THH * t, seam);
   }
-  // 木紋（沿等角方向的細紋）
-  g.line(cx - g.u(7), g.u(2), cx - g.u(7), g.u(6), seam);
-  g.line(cx + g.u(6), g.u(8), cx + g.u(6), g.u(12), seam);
-  g.line(cx - g.u(3), g.u(4), cx - g.u(3), g.u(8), shade(base, 'black', 0.12));
-  // 磨損與刮痕（固定變體，不隨時間變）
+  // 木紋：2px 實色板條 + 2px 淡色刷痕（全部粗筆觸，不留 1px 細線把色塊切碎）
+  isoLine2(g, cx - g.u(7), g.u(2), cx - g.u(7), g.u(6), grainDark);
+  isoLine2(g, cx + g.u(6), g.u(8), cx + g.u(6), g.u(12), grainDark);
+  g.r(cx - g.u(4), g.u(4), g.u(2), g.u(5), brush);
+  g.r(cx + g.u(2), g.u(3), g.u(2), g.u(4), brush);
+  // 磨損與刮痕（固定變體，不隨時間變）：實色短痕
   if (v >= 4) {
-    g.line(cx - g.u(6), g.u(9), cx + g.u(2), g.u(5), shade(base, 'white', 0.16));
-    g.line(cx + g.u(1), g.u(12), cx + g.u(5), g.u(10), shade(base, 'black', 0.22));
-    g.dith(cx - g.u(4), g.u(6), g.u(6), g.u(3), shade(base, 'black', 0.2), 'clear', DITHER.sparse);
+    isoLine2(g, cx - g.u(6), g.u(9), cx + g.u(2), g.u(5), brush);
+    isoLine2(g, cx + g.u(1), g.u(12), cx + g.u(5), g.u(10), shade(base, 'black', 0.22));
   }
-  // 收邊／踢腳帶（房間最外圈地板，比室內深一階）
+  // 收邊／踢腳帶（房間最外圈地板，比室內深一階）：實色 2px 帶
   if (o.edge) {
-    g.dith(0, 0, W, H, pal.trimDark, 'clear', DITHER.b25);
     g.line(1, THH, cx, H, pal.trimDark);
+    g.line(2, THH, cx, H - 1, pal.trimDark);
     g.line(cx, H, W - 1, THH, pal.trimDark);
+    g.line(cx, H - 1, W - 2, THH, pal.trimDark);
   }
-  // 污漬（dirt 0..3 桶）：越髒越多腳印與污點（覆蓋率大幅隨 dirt 上升）
+  // 污漬（dirt 0..3 桶）：實色污塊 + 大顆粒塊狀污斑（不用細網點）
   const dirt = Math.max(0, Math.min(3, o.dirt | 0));
   if (dirt > 0) {
     const stain = mixHex(base, '#2a1c0e', 0.6);
-    const count = dirt === 1 ? 2 : dirt === 2 ? 6 : 12;
-    if (dirt >= 2) g.dith(0, 0, W, H, stain, 'clear', dirt >= 3 ? DITHER.b37 : DITHER.b12);
-    for (let i = 0; i < count; i++) {
-      const px = cx - g.u(9) + ((v * 7 + i * 5) % g.u(18));
-      const py = g.u(2) + ((v * 5 + i * 3) % g.u(14));
-      const w2 = g.u(2) + (i % 3);
-      g.dith(px, py, w2, g.u(2), stain, 'clear', i % 3 === 0 ? DITHER.b50 : i % 3 === 1 ? DITHER.b37 : DITHER.b25);
-      if (dirt >= 3) g.p(px + 1, py, 'wood_dark');
+    const stainLo = shade(stain, 'black', 0.3);
+    // 大面積污斑：2×2 塊狀（dirt 2 = 25%；dirt 3 疊三層 ≈ 81% 覆蓋率 → 髒／乾淨暗色像素比 ≥ 3×）
+    if (dirt >= 2) g.dith(0, 0, W, H, stain, 'clear', dirt >= 3 ? DITHER.block50 : DITHER.block25);
+    if (dirt >= 3) {
+      g.dith(0, 0, W, H, stain, 'clear', DITHER.block50);
+      g.dith(0, 0, W, H, stain, 'clear', DITHER.block25);
     }
-    // 鞋印（成對）
-    for (let i = 0; i < dirt; i++) {
-      const fx = cx - g.u(6) + i * g.u(5);
+    const count = dirt === 1 ? 4 : dirt === 2 ? 10 : 20;
+    for (let i = 0; i < count; i++) {
+      const px = cx - g.u(11) + ((v * 7 + i * 5) % g.u(22));
+      const py = g.u(1) + ((v * 5 + i * 3) % g.u(15));
+      const w2 = g.u(4) + (i % 3); // 5–7px 寬的污塊
+      g.r(px, py, w2, g.u(2) + (i % 2) + 1, stain);
+      if (dirt >= 2 && i % 2 === 0) g.r(px + 1, py + g.u(2), w2 - 1, g.u(1), stainLo);
+    }
+    // 鞋印（成對，實色）
+    for (let i = 0; i < dirt + 1; i++) {
+      const fx = cx - g.u(8) + i * g.u(6);
       const fy = g.u(6) + i * g.u(3);
       g.r(fx, fy, g.u(2), g.u(3), stain);
       g.r(fx + g.u(4), fy + g.u(2), g.u(2), g.u(3), stain);
       g.r(fx, fy, g.u(2), 1, 'wood_dark');
     }
   }
-  // 鎢絲燈由上而下的明暗（網點；燈光固定為暖黃）
-  g.dith(2, H - 6, W - 4, 3, pal.trimDark, 'clear', DITHER.sparse);
-  g.dith(4, 1, W - 8, 3, 'lamp_hi', 'clear', DITHER.sparse);
-  // 邊界描邊
-  g.line(1, THH, cx, H, seam);
-  g.line(cx, H, W - 1, THH, seam);
-  g.line(1, THH, cx, 0, seam);
-  g.line(cx, 0, W - 1, THH, seam);
+  // 鎢絲燈由上而下的明暗：上下各一道 2px 實色帶（不用網點，也不用 1px 細線）
+  g.r(4, H - 6, W - 8, 2, shade(base, 'black', 0.12));
+  g.r(6, 2, W - 12, 2, shade(base, 'white', 0.1));
+  // 邊界描邊（1px 實色暗邊：基色暗 20%）
+  const edgeCol = pal.floorEdge || seam;
+  g.line(1, THH, cx, H, edgeCol);
+  g.line(cx, H, W - 1, THH, edgeCol);
+  g.line(1, THH, cx, 0, edgeCol);
+  g.line(cx, 0, W - 1, THH, edgeCol);
 }
 
 function paintKitchenTile(c, o) {
@@ -1370,10 +1393,10 @@ function paintKitchenTile(c, o) {
   // 排水孔 / 不鏽鋼格柵
   if (o.variant === 2) {
     g.dia(cx, THH - g.u(2), g.u(6), g.u(4), 'metal_sh');
-    g.dith(cx - g.u(3), THH - g.u(2), g.u(7), g.u(4), 'metal_lo', 'clear', DITHER.sparse);
+    g.r(cx - g.u(3), THH - g.u(2), g.u(7), 1, 'metal_lo');
     for (let i = 0; i < 3; i++) g.r(cx - g.u(2) + i * g.u(2), THH - g.u(1), 1, g.u(3), 'metal_hi');
   }
-  g.dith(2, H - 5, W - 4, 2, 'metal_sh', 'clear', DITHER.sparse);
+  g.r(2, H - 4, W - 4, 1, 'metal_sh');
   g.line(1, THH, cx, H, 'metal_sh');
   g.line(cx, H, W - 1, THH, 'metal_sh');
   g.line(1, THH, cx, 0, 'metal_lo');
@@ -1394,21 +1417,21 @@ function paintRestroomTile(c, o) {
   // 排水孔（每 4 格一個）
   if (v === 1) {
     g.dia(cx, THH - g.u(2), g.u(6), g.u(4), 'metal_sh');
-    g.dith(cx - g.u(3), THH - g.u(2), g.u(6), g.u(4), 'metal_lo', 'clear', DITHER.b25);
+    g.r(cx - g.u(3), THH - g.u(2), g.u(6), 1, 'metal_lo');
     for (let i = 0; i < 3; i++) g.r(cx - g.u(2) + i * g.u(2), THH - g.u(1), 1, g.u(3), 'metal_hi');
   }
   if (v === 2) {
     g.dia(cx, THH - g.u(2), g.u(7), g.u(4), 'tile_lo');
-    g.dith(cx - g.u(3), THH - g.u(2), g.u(7), g.u(4), 'metal_lo', 'clear', DITHER.b25);
+    g.r(cx - g.u(3), THH - g.u(2), g.u(7), 1, 'metal_lo');
   }
-  // 廁所污漬（dirt 0..3 桶）
+  // 廁所污漬（dirt 0..3 桶）：實色污塊
   const dirt = Math.max(0, Math.min(3, o.dirt | 0));
   if (dirt > 0) {
     const stain = mixHex('#a8c2c8', '#5a4a28', 0.6);
     for (let i = 0; i < dirt * 2; i++) {
       const px = cx - g.u(8) + ((v * 5 + i * 7) % g.u(16));
       const py = g.u(3) + ((v * 3 + i * 5) % g.u(13));
-      g.dith(px, py, g.u(4) + (i & 1), g.u(3), stain, 'clear', i & 1 ? DITHER.b50 : DITHER.b37);
+      g.r(px, py, g.u(3) + (i & 1), g.u(2), stain);
     }
   }
   g.dith(2, H - 5, W - 4, 2, 'tile_lo', 'clear', DITHER.sparse);
@@ -1468,26 +1491,47 @@ function paintWallBody(g, h, opts) {
   const right = opts.right || P.wallLo;
   const yMid = THH;
   const yBot = TILE_H;
-  // 側面
+  // 側面：扎實純色平塗（左面 = 基色、右面 = 基色 −18%），完全不用網點
   g.poly([[WALL_XL, yMid], [cx, yBot], [cx, yBot + h], [WALL_XL, yMid + h]], left);
   g.poly([[cx, yBot], [WALL_XR, yMid], [WALL_XR, yMid + h], [cx, yBot + h]], right);
-  // 踢腳／護牆板（跟著地點地板色走）
+  // 磚縫：1px 實色暗線（基色 −25%），沿等角方向切兩段
+  const seamCol = P.wallSeam || shade(left, 'black', 0.25);
+  const seamA = [WALL_XL, yMid + Math.round(h * 0.42)];
+  const seamB = [cx, yBot + Math.round(h * 0.42)];
+  const seamC = [WALL_XR, yMid + Math.round(h * 0.42)];
+  g.line(seamA[0], seamA[1], seamB[0], seamB[1], seamCol);
+  g.line(seamB[0], seamB[1], seamC[0], seamC[1], seamCol);
+  const seamD = [WALL_XL, yMid + Math.round(h * 0.78)];
+  const seamE = [cx, yBot + Math.round(h * 0.78)];
+  const seamF = [WALL_XR, yMid + Math.round(h * 0.78)];
+  if (seamD[1] < yMid + h - 3) g.line(seamD[0], seamD[1], seamE[0], seamE[1], seamCol);
+  if (seamE[1] < yBot + h - 3) g.line(seamE[0], seamE[1], seamF[0], seamF[1], seamCol);
+  // 踢腳／護牆板（跟著地板色走）
   const wain = Math.min(g.u(7), Math.max(g.u(3), Math.round(h * 0.34)));
   g.poly([[WALL_XL, yMid + h - wain], [cx, yBot + h - wain], [cx, yBot + h], [WALL_XL, yMid + h]], P.trim);
   g.poly([[cx, yBot + h - wain], [WALL_XR, yMid + h - wain], [WALL_XR, yMid + h], [cx, yBot + h]], P.trimDark);
-  for (let i = 0; i < 4; i++) {
-    const x = WALL_XL + g.u(3) + i * g.u(5);
-    g.line(x, yMid + h - wain + 1, x, yBot + h - 1, P.trimDark);
+  // 護牆板壓條：2px 實色（避免 1px 細線把實色塊切碎）
+  for (let i = 0; i < 3; i++) {
+    const x = WALL_XL + g.u(4) + i * g.u(7);
+    g.r(x, yMid + h - wain + 1, 2, Math.max(1, yBot + h - 1 - (yMid + h - wain + 1)), P.trimDark);
   }
   g.line(WALL_XL, yBot + h - wain, cx, yBot + h - wain, P.trimDark);
   g.line(cx, yBot + h - wain, WALL_XR, yMid + h - wain, 'wood_dark');
-  // 網點明暗（鎢絲燈由上方來）
-  g.dith(WALL_XL + 1, yMid + 1, (cx - WALL_XL) - 1, Math.max(1, h - g.u(4)), 'lamp_hi', 'clear', DITHER.sparse);
-  g.dith(cx + 2, yMid + 1, (WALL_XR - cx) - 2, Math.max(1, h - g.u(4)), P.wallSh, 'clear', DITHER.sparse);
+  // 明暗：實色帶（上緣受光 = 基色 +12%、下緣壓暗 = 基色 −18%），不用網點
+  g.poly([[WALL_XL + 2, yMid + 2], [cx, yBot + 2], [cx, yBot + g.u(2)], [WALL_XL + 2, yMid + g.u(2)]], shade(left, 'white', 0.12));
+  g.poly([[cx + 2, yBot + g.u(1)], [WALL_XR - 2, yMid + g.u(1)], [WALL_XR - 2, yMid + g.u(3)], [cx + 2, yBot + g.u(3)]], P.wallLo);
+  // 垂直刷痕：每 4–6 格一道（由 seed 決定），2px 實色；其餘牆面保持乾淨純色
+  const sd = ((opts.seed | 0) % 6 + 6) % 6;
+  if (sd === 0 || sd === 3) {
+    const bx = WALL_XL + 3 + (sd === 0 ? g.u(4) : g.u(11));
+    g.r(bx, yMid + g.u(3), 2, Math.max(1, yBot + h - wain - (yMid + g.u(3))), shade(left, 'black', 0.12));
+  } else if (sd === 1) {
+    g.r(cx + g.u(6), yMid + g.u(4), 2, Math.max(1, yBot + h - wain - (yMid + g.u(4))), shade(right, 'black', 0.14));
+  }
   // 頂面
   g.dia(cx, 0, TILE_W - 2, TILE_H - 2, top);
-  g.dith(WALL_XL + 2, 2, TILE_W - 6, 5, 'lamp_hi', 'clear', DITHER.sparse);
-  g.dith(WALL_XL + 2, TILE_H - 8, TILE_W - 6, 5, P.wallSh, 'clear', DITHER.sparse);
+  g.r(WALL_XL + 3, 2, TILE_W - 8, 1, shade(top, 'white', 0.14));
+  g.r(WALL_XL + 3, TILE_H - 5, TILE_W - 8, 1, P.wallSh);
   // 描邊
   g.line(WALL_XL, yMid, cx, yBot, 'outline');
   g.line(cx, yBot, WALL_XR, yMid, 'outline');
@@ -1497,9 +1541,9 @@ function paintWallBody(g, h, opts) {
   g.line(WALL_XR, yMid, WALL_XR, yMid + h, 'outline');
   g.line(WALL_XL, yMid, cx, 0, 'outline');
   g.line(cx, 0, WALL_XR, yMid, 'outline');
-  // 壁燈（有開燈時牆面上一點暖光）
+  // 壁燈（有開燈時牆面上一點暖光）：實色小方塊
   if (opts.glow) {
-    g.dith(WALL_XL + 2, yMid + g.u(4), g.u(4), g.u(3), 'lamp', 'clear', DITHER.sparse);
+    g.r(WALL_XL + 3, yMid + g.u(4), g.u(3), g.u(2), 'lamp');
   }
   // 窗
   if (opts.window) {
@@ -1516,7 +1560,7 @@ function paintWall(c, o) {
   const g = mkPainter(c, WALL_CW, false);
   paintWallBody(g, o.h, {
     window: o.window, face: o.face, tod: o.tod, glow: o.glow, frost: o.frost, frame: o.frame,
-    top: o.top, left: o.left, right: o.right, pal: o.pal,
+    top: o.top, left: o.left, right: o.right, pal: o.pal, seed: o.seed,
   });
 }
 
@@ -1635,9 +1679,11 @@ export function drawTile(ctx, tile, sx, sy, opts = {}) {
   const face = o.face || 'both';
   // 只有會動的牆類（門／出餐口／霓虹窗）才把影格放進快取鍵，純牆面不做無謂重繪
   const kframe = kind === 'wall' ? (o.window ? (frame & 3) : 0) : (frame & 1);
-  const key = `w|${kind}|${h}|${variant}|${face}|${o.window ? 1 : 0}|${o.tod || 'night'}|${kframe}|${o.frost ? 1 : 0}|${pk}`;
+  // 牆面刷痕用 seed 決定（每 4–6 格一道），因此 seed 也要進快取鍵
+  const seed = kind === 'wall' ? (((o.seed | 0) % 6) + 6) % 6 : 0;
+  const key = `w|${kind}|${h}|${variant}|${face}|${o.window ? 1 : 0}|${o.tod || 'night'}|${kframe}|${o.frost ? 1 : 0}|${pk}|s${seed}`;
   const paint = (c) => {
-    if (kind === 'wall') paintWall(c, { h, variant, face, window: o.window, tod: o.tod, glow: o.glow, pal, frost: o.frost, frame: o.frame });
+    if (kind === 'wall') paintWall(c, { h, variant, face, window: o.window, tod: o.tod, glow: o.glow, pal, frost: o.frost, frame: o.frame, seed });
     else if (kind === 'door') paintDoor(c, { h, variant, frame, pal });
     else paintPass(c, { h, variant, frame, pal });
   };
@@ -1748,7 +1794,7 @@ function paintTable(g, geo, o) {
   const topFill = o.topFill || 'cloth_cream';
   const isCloth = topFill === 'cloth_cream' || topFill === 'cloth_white';
   const OL = 'furn_outline';
-  const topEdge = o.topEdge || (isCloth ? shade(topFill, '#000000', 0.30) : mixHex(PALETTE.top_dark, PALETTE.wood_md, 0.45));
+  const topEdge = o.topEdge || (isCloth ? shade(topFill, '#000000', 0.20) : mixHex(PALETTE.top_dark, PALETTE.wood_md, 0.45));
   const hem = isCloth ? 'cloth_hem' : null;
   const legCol = o.legCol || (isCloth ? 'wood_lo' : 'wood_sh');
   baseShadow(g, geo, 0.98);
@@ -1767,7 +1813,7 @@ function paintTable(g, geo, o) {
   leg(g, geo.cx, topY + th - 3, geo.gy + bh2 - 2, 'wood_sh', OL);
 
   // ── 桌板：1px 外框（上表面 + 板厚下緣各一圈）→ 桌裙 → 板厚側面 → 上表面 ──
-  const skirt = isCloth ? shade(topFill, '#000000', 0.42) : mixHex(PALETTE.top_dark, '#000000', 0.5);
+  const skirt = isCloth ? shade(topFill, '#000000', 0.22) : mixHex(PALETTE.top_dark, '#000000', 0.5);
   if (round) {
     const rx = tw / 2;
     const ry = th / 2;
@@ -1784,8 +1830,8 @@ function paintTable(g, geo, o) {
       // 雙色調網點編織紋（不是平塗）：兩色交錯的 bayer 織紋 + 滾邊
       g.ell(geo.cx, topCy, rx - 2, ry - 1, hem);
       g.ell(geo.cx, topCy, rx - 3, ry - 2, topFill);
-      g.dith(geo.cx - rx * 0.7, topCy - ry * 0.5, rx * 1.4, ry, mixHex(topFill, '#000000', 0.16), 'clear', DITHER.b25);
-      g.dith(geo.cx - rx * 0.5, topCy - ry * 0.2, rx, Math.max(1, ry * 0.6), mixHex(topFill, '#ffffff', 0.30), 'clear', DITHER.b37);
+      g.dith(geo.cx - rx * 0.7, topCy - ry * 0.5, rx * 1.4, ry, mixHex(topFill, '#000000', 0.11), 'clear', DITHER.b25);
+      g.dith(geo.cx - rx * 0.5, topCy - ry * 0.2, rx, Math.max(1, ry * 0.6), mixHex(topFill, '#ffffff', 0.40), 'clear', DITHER.b37);
     }
     g.dith(geo.cx - rx / 2, topCy - ry + 1, rx, Math.max(1, ry - 1), 'lamp_hi', 'clear', DITHER.sparse);
   } else {
@@ -1799,8 +1845,8 @@ function paintTable(g, geo, o) {
       g.dia(geo.cx, topY + 1, tw - 2, th - 2, hem); // 桌布滾邊
       g.dia(geo.cx, topY + 2, tw - 4, th - 4, topFill);
       // 雙色調網點編織紋
-      g.dith(geo.cx - tw / 4, topY + 2, tw / 2, Math.max(2, th - 6), mixHex(topFill, '#000000', 0.16), 'clear', DITHER.b25);
-      g.dith(geo.cx - tw / 6, topY + 3, tw / 3, Math.max(2, th - 8), mixHex(topFill, '#ffffff', 0.30), 'clear', DITHER.b37);
+      g.dith(geo.cx - tw / 4, topY + 2, tw / 2, Math.max(2, th - 6), mixHex(topFill, '#000000', 0.11), 'clear', DITHER.b25);
+      g.dith(geo.cx - tw / 6, topY + 3, tw / 3, Math.max(2, th - 8), mixHex(topFill, '#ffffff', 0.40), 'clear', DITHER.b37);
     } else {
       // 深色木桌的木紋（淡一階，但維持整體偏暗）
       g.line(geo.cx - tw / 4, topY + 2, geo.cx + tw / 4, topY + th / 2, mixHex(PALETTE.top_dark, PALETTE.wood_md, 0.35));
@@ -3640,70 +3686,75 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
     return;
   }
   if (kind === 'cloudy') {
-    ditherPattern(ctx, 0, 0, W, H, 'gray_30', 'clear', DITHER.b12);
-    for (let i = 0; i < 4; i++) {
-      const y = ((i * 46 + t * 0.12) % (H + 60)) - 30;
-      ditherPattern(ctx, 0, y, W, 26, 'gray_15', 'clear', DITHER.b25);
-      ditherPattern(ctx, 0, y + 26, W, 10, 'gray_70', 'clear', DITHER.b12);
+    ditherPattern(ctx, 0, 0, W, H, 'gray_30', 'clear', DITHER.block12);
+    for (let i = 0; i < 3; i++) {
+      const y = ((i * 62 + t * 0.12) % (H + 80)) - 40;
+      ditherPattern(ctx, 0, y, W, 34, 'gray_15', 'clear', DITHER.block50);
+      ctx.fillStyle = color('gray_70');
+      ctx.fillRect(0, Math.round(y + 34), W, 2);
+      ctx.fillRect(0, Math.round(y - 2), W, 2);
     }
     return;
   }
   if (kind === 'rain' || kind === 'storm') {
     const storm = kind === 'storm';
-    ditherPattern(ctx, 0, 0, W, H, storm ? 'outline_cool' : 'sky_lo', 'clear', storm ? DITHER.b37 : DITHER.b25);
-    const n = storm ? 340 : 190;
+    // 大面積改用 2×2 塊狀網點（同覆蓋率但不會滿畫面細點）
+    ditherPattern(ctx, 0, 0, W, H, storm ? 'outline_cool' : 'sky_lo', 'clear', storm ? DITHER.block25 : DITHER.block12);
+    const n = storm ? 210 : 120;
     const light = storm ? 'sky_hi' : 'sky_md';
     const dark = storm ? 'sky' : 'sky_lo';
     for (let i = 0; i < n; i++) {
       const sp = (storm ? 620 : 380) + hash1(i * 3 + 1) * 420;
       const bx = hash1(i * 5 + 2) * (W + 140) - 70;
-      const len = storm ? 9 : 6;
+      const len = storm ? 11 : 8;
       const y = ((hash1(i * 7 + 3) * (H + 70) + t * sp * 0.016) % (H + 70)) - 35;
       const x = bx + y * 0.22;
+      // 2px 寬的雨絲（乾淨的斜線筆觸，不是 1px 雜點）
       ctx.fillStyle = color(i % 3 === 0 ? light : dark);
-      ctx.fillRect(Math.round(x), Math.round(y), 1, len);
-      ctx.fillRect(Math.round(x + 1), Math.round(y + len - 2), 1, len - 2);
+      ctx.fillRect(Math.round(x), Math.round(y), 2, len);
     }
     // 地面水花
-    for (let i = 0; i < (storm ? 60 : 34); i++) {
+    for (let i = 0; i < (storm ? 34 : 20); i++) {
       const sx = (hash1(i * 13 + 4) * W + t * 0.6) % W;
       const sy = H - 4 - hash1(i * 17 + 6) * 26;
       const phase = (t * 0.25 + i) % 3 | 0;
       ctx.fillStyle = color(phase === 0 ? 'sky_hi' : 'sky_md');
-      ctx.fillRect(Math.round(sx) - phase, Math.round(sy), 2 + phase * 2, 1);
+      ctx.fillRect(Math.round(sx) - phase * 2, Math.round(sy), 4 + phase * 3, 2);
     }
     if (storm && t % 190 < 3) {
-      ditherPattern(ctx, 0, 0, W, H, 'white', 'sky_hi', DITHER.b62);
+      ditherPattern(ctx, 0, 0, W, H, 'white', 'sky_hi', DITHER.block50);
     }
     return;
   }
   if (kind === 'cold') {
     vignette(ctx, W, H, 'sky_lo', 'clear', 24);
-    ditherPattern(ctx, 0, H * 0.5, W, H * 0.5, 'sky_hi', 'clear', DITHER.sparse);
-    for (let i = 0; i < 46; i++) {
+    ditherPattern(ctx, 0, H * 0.5, W, H * 0.5, 'sky_hi', 'clear', DITHER.block12);
+    for (let i = 0; i < 30; i++) {
       const x = (hash1(i * 9 + 2) * W + Math.sin(t * 0.01 + i) * 8) % W;
       const y = (hash1(i * 15 + 8) * H + t * 0.22) % H;
-      // 空中飄雪只畫在畫面下半（天空帶保持乾淨）
+      // 空中飄雪只畫在畫面下半（天空帶保持乾淨）；2px 雪花（塊狀而非細點）
       if (y < H * 0.28) continue;
       ctx.fillStyle = color(i % 4 === 0 ? 'white' : 'sky_hi');
-      ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+      ctx.fillRect(Math.round(x), Math.round(y), 2, 2);
     }
     return;
   }
-  // heat：只做「地面上方」的細橫向熱氣扭曲 + 邊緣暖色暗角（不再整片覆蓋）
+  // heat：只做「地面上方」的粗橫向熱氣帶 + 邊緣暖色暗角（不再整片覆蓋）
   vignette(ctx, W, H, 'lamp_sh', 'clear', 24);
   const yBase = Math.round(H * 0.55);
-  ditherPattern(ctx, 0, yBase, W, H - yBase, 'lamp_md', 'clear', DITHER.sparse);
-  // 5 條細熱氣帶（短段、間隔、低對比，底下的像素仍清楚）
+  ditherPattern(ctx, 0, yBase, W, H - yBase, 'lamp_md', 'clear', DITHER.block12);
+  // 5 條 2px 粗熱氣帶（短段、間隔、低對比，底下的像素仍清楚）
   for (let b = 0; b < 5; b++) {
     const y = yBase + Math.round(((H - yBase) * b) / 5 + Math.sin(t * 0.08 + b * 1.3) * 2);
     let x = -20 + ((b * 53 + (t >> 1)) % 60);
     while (x < W) {
-      const seg = 26 + ((b * 17 + x) % 34);
-      ditherRect(ctx, x, y, Math.min(seg, W - x), 1, 'lamp_hi', 'clear', DITHER.sparse);
-      x += seg + 30 + ((b * 7) % 24);
+      const seg = 34 + ((b * 17 + x) % 42);
+      ctx.fillStyle = color('lamp_hi');
+      ctx.fillRect(x, y, Math.min(seg, W - x), 2);
+      x += seg + 34 + ((b * 7) % 24);
     }
-    ditherRect(ctx, 0, y + 3, W, 1, 'lamp_sh', 'clear', DITHER.sparse);
+    ctx.fillStyle = color('lamp_sh');
+    ctx.fillRect(0, y + 4, W, 1);
   }
 }
 
@@ -4183,11 +4234,15 @@ function paintKitchenPropBody(g, k, bx, by, o, fr) {
 }
 
 /**
- * 牆腳環境光遮蔽覆蓋片：整格壓暗 + 指定邊的 3 段暗帶（快取成 sprite，1 次 drawImage）。
+ * 牆腳環境光遮蔽覆蓋片：整格淡淡壓暗 ＋ 貼牆那幾排較密的暗帶（快取成 sprite，1 次 drawImage）。
+ * 全部只用 `shadow` 一種墨色（不留淺色內線）→ fx.ao = false 時是「完全沒有痕跡」。
+ * 密度：整格 b50、貼牆側 3 排實色暗邊 ＋ 1 排 b75；玩家反映細點太雜，但壓暗幅度必須足夠
+ * （貼牆地板格要暗 ≥ 5），所以用較深的墨色 `shadow_deep` ＋ 保持這個密度而不是降到 b12。
  * @param {number} edges bit0=N bit1=W bit2=S bit3=E
  */
 export function drawAOOverlay(ctx, cx, cy, edges) {
   if (!ctx || !edges) return;
+  const AO_INK = 'shadow_deep';
   const w = TILE_W + 2;
   const h = TILE_H + 2;
   const key = `ao|${edges & 15}`;
@@ -4195,31 +4250,25 @@ export function drawAOOverlay(ctx, cx, cy, edges) {
     const g = mkPainter(c, w, false);
     const mx = w / 2;
     const my = h / 2;
-    // 整格淡淡壓暗 + 貼牆那幾排更密的暗帶（網點，硬邊、不用漸層）
-    g.diaMask(mx, 1, TILE_W - 2, TILE_H - 2, 'shadow', DITHER.b50);
+    g.diaMask(mx, 1, TILE_W - 2, TILE_H - 2, AO_INK, DITHER.b50);
+    // 貼牆那一側：整條邊往內側連畫 4 排實色暗線（第 4 排減半密度做漸層），
+    // 這是 AO 的主要壓暗來源 —— 實色暗線比堆細網點乾淨，也保證貼牆格暗 ≥ 5。
     const band = (x0, y0, x1, y1, toward) => {
-      for (let i = 0; i < 3; i++) {
-        const t0 = i / 3;
-        const t1 = (i + 1) / 3;
-        const ax = x0 + (x1 - x0) * t0;
-        const ay = y0 + (y1 - y0) * t0;
-        const bx = x0 + (x1 - x0) * t1;
-        const by = y0 + (y1 - y0) * t1;
-        const sx = Math.round(Math.min(ax, bx));
-        const sy = Math.round((ay + by) / 2) + toward * i;
-        const ww = Math.max(2, Math.round(Math.abs(bx - ax)) + 1);
-        const p = i === 0 ? DITHER.b75 : i === 1 ? DITHER.b62 : DITHER.b50;
-        const row = p[((sy % 4) + 4) % 4];
-        let run = 0;
-        for (let k = 0; k < ww; k++) {
-          const on = row.charCodeAt((((sx + k) % 4) + 4) % 4) === 49;
-          if (on) run++;
-          else if (run) {
-            g.raw(sx + k - run, sy, run, 1, 'shadow');
-            run = 0;
+      for (let i = 0; i < 4; i++) {
+        // 往格子內側縮 5px 起畫：牆面貼圖會蓋掉最外側約 6px，畫在那裡等於白畫
+        const off = toward * (i + 5);
+        if (i < 3) {
+          g.line(x0, y0 + off, x1, y1 + off, AO_INK);
+        } else {
+          // 最內側一排用 b50 斷點收尾（避免暗帶邊緣太硬）
+          const steps = Math.max(2, Math.round(Math.abs(x1 - x0) / 2));
+          for (let k = 0; k < steps; k += 2) {
+            const t = k / steps;
+            const nx = Math.round(x0 + (x1 - x0) * t);
+            const ny = Math.round(y0 + (y1 - y0) * t);
+            g.p(nx, ny + off, AO_INK);
           }
         }
-        if (run) g.raw(sx + ww - run, sy, run, 1, 'shadow');
       }
     };
     if (edges & 1) band(mx - TILE_W / 2, my, mx, my - TILE_H / 2, 1);

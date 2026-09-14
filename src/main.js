@@ -1097,7 +1097,7 @@ function main() {
       const target = store.getState();
       for (let d = 0; d < days; d++) {
         if (target.phase === 'closed') store.dispatch({ type: 'NEXT_DAY' });
-        // 自動補貨，讓快轉測試可以一直跑下去
+        // 測試用：自動補貨讓快轉測試可以一直跑下去
         for (const entry of target.menu.filter((m) => m.active)) {
           if ((target.stock[entry.dishId] || 0) < 40) {
             store.dispatch({ type: 'BUY_STOCK', dishId: entry.dishId, servings: 80 });

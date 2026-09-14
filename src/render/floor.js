@@ -49,6 +49,17 @@ const QUEUE_MAT = 'pave_hi';
 const QUEUE_MAT_LO = 'pave_joint';
 const QUEUE_FOOT = 'pave_curb';
 
+/**
+ * 大面積色調一律改用 2×2 塊狀網點（同覆蓋率、不會滿畫面細點）。
+ * 玩家反映 "there are many dot here"。
+ */
+const BLOCKY = {
+  b12: 'block12', sparse: 'block12',
+  b25: 'block25', b37: 'block25',
+  b50: 'block50', checker: 'block50',
+  b62: 'block50', b75: 'block50', b87: 'block50', dense: 'block50',
+};
+
 const EMPTY_LAYOUT = Object.freeze({
   gridW: GRID_W, gridH: GRID_H, tiles: [], items: [], entrances: [], passTiles: [], restroom: null,
 });
@@ -93,26 +104,69 @@ export function paletteSpecOf(state, view) {
   return null;
 }
 
-const PAL_MEMO = { id: '', spec: null, pal: null };
+const PAL_MEMO = { id: '', spec: null, pal: null, custom: '' };
+
+/** 內建預設的牆／地板色（＝settings 的預設值；玩家沒改就沿用場地配色）。 */
+export const DEFAULT_WALL_COLOR = '#c9a26b';
+export const DEFAULT_FLOOR_COLOR = '#8c6a44';
+
+/** 只接受 #rgb / #rrggbb。 */
+function normHex(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  if (s.charCodeAt(0) !== 35) return null;
+  if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(s)) return null;
+  return s.toLowerCase();
+}
+
+/**
+ * 玩家自訂的牆／地板色（state.settings.wallColor / floorColor，UI 的配色分頁）。
+ * 回傳 null 表示「沒改過」→ 沿用場地配色，這樣換地點仍然看得出差異。
+ */
+export function customColorsOf(state) {
+  const S = isObj(state) ? state : null;
+  const set = S && isObj(S.settings) ? S.settings : null;
+  if (!set) return null;
+  const w = normHex(set.wallColor);
+  const f = normHex(set.floorColor);
+  const wall = w && w !== DEFAULT_WALL_COLOR.toLowerCase() ? w : null;
+  const floor = f && f !== DEFAULT_FLOOR_COLOR.toLowerCase() ? f : null;
+  if (!wall && !floor) return null;
+  return { wall, floor };
+}
 
 /**
  * 解析本場地要用的地板／牆面配色，回傳 sprites.js 的 tile palette
- * （含 key，供 sprite 快取分區）；沒有地點配色時回傳預設色階（完全不變色）。
+ * （含 key，供 sprite 快取分區）。
+ * 優先序：view/state 明確給的 palette ＞ state.settings 自訂色 ＞ 場地配色 ＞ 預設色階。
  */
 export function resolveTilePalette(state, view) {
   const spec = paletteSpecOf(state, view);
   const id = isObj(state) && typeof state.locationId === 'string' ? state.locationId : '';
-  if (PAL_MEMO.spec === spec && PAL_MEMO.id === id && PAL_MEMO.pal) return PAL_MEMO.pal;
-  const use = spec || LOCATION_PALETTE[id] || null;
+  const custom = customColorsOf(state);
+  const customKey = custom ? `${custom.wall || ''}/${custom.floor || ''}` : '';
+  if (PAL_MEMO.spec === spec && PAL_MEMO.id === id && PAL_MEMO.custom === customKey && PAL_MEMO.pal) return PAL_MEMO.pal;
+  const base = spec || LOCATION_PALETTE[id] || null;
+  const use = custom
+    ? {
+      sky: base && base.sky,
+      wall: custom.wall || (base && base.wall) || DEFAULT_WALL_COLOR,
+      floor: custom.floor || (base && base.floor) || DEFAULT_FLOOR_COLOR,
+      accent: base && base.accent,
+    }
+    : base;
   let pal = DEFAULT_TILE_PAL;
   if (use) {
-    const key = spec
-      ? `v:${id}:${use.floor || ''}:${use.wall || ''}:${use.accent || ''}`
+    const key = custom
+      ? `c:${use.wall}:${use.floor}:${use.accent || ''}`
+      : spec
+        ? `v:${id}:${use.floor || ''}:${use.wall || ''}:${use.accent || ''}`
       : `L:${id}`;
     pal = makeTilePalette(use, key);
   }
   PAL_MEMO.id = id;
   PAL_MEMO.spec = spec;
+  PAL_MEMO.custom = customKey;
   PAL_MEMO.pal = pal;
   return pal;
 }
@@ -583,7 +637,8 @@ export class FloorRenderer {
     }
     for (let i = 0; i < T.layers.length; i++) {
       const ly = T.layers[i];
-      ditherPattern(ctx, minX, minY, maxX - minX, maxY - minY, ly.c, 'clear', ly.p);
+      // 時段色調是「大面積壓暗」→ 用 2×2 塊狀網點（同樣的平均明暗，但不會滿畫面細點）
+      ditherPattern(ctx, minX, minY, maxX - minX, maxY - minY, ly.c, 'clear', BLOCKY[ly.p] || ly.p);
     }
     ctx.restore();
   }
@@ -770,10 +825,32 @@ export class FloorRenderer {
     const H = this.h;
     const ox = this.originX;
     const oy = this.originY;
-    // 店外：暖色柏油／騎樓（刻意比室內地板暗，但遠離全黑，避免整個畫面糊掉）
+    // 店外：大塊實色柏油／騎樓（玩家反映滿地細網點 → 改成實色 + 偶爾的接縫線）
     ctx.fillStyle = color('pave_lo');
     ctx.fillRect(0, 0, W, H);
-    ditherPattern(ctx, 0, 0, W, H, 'pave', 'pave_lo', DITHER.b25);
+    // 柏油：每 4 格一道長接縫 ＋ 幾塊實色修補面（有結構但不是雜點）
+    ctx.strokeStyle = color('pave_joint');
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = -8; i <= gw + 8; i += 4) {
+      const a = tileToScreen(i, -8, ox, oy);
+      const b = tileToScreen(i, gh + 8, ox, oy);
+      ctx.moveTo(a.px, a.py);
+      ctx.lineTo(b.px, b.py);
+    }
+    for (let j = -8; j <= gh + 8; j += 4) {
+      const a = tileToScreen(-8, j, ox, oy);
+      const b = tileToScreen(gw + 8, j, ox, oy);
+      ctx.moveTo(a.px, a.py);
+      ctx.lineTo(b.px, b.py);
+    }
+    ctx.stroke();
+    ctx.fillStyle = color('pave');
+    for (let i = 0; i < 6; i++) {
+      const px = ((i * 373) % (W - 120)) - 20;
+      const py = ((i * 211) % (H - 90)) - 20;
+      ctx.fillRect(px, py, 90 + (i % 3) * 30, 34 + (i % 2) * 16);
+    }
 
     const pad = 3; // 店外留 3 格騎樓／柏油
     const pw = gw + pad * 2;
@@ -781,33 +858,32 @@ export class FloorRenderer {
     const stall = footprintCenter(-pad, -pad, pw, ph, ox, oy);
     const halfW = ((pw + ph) / 2) * HALF_W;
     const halfH = ((pw + ph) / 2) * HALF_H;
-    // 騎樓本體：再亮一階 + 稀疏亮點，讀起來才像鋪面而不是黑洞
-    this._ditherDiamond(ctx, stall.px, stall.py - halfH, halfW * 2, halfH * 2, 'pave', DITHER.b50);
-    this._ditherDiamond(ctx, stall.px, stall.py - halfH, halfW * 2, halfH * 2, 'pave_hi', DITHER.b25);
-    // 騎樓地磚接縫（等角方向的兩組線；比鋪面暗一階但不至於變黑）
+    // 騎樓本體：一整塊實色鋪面（亮一階），外圈才是較暗的柏油
+    this._ditherDiamond(ctx, stall.px, stall.py - halfH, halfW * 2, halfH * 2, 'pave', DITHER.solid);
+    // 騎樓地磚接縫：每 2 格一道（乾淨的等角格線，不是密集網點）
     ctx.strokeStyle = color('pave_lo');
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let i = -pad; i <= gw + pad; i++) {
+    for (let i = -pad; i <= gw + pad; i += 2) {
       const a = tileToScreen(i, -pad, ox, oy);
       const b = tileToScreen(i, gh + pad - 1, ox, oy);
       ctx.moveTo(a.px, a.py);
       ctx.lineTo(b.px, b.py);
     }
-    for (let j = -pad; j <= gh + pad; j++) {
+    for (let j = -pad; j <= gh + pad; j += 2) {
       const a = tileToScreen(-pad, j, ox, oy);
       const b = tileToScreen(gw + pad - 1, j, ox, oy);
       ctx.moveTo(a.px, a.py);
       ctx.lineTo(b.px, b.py);
     }
     ctx.stroke();
-    // 建物落在地面的硬邊影子（網點，不用漸層）→ view.fx.outsideShade
+    // 建物落在地面的硬邊影子：用「實色陰影舖面」而不是大面積網點 → view.fx.outsideShade
     if (outsideShade) {
-      const sp = 1;
+      const sp = 3; // 影子比建物外擴 3 格（店外鋪面暗 ≥ 2 的幅度）
       const pws = gw + sp * 2;
       const phs = gh + sp * 2;
       const s2 = footprintCenter(-sp, -sp, pws, phs, ox, oy);
-      this._ditherDiamond(ctx, s2.px, s2.py - ((pws + phs) / 2) * HALF_H + 5, ((pws + phs) / 2) * HALF_W * 2, ((pws + phs) / 2) * HALF_H * 2, 'shadow', DITHER.b50);
+      this._ditherDiamond(ctx, s2.px, s2.py - ((pws + phs) / 2) * HALF_H + 5, ((pws + phs) / 2) * HALF_W * 2, ((pws + phs) / 2) * HALF_H * 2, 'pave_shade', DITHER.solid);
     }
     // 路緣：外圈深色 + 上緣亮一階
     ctx.strokeStyle = color('pave_curb');
@@ -1028,11 +1104,11 @@ export class FloorRenderer {
       const w = maxX - minX;
       const h = maxY - minY;
       const band = Math.round(Math.min(w, h) * 0.22);
-      // 上緣／下緣／左右緣（pattern 填色：1 次 fillRect／每條帶）
-      ditherPattern(ctx, minX, minY, w, band, 'shadow', 'clear', DITHER.b12);
-      ditherPattern(ctx, minX, maxY - band, w, band, 'shadow', 'clear', DITHER.b25);
-      ditherPattern(ctx, minX, minY, band, h, 'shadow', 'clear', DITHER.b25);
-      ditherPattern(ctx, maxX - band, minY, band, h, 'shadow', 'clear', DITHER.b12);
+      // 上緣／下緣／左右緣（pattern 填色：1 次 fillRect／每條帶；塊狀網點避免細點）
+      ditherPattern(ctx, minX, minY, w, band, 'shadow', 'clear', DITHER.block12);
+      ditherPattern(ctx, minX, maxY - band, w, band, 'shadow', 'clear', DITHER.block25);
+      ditherPattern(ctx, minX, minY, band, h, 'shadow', 'clear', DITHER.block25);
+      ditherPattern(ctx, maxX - band, minY, band, h, 'shadow', 'clear', DITHER.block12);
       ctx.restore();
     }
     if (!wantPools) {
@@ -1087,6 +1163,8 @@ export class FloorRenderer {
           wallH: h, face, window: windowOn, tod, frame, pal, frost: windowOn && frost,
           variant: (x * 5 + y * 3) & 3,
           glow: tod === 'night' || tod === 'evening',
+          // 垂直刷痕用（每 4–6 格一道；由座標決定，同格永遠一樣）
+          seed: (x * 7 + y * 5) % 6,
         });
       }
     }

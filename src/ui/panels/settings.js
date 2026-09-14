@@ -510,6 +510,70 @@ export function createSettingsPanel({ store, ui, win }) {   // eslint-disable-li
     { key: 'shafts', label: '晴天窗光光柱', hint: '晴天時從窗戶斜射進來的光柱' }
   ];
 
+  /* ------------------------------------------------------------ 配色 */
+  function buildColorTab() {
+    const PRESETS = [
+      { name: '夜市暖棕', wall: '#c9a26b', floor: '#8c6a44' },
+      { name: '港口灰藍', wall: '#8a9bab', floor: '#6f7d86' },
+      { name: '時尚米白', wall: '#e8e0d0', floor: '#c4b89c' },
+      { name: '百貨淡紫', wall: '#b8a8c8', floor: '#8c7da0' },
+      { name: '森林綠', wall: '#7a9a6e', floor: '#5a7a4e' },
+      { name: '櫻花粉紅', wall: '#d8a0a8', floor: '#b88088' },
+      { name: '深海藍', wall: '#5a7a9a', floor: '#3a5a7a' },
+      { name: '夕陽橘', wall: '#d8a878', floor: '#b88858' }
+    ];
+
+    const wallPreview = h('div', { class: 'color-preview', style: { background: '#c9a26b' } });
+    const floorPreview = h('div', { class: 'color-preview', style: { background: '#8c6a44' } });
+    const wallInput = h('input', { type: 'color', value: '#c9a26b', class: 'color-input' });
+    const floorInput = h('input', { type: 'color', value: '#8c6a44', class: 'color-input' });
+
+    wallInput.addEventListener('input', () => {
+      const v = wallInput.value;
+      wallPreview.style.background = v;
+      dispatch({ type: 'SET_SETTING', key: 'wallColor', value: v });
+    });
+    floorInput.addEventListener('input', () => {
+      const v = floorInput.value;
+      floorPreview.style.background = v;
+      dispatch({ type: 'SET_SETTING', key: 'floorColor', value: v });
+    });
+
+    const presetHost = h('div', { class: 'row wrap', style: { gap: '4px' } });
+    for (const p of PRESETS) {
+      const btn = h('button', {
+        class: 'color-preset', type: 'button', title: p.name,
+        style: { background: 'linear-gradient(135deg, ' + p.wall + ' 50%, ' + p.floor + ' 50%)' }
+      }, p.name);
+      btn.addEventListener('click', () => {
+        wallInput.value = p.wall; floorInput.value = p.floor;
+        wallPreview.style.background = p.wall; floorPreview.style.background = p.floor;
+        dispatch({ type: 'SET_SETTING', key: 'wallColor', value: p.wall });
+        dispatch({ type: 'SET_SETTING', key: 'floorColor', value: p.floor });
+      });
+      presetHost.appendChild(btn);
+    }
+
+    const node = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+      section({ title: '快速預設', children: [presetHost] }).el,
+      section({ title: '自訂顏色', children: [
+        h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, wallPreview, h('span', {}, '牆面'), wallInput),
+        h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, floorPreview, h('span', {}, '地板'), floorInput),
+        hintbox('選擇顏色後即時套用。牆面與地板會用扎實的純色繪製，不再使用網點抖動。')
+      ] }).el
+    );
+
+    function update(state) {
+      const st = state || {};
+      const wc = (st.settings && st.settings.wallColor) || '#c9a26b';
+      const fc = (st.settings && st.settings.floorColor) || '#8c6a44';
+      wallInput.value = wc; floorInput.value = fc;
+      wallPreview.style.background = wc; floorPreview.style.background = fc;
+    }
+    update(liveState());
+    return { el: node, update };
+  }
+
   function buildFxTab() {
     const boxes = new Map();
     const rows = FX_ITEMS.map((item) => {
@@ -563,12 +627,14 @@ export function createSettingsPanel({ store, ui, win }) {   // eslint-disable-li
   const acTab = buildAcTab();
   const musicTab = buildMusicTab();
   const fxTab = buildFxTab();
+  const colorTab = buildColorTab();
 
   const tabset = tabs([
     { id: 'hours', label: '營業', render: () => hoursTab.el },
     { id: 'ac', label: '空調', render: () => acTab.el },
     { id: 'music', label: '音樂與天氣', render: () => musicTab.el },
-    { id: 'fx', label: '畫面', render: () => fxTab.el }
+    { id: 'fx', label: '畫面', render: () => fxTab.el },
+    { id: 'color', label: '配色', render: () => colorTab.el }
   ]);
   el.appendChild(tabset.el);
 
@@ -578,6 +644,7 @@ export function createSettingsPanel({ store, ui, win }) {   // eslint-disable-li
     acTab.update(S);
     musicTab.update(S);
     fxTab.update(S);
+    colorTab.update(S);
   }
 
   try {

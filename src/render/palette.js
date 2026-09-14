@@ -159,14 +159,15 @@ export const PALETTE = {
   hp_warn: '#ffe23c',
   hp_bad: '#ff4a3c',
   shadow: '#241a10',
+  shadow_deep: '#150e07', // 牆腳 AO 專用的深墨色（比 shadow 更沉，少量像素就有足夠壓暗）
   dart: '#8a1a12',
 
   // ── 傢俱輪廓與桌面（提高與木地板的辨識度）────────────────────
   furn_outline: '#1b1208', // 傢俱一律 1px 深色描邊（遠比地板暗）
   top_dark: '#1b1006', // 深色木桌面（宴會大桌；遠比地板暗）
-  cloth_cream: '#f2e8cf', // 淡米白桌布
-  cloth_white: '#f4f2e8', // 純白桌布
-  cloth_hem: '#b8a67c', // 桌布滾邊
+  cloth_cream: '#fffbef', // 淡米白桌布（提亮，讓桌面從壓暗後的地板上跳出來）
+  cloth_white: '#fffef8', // 純白桌布
+  cloth_hem: '#d6c69c', // 桌布滾邊（提亮，配合夜間桌面對地板的對比）
   cushion_red: '#a8241c', // 椅墊（深紅）
   cushion_teal: '#1d7a74', // 椅墊（深青）
   cushion_gry: '#5a5a58', // 椅墊（鐵椅）
@@ -183,8 +184,9 @@ export const PALETTE = {
   puddle_hi: '#8fc8e8',
 
   // ── 店外騎樓／柏油（比室內地板暗，但不可接近全黑）────────────
-  pave: '#4f4436',
-  pave_lo: '#3a3227',
+  pave: '#473d2e',
+  pave_lo: '#332c22',
+  pave_shade: '#1f1a13', // 店外陰影側的鋪面（實色；比 pave/pave_lo 都暗）
   pave_hi: '#665849',
   pave_curb: '#2a2419',
   pave_joint: '#231d14',
@@ -308,6 +310,13 @@ export const DITHER = {
   diag: ['1100', '0110', '0011', '1001'], // 斜紋
   sparse: ['1000', '0000', '0010', '0000'], // 稀疏點
   dense: ['0111', '1111', '1101', '1111'], // 密集點
+  // ── 大顆粒「塊狀」網點：同樣覆蓋率，但讀起來是色塊而不是細點 ──
+  //（玩家反映 "there are many dot here" → 大面積改用這組，或直接改成實色）
+  block12: ['1100', '0000', '0000', '0000'], // 12.5%（2×2 方塊）
+  block25: ['1100', '1100', '0000', '0000'], // 25%（2×2 方塊）
+  block50: ['1100', '1100', '0011', '0011'], // 50%（2×2 棋盤）
+  line2h: ['1111', '1111', '0000', '0000'], // 50%（2px 橫線）
+  line2v: ['1100', '1100', '1100', '1100'], // 50%（2px 直線）
 };
 
 const DITHER_LIST = Object.keys(DITHER);

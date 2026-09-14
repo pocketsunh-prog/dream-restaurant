@@ -78,6 +78,11 @@ export function reduce(state, action) {
       state.settings.fx[action.key] = !!action.on;
       return ok();
     }
+    case 'SET_SETTING': {
+      // 通用設定寫入：state.settings[action.key] = action.value
+      state.settings[action.key] = action.value;
+      return ok();
+    }
     case 'SET_MUSIC': {
       if (!B.MUSIC_NAME[action.id]) return fail('沒有這個曲風');
       state.settings.music = action.id;
@@ -486,13 +491,97 @@ export function reduce(state, action) {
       if (Array.isArray(state.uiQueue) && state.uiQueue.length) state.uiQueue.shift();
       return ok();
     }
+    case 'REBUILD_RESTAURANT': {
+      const cost = 1;
+      if (state.cash < cost) return fail('現金不足（重建只要 NT$ 1）');
+      // 清空現有裝潢
+      state.layout.items = [];
+      state.sim.tables = [];
+      // 頂級開局範本（最大桌、頂級裝潢、全套設備）
+      const items = [
+        { typeId: 'kitchen_stove', x: 1, y: 1 },
+        { typeId: 'kitchen_worktable', x: 3, y: 1 },
+        { typeId: 'kitchen_dishwasher', x: 5, y: 1 },
+        { typeId: 'fridge', x: 6, y: 1 },
+        { typeId: 'ac_unit', x: 0, y: 4 },
+        { typeId: 'ceiling_lamp', x: 10, y: 0 },
+        { typeId: 'stereo', x: 15, y: 0 },
+        { typeId: 'cctv', x: 19, y: 4 },
+        { typeId: 'infrared_sensor', x: 19, y: 5 },
+        { typeId: 'fire_extinguisher', x: 0, y: 8 },
+        { typeId: 'fire_system', x: 19, y: 8 },
+        { typeId: 'security_host', x: 0, y: 9 },
+        { typeId: 'table_6b', x: 1, y: 5 },
+        { typeId: 'table_6b', x: 4, y: 5 },
+        { typeId: 'table_6b', x: 7, y: 5 },
+        { typeId: 'table_6b', x: 10, y: 5 },
+        { typeId: 'table_6b', x: 1, y: 8 },
+        { typeId: 'table_6b', x: 4, y: 8 },
+        { typeId: 'table_6b', x: 7, y: 8 },
+        { typeId: 'table_6b', x: 10, y: 8 },
+        { typeId: 'counter_bar', x: 14, y: 10 },
+        { typeId: 'restroom_toilet', x: 16, y: 1 },
+        { typeId: 'restroom_sink', x: 17, y: 1 },
+        { typeId: 'fountain_small', x: 13, y: 5 },
+        { typeId: 'jukebox', x: 14, y: 7 },
+        { typeId: 'neon_sign', x: 0, y: 6 },
+        { typeId: 'painting_landscape', x: 0, y: 2 },
+        { typeId: 'photo_wall', x: 19, y: 2 },
+        { typeId: 'lantern_row', x: 13, y: 10 }
+      ];
+      let placed = 0;
+      for (const spot of items) {
+        const def = furnitureById(spot.typeId);
+        if (!def) continue;
+        const check = canPlace(state.layout, def.id, spot.x, spot.y);
+        if (!check.ok) continue;
+        const uid = 'rb' + placed;
+        state.layout.items.push({
+          uid, typeId: def.id, x: spot.x, y: spot.y,
+          w: def.w || 1, h: def.h || 1, rot: 0,
+          durability: 100, broken: false
+        });
+        if (def.category === 'table') {
+          // 自動配椅子
+          const tableItem = state.layout.items.find(it => it.uid === uid);
+          tableItem.chairUids = autoPlaceChairs(state, tableItem, (st) => 'rb' + (st.uidSeq = (st.uidSeq || 1) + 1));
+        }
+        placed += 1;
+      }
+      state.cash -= cost;
+      state.kitchen = { stove: 5, fridge: 5, prep: 5 };
+      return withLayoutChange(state, () => ok('已重建頂級餐廳（NT$ 1），共 ' + placed + ' 件頂級設備'));
+    }
+    case 'AUTO_SHIFT': {
+      const open = state.settings.openMinute;
+      const close = state.settings.closeMinute;
+      if (close <= open) return fail('請先設定營業時間');
+      const totalHours = (close - open) / 60;
+      const waiters = state.staff.filter((s) => s.role === 'waiter');
+      const chefs = state.staff.filter((s) => s.role === 'chef');
+      if (!waiters.length && !chefs.length) return fail('沒有員工可以排班');
+      const blockHours = 8;
+      const stepHours = totalHours <= blockHours ? blockHours : Math.max(4, Math.ceil(totalHours / Math.max(1, Math.ceil(totalHours / blockHours))));
+      const numBlocks = Math.max(1, Math.ceil((totalHours - blockHours) / stepHours) + 1);
+      const assign = (list) => {
+        list.forEach((s, i) => {
+          const blockIdx = i % numBlocks;
+          const blockStart = open + blockIdx * stepHours * 60;
+          const blockEnd = Math.min(close, blockStart + blockHours * 60);
+          s.shift = { start: Math.round(blockStart), end: Math.round(blockEnd) };
+        });
+      };
+      assign(waiters);
+      assign(chefs);
+      return ok('已自動排班：' + numBlocks + ' 班、每班 8 小時，服務生 ' + waiters.length + ' 人、廚師 ' + chefs.length + ' 人');
+    }
     default:
       return fail(`未知的操作：${action.type}`);
   }
 }
 
 export const ACTION_TYPES = [
-  'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC', 'SET_FX', 'UPGRADE_KITCHEN',
+  'SET_SPEED', 'SET_HOURS', 'TOGGLE_DAY', 'SET_AC', 'SET_MUSIC', 'SET_FX', 'UPGRADE_KITCHEN', 'AUTO_SHIFT', 'REBUILD_RESTAURANT',
   'MENU_ADD', 'MENU_REMOVE', 'MENU_UPDATE', 'MENU_TOGGLE', 'BUY_STOCK',
   'HIRE', 'FIRE', 'SET_WAGE', 'SET_SHIFT', 'SET_DUTY',
   'PLACE_FURNITURE', 'MOVE_FURNITURE', 'ROTATE_FURNITURE', 'REPLACE_FURNITURE', 'REMOVE_FURNITURE', 'CLEAR_LAYOUT', 'SET_TILE',

@@ -376,6 +376,25 @@ export function createSystemPanel({ store, ui, win }) {   // eslint-disable-line
       notify(`新遊戲開始，亂數種子 ${seed}。`, 'good');
       forceSlots = true;
     }, { kind: 'danger' });
+    const rebuildBtn = button('🏗 自動重建頂級餐廳（NT$ 1）', async () => {
+      const st = liveState();
+      if (!st) return;
+      const ok = await ask({
+        title: '自動重建餐廳',
+        message: '確定要花 NT$ 1 把現有裝潢全部清空，重新配置頂級餐廳嗎？\n\n'
+          + '• 9 張六人宴會桌（自動配滿椅子）\n'
+          + '• 頂級裝潢：噴水池、點唱機、霓虹招牌、國畫\n'
+          + '• 全套防治設備：監視器、紅外線、滅火器、消防、保全\n'
+          + '• 廚房設備全滿級（爐具／冰箱／流理台）\n'
+          + '• 時尚吧台、廁所\n\n'
+          + '現有員工與菜單不變，現金只扣 NT$ 1。',
+        okLabel: '花 NT$ 1 重建', cancelLabel: '取消'
+      });
+      if (!ok) return;
+      const res = dispatch({ type: 'REBUILD_RESTAURANT' });
+      if (res && res.ok) notify(res.info || '已重建頂級餐廳！', 'good');
+      else if (res && res.error) notify(res.error, 'bad');
+    }, { kind: 'primary', title: '一鍵重置為頂級餐廳配置（只要 NT$ 1）' });
 
     const node = h('div', { style: { display: 'flex', 'flex-direction': 'column', gap: '7px' } },
       section({ title: '存檔槽位', children: [

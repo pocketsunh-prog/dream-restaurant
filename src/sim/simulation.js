@@ -10,7 +10,7 @@ import { findPath, clearPathCache } from './pathfind.js';
 import * as B from '../core/balance.js';
 import { withRng, makeRng } from '../core/rng.js';
 import { pushLog, emptyToday, rollWeather } from '../core/state.js';
-import { finalizeDay, clamp, ingredientCost } from './economy.js';
+import { finalizeDay, clamp, ingredientCost, buyCost } from './economy.js';
 import { runWeeklySettlement, weeklyBonus } from './magazine.js';
 import { checkStars, checkDropStar, checkAnnualAward, dailyFame } from './rating.js';
 import { tickEvents, expireEvents, trafficMultiplierFromEvents } from './events.js';
