@@ -196,6 +196,31 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
   /** 產生單一樓層的桌子 */
   function buildFloorTables(floorIdx, rng2) {
     const tables = [];
+    /** 人數ごとの天板サイズ（シーン側は t.w/t.d/t.h を使う） */
+    const TABLE_SIZE = { 1: { w: 0.62, d: 0.62 }, 2: { w: 0.86, d: 0.72 }, 4: { w: 1.15, d: 0.78 }, 6: { w: 1.78, d: 0.96 } };
+    /** 1/2/6 人掛けの座席を「桌の形に合わせて」並べ直す（4 人は圓形のまま） */
+    function shapeTable(t) {
+      const size = TABLE_SIZE[t.seats] || TABLE_SIZE[4];
+      t.w = size.w;
+      t.d = size.d;
+      t.h = t.style === 'chabudai' ? 0.34 : 0.72;
+      if (t.seats !== 6 && t.seats !== 2 && t.seats !== 1) return t;
+      const put = function (dx, dz) {
+        const r = Math.hypot(dx, dz) || 1;
+        return { x: t.x + dx, z: t.z + dz, ry: Math.atan2(-(dx / r), -(dz / r)), ang: Math.atan2(dz, dx) };
+      };
+      const seats = [];
+      if (t.seats === 6) {
+        const hw = t.w / 2 + 0.30, hd = t.d / 2 + 0.32;
+        seats.push(put(-hw * 0.45, -hd), put(hw * 0.45, -hd), put(-hw * 0.45, hd), put(hw * 0.45, hd), put(-hw, 0), put(hw, 0));
+      } else if (t.seats === 2) {
+        seats.push(put(-(t.w / 2 + 0.26), 0), put(t.w / 2 + 0.26, 0));
+      } else {
+        seats.push(put(0, t.d / 2 + 0.28));
+      }
+      t.seatPos = seats;
+      return t;
+    }
     const mk = (id, x, z, seats, style) => {
       const t = { id, x, z, floor: floorIdx, seats, style, occupants: [], seatPos: [], occupied: false, groupId: null, kind: 'free', dirty: 0, petOk: false };
       const R = style === 'chabudai' ? 0.78 : 0.82;
@@ -210,35 +235,42 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
           ang
         });
       }
+      shapeTable(t);
       tables.push(t);
       return t;
     };
     if (floorIdx === 0) {
       // 一樓：靠窗四人桌 + 南側二人桌 + 榻榻米（北側是調理場與出餐口）
-      const cols = [-4.6, -1.9];
-      const rows = [-2.55, 0.15];
       let n = 0;
-      for (const z of rows) for (const x of cols) mk('t' + (++n), x + (rng2() - 0.5) * 0.12, z + (rng2() - 0.5) * 0.12, 4, 'table');
-      mk('t' + (++n), 3.1, -1.1, 4, 'table');
-      mk('t' + (++n), 0.8, 0.15, 4, 'table');
-      const pet1 = mk('t' + (++n), -4.9, 2.7, 2, 'table');
-      const pet2 = mk('t' + (++n), -3.1, 2.75, 2, 'table');
+      // 6 人掛け（長桌）×2 を西側に、4 人掛け×2 を中央に
+      mk('t' + (++n), -4.5, -2.6, 6, 'table');
+      mk('t' + (++n), -4.5, 0.4, 6, 'table');
+      mk('t' + (++n), -0.9, -2.6, 4, 'table');
+      mk('t' + (++n), -0.9, 0.4, 4, 'table');
+      // 1 人掛け（ひとり様用の小桌）
+      mk('t' + (++n), 1.9, -1.5, 1, 'solo');
+      mk('t' + (++n), 3.6, -1.1, 2, 'table');
+      const pet1 = mk('t' + (++n), -4.9, 2.8, 2, 'table');
+      const pet2 = mk('t' + (++n), -3.1, 2.85, 2, 'table');
       const pet3 = mk('t' + (++n), 3.5, 2.5, 4, 'chabudai');
       const pet4 = mk('t' + (++n), 5.3, 2.5, 4, 'chabudai');
       // ペット同伴席：靠門口與緣側的座位可以帶寵物進來（場景會鋪寵物墊、放水碗）
       for (const t of [pet1, pet2, pet3, pet4]) { t.petOk = true; t.kind = 'pet'; }
     } else {
       // 樓上：四人桌兩排（樓梯旁留走道）
-      const cols = [-4.6, -1.9, 0.8, 3.4];
+      const cols = [-4.4, -1.8, 0.9, 3.4];
       const rows = [-2.5, 0.2];
       let n = floorIdx * 100;
       for (const z of rows) {
         for (const x of cols) {
           // 樓梯位置（x=-5.6, z=1.4）旁邊不擺桌
-          if (Math.abs(x + 4.6) < 0.5 && Math.abs(z - 1.4) < 1.0) continue;
-          mk('t' + (++n), x + (rng2() - 0.5) * 0.1, z + (rng2() - 0.5) * 0.1, 4, 'table');
+          if (Math.abs(x + 4.4) < 0.5 && Math.abs(z - 1.4) < 1.0) continue;
+          // 西側の一列だけ 6 人掛けにして、階ごとに 1/2/4/6 が揃うようにする
+          const seats = (x === -4.4 && z === -2.5) ? 6 : 4;
+          mk('t' + (++n), x + (rng2() - 0.5) * 0.1, z + (rng2() - 0.5) * 0.1, seats, 'table');
         }
       }
+      mk('t' + (++n), 1.9, 2.4, 1, 'solo');
     }
     return tables;
   }
@@ -897,7 +929,7 @@ function partySizeFor(state, kind) {
   const def = CUSTOMER_KINDS[kind];
   const [a, b] = def.party;
   const raw = a + Math.floor(state.rng() * (b - a + 1));
-  return Math.max(1, Math.min(raw, 2 + state.stars));
+  return Math.max(1, Math.min(raw, Math.min(6, 2 + state.stars)));   // 6 人桌まで
 }
 
 /** 產生一組客人（測試用對外匯出） */

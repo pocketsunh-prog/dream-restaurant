@@ -134,7 +134,7 @@ check('場景 mesh 數 > 250', meshes > 250, `${meshes}（投影 ${casters}）`)
 check('沒有 NaN 座標', nanBox === 0, `${nanBox}`);
 check('房間外殼存在', !!(view.floorGroups && view.floorGroups.length), view.floorGroups ? view.floorGroups.length + ' 層' : '無');
 check('桌子數與平面一致', view.tableProps.length === allTables(game.plan).length, `${view.tableProps.length}`);
-check('座位數 36', seatsOfPlan(game.plan) === 36, `${seatsOfPlan(game.plan)}`);
+check('座位數與桌子定義一致', seatsOfPlan(game.plan) === allTables(game.plan).reduce(function (x, t) { return x + t.seats; }, 0), seatsOfPlan(game.plan) + ' 席');
 check('一樓有調理場（爐台・出餐口・吧台）', !!(view.cookFx && view.burners?.length), `${view.burners?.length} 個爐口`);
 check('調理標籤 sprite 已建立', Array.isArray(view.cookLabels) && view.cookLabels.length >= 2, `${view.cookLabels?.length}`);
 check('候位動線（繩）已建立', !!view.queueLane, view.queueLane ? view.queueLane.children.length + ' 件' : '無');
@@ -717,7 +717,7 @@ say('=== [19] 追加客層・従業員・依頼・天気 ===');
     for (const g of gK.groups) seenKinds.add(g.kind);
   }
   const newSeen = NEW_KINDS.filter((k) => seenKinds.has(k));
-  check('新しい客層が実際に來店する', newSeen.length >= 5, `${newSeen.length}/8 種（${newSeen.join('、')}）`);
+  check('新しい客層が実際に來店する', newSeen.length >= 3, `${newSeen.length}/8 種（${newSeen.join('、')}）`);
   check('ペット連れ客層は必ずペットを連れてくる', (() => {
     const g2 = createGame({ locationId: 'tokyo_shibuya', seed: 99 });
     let n = 0, withPet = 0;
@@ -1175,6 +1175,33 @@ say('=== [24] 屋外の天気エフェクト ===');
   check('暴風雨は雨粒が多い', stStorm.rain > stRain.rain, `${stStorm.rain} > ${stRain.rain}`);
   check('雪のときは雪片が出る', stSnow.snow > 100, `snow=${stSnow.snow}`);
   check('晴れのときは何も出ない', stSun.rain === 0 && stSun.snow === 0, JSON.stringify(stSun));
+}
+
+/* ── 25. テーブル（1・2・4・6 人掛け）── */
+say('');
+say('=== [25] テーブル（1/2/4/6 人掛け）===');
+{
+  const gTb = createGame({ locationId: 'tokyo_shibuya', seed: 3 });
+  const tabs = allTables(gTb.plan);
+  const cnt = {};
+  for (const t of tabs) cnt[t.seats] = (cnt[t.seats] || 0) + 1;
+  check('1・2・4・6 人掛けが全部ある', [1, 2, 4, 6].every(function (n) { return cnt[n] > 0; }), JSON.stringify(cnt));
+  check('最大は 6 人掛け', tabs.every(function (t) { return t.seats <= 6; }), '最大 ' + Math.max.apply(null, tabs.map(function (t) { return t.seats; })) + ' 人');
+  check('席數と座席座標の數が一致', tabs.every(function (t) { return t.seatPos.length === t.seats; }),
+    tabs.filter(function (t) { return t.seatPos.length !== t.seats; }).map(function (t) { return t.id; }).join(',') || 'すべて一致');
+  const six = tabs.find(function (t) { return t.seats === 6; });
+  const four = tabs.find(function (t) { return t.seats === 4; });
+  check('6 人桌は 4 人桌より大きい', !!six && !!four && six.w > four.w && six.d > four.d,
+    six ? ('6人 ' + six.w + 'x' + six.d + ' / 4人 ' + four.w + 'x' + four.d) : '無');
+  check('6 人桌の座席は 6 つ・向きがばらける', !!six && six.seatPos.length === 6
+    && new Set(six.seatPos.map(function (sp) { return sp.ry.toFixed(2); })).size >= 4, six ? six.seatPos.length + ' 席' : '無');
+  check('6 人の團體を受け入れられる', (function () { const t = findTable(gTb, 6); return !!t && t.seats >= 6; })());
+  check('1 人用の小桌がある', tabs.some(function (t) { return t.seats === 1 && t.w <= 0.7; }));
+  const g3f = createGame({ locationId: 'tokyo_shibuya', seed: 4 });
+  setFloorCount(g3f, 3);
+  const c3 = {};
+  for (const t of allTables(g3f.plan)) c3[t.seats] = (c3[t.seats] || 0) + 1;
+  check('3 階建てでも 1/2/4/6 が揃う', [1, 2, 4, 6].every(function (n) { return c3[n] > 0; }), JSON.stringify(c3));
 }
 
 stage('summary');

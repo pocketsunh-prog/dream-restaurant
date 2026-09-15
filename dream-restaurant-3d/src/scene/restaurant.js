@@ -492,10 +492,14 @@ export class RestaurantView {
         set.position.set(t.x, baseY + 0.34, t.z);
         fg.add(shadowize(set));
       } else {
-        const table = makePropSafe('table', { w: 1.15, d: 0.78, h: 0.72 }, { x: 1.15, y: 0.72, z: 0.78 });
+        // 1/2/4/6 人それぞれの天板サイズ（平面圖の w/d を使う。舊存檔は既定値）
+        const tw = t.w || (t.seats >= 6 ? 1.78 : t.seats === 2 ? 0.86 : t.seats === 1 ? 0.62 : 1.15);
+        const td = t.d || (t.seats >= 6 ? 0.96 : t.seats === 2 ? 0.72 : t.seats === 1 ? 0.62 : 0.78);
+        const th = t.h || 0.72;
+        const table = makePropSafe('table', { w: tw, d: td, h: th }, { x: tw, y: th, z: td });
         table.position.set(t.x, baseY, t.z);
         fg.add(shadowize(table));
-        aoBlob(fg, t.x, baseY + 0.012, t.z, 0.95, 0.72, 0.7);
+        aoBlob(fg, t.x, baseY + 0.012, t.z, tw / 2 + 0.35, td / 2 + 0.35, 0.7);
         for (let i = 0; i < t.seats; i++) {
           const sp = t.seatPos[i];
           const ch = makePropSafe('chair', {}, { x: 0.46, y: 0.9, z: 0.46 });
@@ -516,7 +520,7 @@ export class RestaurantView {
           fg.add(cushion);
         }
         const set = makePropSafe('tableSetting', { plates: t.seats }, { x: 0.7, y: 0.06, z: 0.7 });
-        set.position.set(t.x, baseY + 0.72, t.z);
+        set.position.set(t.x, baseY + th, t.z);
         fg.add(shadowize(set));
       }
       // ペット同伴席：桌子旁鋪寵物墊、放水碗與飼料碗、立一個小牌子
