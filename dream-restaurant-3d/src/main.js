@@ -5,11 +5,14 @@ import * as THREE from 'three';
 import { createLighting } from './scene/lighting.js';
 import { OrbitCam } from './scene/controls.js';
 import { RestaurantView } from './scene/restaurant.js';
+import { loadSheets } from './scene/actors.js';
 import {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
   clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting,
-  allTables, TASK_KINDS, ROLE_LABEL, setRoleUniform, crowdInfo, setFloorCount, spawnGroup
+  allTables, TASK_KINDS, ROLE_LABEL, setRoleUniform, crowdInfo, setFloorCount, spawnGroup,
+  WEATHER_JP
 } from './sim/game.js';
+import { claimMission, missionReport } from './sim/missions.js';
 import { Hud, seatsOf } from './ui/hud.js';
 import { locationById } from './data/locations.js';
 import { dishById } from './data/dishes.js';
@@ -17,6 +20,12 @@ import { AudioEngine, LOCALE_SCALE, SFX_NAMES } from './audio/audio.js';
 import { saveToSlot, loadFromSlot, autoSave } from './sim/save.js';
 
 const params = new URLSearchParams(location.search);
+// 例外をタイトルにも出す：無頭ブラウザ（--dump-dom）では console が見えないため
+addEventListener('error', (e) => {
+  const msg = e && e.message ? e.message : String(e);
+  if (!document.title.startsWith('DREAM3D-ERR')) document.title = 'DREAM3D-ERR: ' + msg;
+  console.error('[DREAM3D] uncaught', msg, e && e.error);
+});
 const step = (t) => { const el = document.getElementById('loading-step'); if (el) el.textContent = t; };
 // 測試用：?static=N → 只渲染 N 幀就停止 rAF（無頭截圖用）。此時必須保留 drawingBuffer，
 // 否則迴圈停止後緩衝區被清空，截圖會是一片黑。
@@ -57,6 +66,14 @@ let game = createGame({
 
 step('店内を建築中');
 const restaurant = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
+// スプライトシート式の客（Cherish）：読み込み完了後に一度だけスプライトを作り直す
+loadSheets().then((recs) => {
+  const ok = (recs || []).some((r) => r && r.ready);
+  if (ok) {
+    restaurant.groupMeshes.clear();      // 次のフレームで billboard として作り直される
+    console.log('[DREAM3D] sprite sheets ready', JSON.stringify(recs.map((r) => ({ ready: r.ready, frames: r.frames ? r.frames.length : 0, error: r.error }))));
+  }
+});
 
 /* ------------------------------------------------------------ 攝影機 */
 
@@ -158,6 +175,14 @@ const hud = new Hud(game, {
     }
     return res;
   },
+  onClaimMission: (id) => {
+    const res = claimMission(game, id);
+    if (res.ok) {
+      audio.playSfx('starup');
+      hud.toast(`依頼「${res.mission.jp}」の報酬：${(res.got || []).join('・')}`, 'good');
+    }
+    return res;
+  },
   onUniform: (staffId, uniformId) => {
     const res = setStaffUniform(game, staffId, uniformId);
     if (res.ok) {
@@ -167,8 +192,7 @@ const hud = new Hud(game, {
     }
     return res;
   },
-  onRoleUniform: (role, uniformId) => {
-    const res = setRoleUniform(game, role, uniformId);
+  onRoleUniform: (role, uniformId) => {    const res = setRoleUniform(game, role, uniformId);
     if (res.ok) {
       // 整個職種換制服 → 把這些員工的模型全部丟掉，下一帧重建
       for (const s of game.staff.filter((x) => x.role === role)) {
@@ -224,6 +248,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'r') { hud.toggle('panel-report'); hud.renderReport(); }
   else if (k === 't') { hud.toggle('panel-rank'); hud.renderRank(); }
   else if (k === 'e') { hud.toggle('panel-shop'); hud.renderShopPanel(); }
+  else if (k === 'j') { hud.toggle('panel-missions'); hud.renderMissions(); }
   else if (k === 'k') focusCook();
   else if (k === 'o') hud.toggle('panel-settings');
   else if (k === 'h') hud.toggle('panel-help');
@@ -389,6 +414,19 @@ function handleSimEvent(ev) {
     else hud.toast(ev.message || `${ev.name} が終わりました`, '');
     return;
   }
+  // 依頼（ミッション）を達成：音とトーストで知らせ、パネルを更新
+  if (ev.type === 'mission') {
+    audio.playSfx('starup', { gain: 1 });
+    hud.toast(`🎯 依頼達成「${ev.jp}」— 「依頼(J)」から報酬を受け取れます`, 'good');
+    hud.renderMissions();
+    return;
+  }
+  // 常連の Cherish が來店（スプライトシートの客）
+  if (ev.type === 'cherish') {
+    audio.playSfx('happy', { gain: 0.9 });
+    hud.toast('常連の Cherish が來店（今日もおひとり様）', 'good');
+    return;
+  }
   const name = EVENT_SFX[ev.type];
   if (!name) return;
   if (name === 'happy' || name === 'error') { audio.playSfx(name); return; }
@@ -485,7 +523,12 @@ function frame(now) {
     audio.setAmbience({
       crowd,
       kitchen: Math.min(3, busyTables * 0.5),
-      rain: (game.weather === 'rain' ? 1 : game.weather === 'snow' ? 0.35 : 0),
+      // 天気ごとの環境音：暴風雨＞雨＞みぞれ＞雪＞霧（霧は静か）
+      rain: (game.weather === 'storm' ? 1.2
+        : game.weather === 'rain' ? 1
+          : game.weather === 'sleet' ? 0.75
+            : game.weather === 'snow' ? 0.35
+              : game.weather === 'fog' ? 0.12 : 0),
       night: !!game.__night
     });
     audio.setMusicMood({
@@ -502,7 +545,7 @@ function frame(now) {
     if (s) cam.flyTo({ target: staffWorld(s) });
     else followingStaff = null;
   }
-  restaurant.update(dtRaw, game);
+  restaurant.update(dtRaw, game, camera);
   cam.update(dtRaw);
   hud.update();
 
@@ -678,6 +721,16 @@ if (params.get('shoptab')) {
   } catch (e) { console.warn('shoptab failed', e); }
 }
 if (params.get('shot')) gotoShot(Number(params.get('shot')));
+// ?cherish=N → これから來る N 組を Cherish にする（自動化テスト・截圖用）
+if (params.get('cherish')) {
+  game.forceKind = 'cherish';
+  game.forceKindLeft = Math.max(1, Number(params.get('cherish')) || 1);
+  window.DREAM3D.spawnCherish = () => {
+    game.forceKind = 'cherish';
+    game.forceKindLeft = Math.max(1, Number(params.get('cherish')) || 1);
+    return true;
+  };
+}
 // ?cam=az,pol,dist,tx,ty,tz → 直接指定機位（驗證用）
 if (params.get('cam')) {
   const n = params.get('cam').split(',').map(Number);
@@ -737,6 +790,7 @@ if (params.get('uitest') === '1') {
   probe('panel-rank(global)', () => { hud._rankTab = 'global'; hud.renderRank(); });
   probe('panel-shop(expand)', () => { hud.toggle('panel-shop'); hud._shopTab = 'expand'; hud.renderShopPanel(); });
   probe('panel-shop(uniform)', () => { hud._shopTab = 'uniform'; hud.renderShopPanel(); });
+  probe('panel-missions', () => { hud.toggle('panel-missions'); hud.renderMissions(); });
   probe('panel-report', () => { hud.toggle('panel-report'); hud.renderReport(); });
   probe('panel-staff(roster)', () => { hud._staffTab = 'roster'; hud.toggle('panel-staff'); hud.renderStaff(); });
   probe('panel-staff(hire)', () => { hud._staffTab = 'hire'; hud.renderStaff(); });
@@ -789,6 +843,31 @@ if (params.get('uitest') === '1') {
   const ci = crowdInfo(game);
   rep.push(`CHECK crowd inside=${ci.insideGuests} seats=${ci.seats} free=${ci.seatsFree} waiting=${ci.waiting} list=${ci.waitingList.length} petOk=${ci.petOkTables} noticeKey=${restaurant._noticeKey ? 'set' : 'empty'}`);
   rep.push(`CHECK petGroupsToday=${ci.petToday} petSpots=${(restaurant.petSpots || []).length} petTableGroup=${(game.groups || []).filter((g) => g.petTable).length}`);
+  // 依頼：達成 → 受取ボタンを実際に押して、賞金が入るか確認
+  const mrep = missionReport(game);
+  rep.push(`CHECK missions active=${mrep.active.length} completed=${mrep.completedCount} claimable=${mrep.claimable.length} tier=${mrep.unlockedTier}/${mrep.total}`);
+  if (mrep.claimable.length) {
+    const target = mrep.claimable[0].mission;
+    probe('missions: claim', () => {
+      hud.toggle('panel-missions'); hud.renderMissions();
+      const btn = document.querySelector('#missions-body [data-claim]');
+      if (!btn) throw new Error('找不到受取按鈕');
+      const before = game.cash;
+      btn.click();
+      if (!game.missions.claimed[target.id]) throw new Error('受取が記録されていない');
+      if ((target.reward.cash || 0) > 0 && game.cash <= before) throw new Error('賞金が入っていない');
+    });
+    rep.push(`CHECK missions claimed=${Object.keys(game.missions.claimed).length} cash=${Math.round(game.cash)}`);
+  } else {
+    rep.push('CHECK missions claimable=0（まだ達成なし。?ff= を増やすと達成される）');
+  }
+  // 天気の切り替えが全種類で例外を出さないか
+  probe('weather: all kinds', () => {
+    const list = ['sunny', 'cloudy', 'rain', 'snow', 'storm', 'heat', 'fog', 'sleet'];
+    for (const w of list) { game.weather = w; lighting.setWeather(w); restaurant.update(0.016, game); }
+    game.weather = list[0];
+  });
+  rep.push(`CHECK weather=${game.weather} jp=${WEATHER_JP[game.weather]}`);
   let visibleGuests = 0, meshCount = 0;
   for (const [, rec] of restaurant.groupMeshes) {
     for (const m of rec.meshes) { meshCount++; if (m.visible) visibleGuests++; }

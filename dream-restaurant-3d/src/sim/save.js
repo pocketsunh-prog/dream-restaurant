@@ -2,7 +2,7 @@
 // save.js — 存讀檔（localStorage，6 個槽位：1〜5 ＋ auto）
 //   遊戲狀態幾乎都是純資料，只有亂數函式需要另外存「狀態數字」才能完全還原。
 // ============================================================================
-import { mulberry32, defaultSettings, ensureLedger } from './game.js';
+import { mulberry32, defaultSettings, ensureLedger, WEATHERS } from './game.js';
 
 export const SAVE_VERSION = 3;
 export const SAVE_KEY = 'dreamrestaurant3d.save.';
@@ -68,6 +68,14 @@ export function deserializeGame(data) {
   state.equipment = state.equipment || ['fridge', 'ac_unit'];
   state.equipBroken = state.equipBroken || { fridge: false, ac_unit: false, stove: false };
   state.candidates = state.candidates || [];
+  // ミッション（依頼）：舊存檔は未着手として補う
+  if (!state.missions || typeof state.missions !== 'object') state.missions = {};
+  if (!state.missions.completed) state.missions.completed = {};
+  if (!state.missions.claimed) state.missions.claimed = {};
+  if (!Array.isArray(state.missions.titles)) state.missions.titles = [];
+  if (!state.missions.unlockedTier) state.missions.unlockedTier = 1;
+  // 天気：知らない値（舊存檔・已廢止の天気）は晴天に寄せる
+  if (!WEATHERS.includes(state.weather)) state.weather = 'sunny';
   // 平面圖欄位（舊存檔沒有街道／候位動線）
   if (state.plan) {
     const D = state.plan.depth || 9.6;

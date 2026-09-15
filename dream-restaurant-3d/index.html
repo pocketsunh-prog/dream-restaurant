@@ -57,6 +57,7 @@
     <button id="btn-menu">🍜 菜單 <kbd>M</kbd></button>
     <button id="btn-cook">🍳 調理を見る <kbd>K</kbd></button>
     <button id="btn-shop">🏗 店舗 <kbd>E</kbd></button>
+    <button id="btn-missions">🎯 依頼 <kbd>J</kbd></button>
     <button id="btn-camera">🎥 視角 <kbd>C</kbd></button>
     <button id="btn-report">📊 分析 <kbd>R</kbd></button>
     <button id="btn-rank">🏆 番付 <kbd>T</kbd></button>
@@ -176,6 +177,15 @@
   </div>
 </section>
 
+<!-- ── 面板：依頼（ミッション）────────────────────────────────── -->
+<section class="panel" id="panel-missions" hidden>
+  <header class="panel-head">
+    <h2>依頼<span>任務：達成後可領獎勵</span></h2>
+    <button class="panel-close" data-close="panel-missions">✕</button>
+  </header>
+  <div class="panel-body" id="missions-body"></div>
+</section>
+
 <!-- ── 面板：番付（ランキング）────────────────────────────────── -->
 <section class="panel" id="panel-rank" hidden>
   <header class="panel-head">
@@ -205,6 +215,7 @@
       <tr><td>點擊客人</td><td>看這位客人點了什麼、吃到哪一步</td></tr>
       <tr><td>點擊員工 / <kbd>K</kbd></td><td>鏡頭跟著他，看料理人怎麼做菜（頭上會顯示正在煮的菜與進度）</td></tr>
       <tr><td><kbd>E</kbd></td><td>🏗 店舗面板：<b>増築 2F／3F</b>（擴建樓層）與<b>制服選擇</b>（料理人／ホール一次換或個人換）</td></tr>
+      <tr><td><kbd>J</kbd></td><td>🎯 依頼面板：<b>任務</b>（26 件）與進度，達成後按「受取」領 <b>獎金／評價／設備／稱號</b></td></tr>
       <tr><td><kbd>1</kbd>〜<kbd>7</kbd></td><td>預設機位：全館／1F／客席／厨房／2F／3F／爐前</td></tr>
       <tr><td><kbd>Space</kbd></td><td>暫停 / 繼續</td></tr>
       <tr><td><kbd>L</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>R</kbd> <kbd>T</kbd> <kbd>E</kbd> <kbd>O</kbd> <kbd>H</kbd></td><td>立地 / 従業員 / 菜單 / 分析 / 番付 / 店舗 / 設定 / 說明</td></tr>

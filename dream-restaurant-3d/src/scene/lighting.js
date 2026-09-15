@@ -23,7 +23,12 @@ const WEATHER_LIGHT = {
   sunny:  { sun: 1.0,  amb: 1.0,  fog: 0.0009, sat: 1.0 },
   cloudy: { sun: 0.55, amb: 1.15, fog: 0.0022, sat: 0.9 },
   rain:   { sun: 0.32, amb: 1.0,  fog: 0.0042, sat: 0.72 },
-  snow:   { sun: 0.42, amb: 1.3,  fog: 0.0055, sat: 0.82 }
+  snow:   { sun: 0.42, amb: 1.3,  fog: 0.0055, sat: 0.82 },
+  // ── 追加天気（sim/game.js の WEATHERS と対にする）──────────────
+  storm:  { sun: 0.16, amb: 0.85, fog: 0.0082, sat: 0.60 },   // 暴風雨：暗く、霞が強い
+  heat:   { sun: 1.35, amb: 1.10, fog: 0.0016, sat: 1.12 },   // 猛暑：強い日差し・白っぽい空
+  fog:    { sun: 0.50, amb: 1.25, fog: 0.0125, sat: 0.78 },   // 霧：遠くが白く消える
+  sleet:  { sun: 0.36, amb: 1.12, fog: 0.0050, sat: 0.74 }    // みぞれ：雨と雪の中間
 };
 
 /* 天空關鍵色（依時刻內插）：top 天頂、bot 地平、hor 地平暖光、haze 霧感強度 */

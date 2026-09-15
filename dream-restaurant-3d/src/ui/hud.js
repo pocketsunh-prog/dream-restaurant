@@ -4,7 +4,7 @@
 import { LOCATIONS, locationById, REGIONS } from '../data/locations.js';
 import { DISHES, dishById } from '../data/dishes.js';
 import {
-  money, clockText, WEATHER_JP, CUSTOMER_KINDS,
+  money, clockText, WEATHER_JP, CUSTOMER_KINDS, WEATHER_TRAFFIC,
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, STAFF_LIMIT,
   EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
   activeEventInfo, TASK_KINDS, allTables, FLOOR_COST,
@@ -12,6 +12,8 @@ import {
 } from '../sim/game.js';
 import { listSlots, deleteSlot, savedAtText, storageAvailable } from '../sim/save.js';
 import { uniformsForRole, uniformById, UNIFORMS } from '../data/uniforms.js';
+import { missionReport, claimMission } from '../sim/missions.js';
+import { goalLabel } from '../data/missions.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -45,6 +47,7 @@ export class Hud {
     $('btn-report')?.addEventListener('click', () => { this.toggle('panel-report'); this.renderReport(); });
     $('btn-rank')?.addEventListener('click', () => { this.toggle('panel-rank'); this.renderRank(); });
     $('btn-shop')?.addEventListener('click', () => { this.toggle('panel-shop'); this.renderShopPanel(); });
+    $('btn-missions')?.addEventListener('click', () => { this.toggle('panel-missions'); this.renderMissions(); });
     // 店舗面板分頁（拡張 / 制服）
     document.querySelectorAll('#shop-tabs button').forEach((b) => {
       b.addEventListener('click', () => {
@@ -112,6 +115,7 @@ export class Hud {
       if (id === 'panel-report') this.renderReport();
       if (id === 'panel-rank') this.renderRank();
       if (id === 'panel-shop') this.renderShopPanel();
+      if (id === 'panel-missions') this.renderMissions();
     }
   }
 
@@ -404,6 +408,88 @@ export class Hud {
       const res = this.hooks.onUniform?.(sel.dataset.uni, sel.value);
       if (res && res.ok) this.toast(`制服を「${uniformById(sel.value)?.label}」にしました`, 'good');
       this.renderUniforms();
+    }));
+  }
+
+  /* ── 依頼（ミッション）─────────────────────────────────────── */
+
+  renderMissions() {
+    const host = $('missions-body');
+    if (!host) return;
+    const st = this.game;
+    const R = missionReport(st);
+    const rewardText = (r) => {
+      const out = [];
+      if (r.cash) out.push(money(r.cash));
+      if (r.fame) out.push(`評価 +${r.fame}`);
+      if (r.equipment) out.push(EQUIPMENT_CATALOG[r.equipment]?.jp || r.equipment);
+      if (r.title) out.push(`称号「${r.title}」`);
+      return out.join('・') || '—';
+    };
+
+    let html = `<div class="rank-banner">
+      <div class="rb-main"><b>依頼（ミッション）</b><span>達成して「受取」すると賞金・評價・称号がもらえます</span></div>
+      <div class="rb-score"><em>達成 / 全件</em><b>${R.completedCount}/${R.total}</b></div>
+      <div class="rb-sub">受取済み <b>${R.claimedCount}</b> 件　解放ティア <b>${R.unlockedTier} / 5</b>（達成 3 件ごとに次のティアが開きます）
+        ${R.titles.length ? `<br>称号：${R.titles.map((t) => `<b>${esc(t)}</b>`).join('・')}` : ''}</div>
+    </div>`;
+
+    // ① 受取可能
+    html += `<div class="section-title">受取できます（${R.claimable.length}）</div>`;
+    if (!R.claimable.length) html += `<div class="empty">達成した依頼はありません。営業を続けましょう。</div>`;
+    for (const c of R.claimable) {
+      const m = c.mission;
+      html += `<div class="card mission-card claimable">
+        <div class="card-head"><b>🎯 ${esc(m.jp)}</b><span class="role">達成</span></div>
+        <div class="card-sub"><span>${esc(m.zh)}</span><span>報酬 <b>${esc(rewardText(m.reward))}</b></span></div>
+        <div class="card-actions"><button class="buy" data-claim="${esc(m.id)}">報酬を受け取る</button></div>
+      </div>`;
+    }
+
+    // ② 進行中
+    html += `<div class="section-title">進行中（達成が近い順）</div>`;
+    if (!R.active.length) html += `<div class="empty">進行中の依頼はありません。</div>`;
+    for (const a of R.active) {
+      const m = a.mission;
+      const p = a.progress;
+      const pct = Math.max(0, Math.min(100, Math.round((p.cur / p.target) * 100)));
+      html += `<div class="card">
+        <div class="card-head"><b>${esc(m.jp)}</b><span class="kana">${esc(m.zh)}</span></div>
+        <div class="card-desc">${esc(m.desc)}</div>
+        <div class="report-row">
+          <span class="r-name"><i>${esc(goalLabel(m.goal))}</i></span>
+          <span class="r-num">${p.cur.toLocaleString('en-US')}</span>
+          <span class="r-bar"><b style="width:${pct}%"></b></span>
+          <span class="r-pct">${pct}%</span>
+          <span class="r-rev">${p.target.toLocaleString('en-US')}</span>
+        </div>
+        <div class="card-sub"><span>報酬 <b>${esc(rewardText(m.reward))}</b></span><span>tier ${m.tier}</span></div>
+      </div>`;
+    }
+
+    // ③ ティア別の一覧
+    for (const t of R.byTier) {
+      html += `<div class="section-title">tier ${t.tier}${t.locked ? '（未解放）' : ''}</div>`;
+      if (t.locked) {
+        html += `<div class="empty">達成 3 件ごとに次のティアが解放されます。</div>`;
+        continue;
+      }
+      for (const row of t.missions) {
+        const m = row.mission;
+        const mark = row.claimed ? '✅ 受取済み' : row.completed ? '🎁 受取待ち' : `${row.progress.cur.toLocaleString('en-US')} / ${row.progress.target.toLocaleString('en-US')}`;
+        html += `<div class="report-row${row.claimed ? ' me' : ''}">
+          <span class="r-name"><b>${esc(m.jp)}</b><i>${esc(m.zh)}・${esc(goalLabel(m.goal))}</i></span>
+          <span class="r-num">${mark}</span>
+          <span class="r-rev">${esc(rewardText(m.reward))}</span>
+        </div>`;
+      }
+    }
+    host.innerHTML = html;
+    host.querySelectorAll('[data-claim]').forEach((b) => b.addEventListener('click', () => {
+      const res = this.hooks.onClaimMission?.(b.dataset.claim) || claimMission(st, b.dataset.claim);
+      if (res && res.ok) this.toast(`報酬を受け取りました：${(res.got || []).join('・')}`, 'good');
+      else if (res && res.error) this.toast(res.error, 'bad');
+      this.renderMissions();
     }));
   }
 
@@ -996,12 +1082,23 @@ export class Hud {
       $('hud-location').textContent = loc.name;
       $('hud-region').textContent = `${loc.region} · ${loc.city}`;
     }
-    // 生效中的事件顯示在右上
+    // 生效中的事件顯示在右上（依頼の受取待ちもここに出す）
     const evHost = $('hud-events');
     if (evHost) {
       const act = activeEventInfo(st);
-      evHost.innerHTML = act.slice(0, 3).map((a) =>
+      const mr = missionReport(st);
+      const chips = act.slice(0, 3).map((a) =>
         `<span class="evchip ${a.kind}">${a.name}<i>${a.left}分</i></span>`).join('');
+      const missionChip = mr.claimable.length
+        ? `<span class="evchip mission" title="依頼 → 受取">🎯 受取待ち ${mr.claimable.length}</span>` : '';
+      evHost.innerHTML = missionChip + chips;
+    }
+    const wEl = $('hud-weather');
+    if (wEl) {
+      const bad = st.weather === 'storm' || st.weather === 'sleet' || st.weather === 'snow';
+      const hot = st.weather === 'heat';
+      wEl.style.color = bad ? 'var(--shu-2)' : hot ? 'var(--kin)' : '';
+      wEl.title = `客足 ${Math.round((WEATHER_TRAFFIC[st.weather] ?? 1) * 100)}%`;
     }
     const speedBtn = document.querySelector(`.speeds button[data-speed="${st.speed}"]`);
     if (speedBtn && !speedBtn.classList.contains('on')) {

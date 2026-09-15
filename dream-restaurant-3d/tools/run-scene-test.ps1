@@ -21,17 +21,21 @@ $exe = @(
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $exe) { throw 'Chrome/Edge not found' }
 
-$tmp = Join-Path $env:TEMP ('dsh-scene-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $tmp | Out-Null
+$tmp = Join-Path $env:TEMP 'dsh-scene-test'
+New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 $dom = Join-Path $tmp 'dom.html'
 $err = Join-Path $tmp 'err.txt'
+# Reuse the profile: a cold profile re-downloads three.js every run and eats the virtual budget.
 $ud = Join-Path $tmp 'profile'
 
 $target = "$Url/$Page"
+# Keep this exact flag set: adding extra flags makes headless Chrome dump the DOM
+# mid-test (it stops around "STAGE sec13") instead of waiting for the async sprite-sheet load.
 $cargs = @(
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run',
-  '--disable-extensions', '--autoplay-policy=no-user-gesture-required',
-  ("--timeout=" + $TimeoutMs), ("--user-data-dir=" + $ud),
+  '--headless=new', '--disable-gpu', '--no-sandbox',
+  ("--timeout=" + $TimeoutMs),
+  '--virtual-time-budget=15000',
+  ("--user-data-dir=" + $ud),
   '--dump-dom', ('"' + $target + '"')
 )
 Start-Process -FilePath $exe -ArgumentList $cargs -NoNewWindow -Wait -RedirectStandardOutput $dom -RedirectStandardError $err | Out-Null
@@ -52,4 +56,5 @@ $text = $text -replace ('&' + 'quot;'), '"'
 $text = $text -replace ('&' + 'amp;'), '&'
 Write-Output $text
 $summary = ($text -split "`n" | Where-Object { $_ -match 'SCENE TEST' }) -join ''
+if ($text -match 'ERROR:|REJECT:') { exit 3 }       # page threw before finishing
 if ($summary -match 'FAILED') { exit 1 } else { exit 0 }

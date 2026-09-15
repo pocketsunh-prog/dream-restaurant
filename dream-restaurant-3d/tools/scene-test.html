@@ -46,7 +46,11 @@ import { createGame, tick, settleDay, startNextDay, resolveSpecialties, seatsOfP
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, buyEquipment, repairEquipment,
   forceEvent, trafficMultiplier, setStaffUniform, topMenuReport, spawnGroup, allTables,
   kitchenReport, rankings, setFloorCount, setBusinessHours, setSetting,
-  crowdInfo, findTable, setRoleUniform } from '../src/sim/game.js';
+  crowdInfo, findTable, setRoleUniform, CUSTOMER_KINDS, WEATHERS, WEATHER_JP, WEATHER_TRAFFIC,
+  rollWeather, drainEvents } from '../src/sim/game.js';
+import { STAFF_POOL } from '../src/data/staff.js';
+import { MISSIONS } from '../src/data/missions.js';
+import { missionReport, claimMission } from '../src/sim/missions.js';
 import { serializeGame, deserializeGame, saveToSlot, loadFromSlot, slotInfo, deleteSlot, listSlots, storageAvailable } from '../src/sim/save.js';
 import { EVENTS } from '../src/data/events.js';
 import { UNIFORMS } from '../src/data/uniforms.js';
@@ -264,7 +268,7 @@ say('');
 say('=== [9] 事件 ===');
 {
   const g4 = createGame({ locationId: 'kyoto_gion', seed: 21 });
-  check('事件資料 34 筆', EVENTS.length === 34, `${EVENTS.length}`);
+  check('事件資料 50 筆', EVENTS.length === 50, `${EVENTS.length}`);
   const ev = EVENTS.find((e) => e.id === 'tv_interview') || EVENTS[0];
   const trafficBefore = trafficMultiplier(g4, locationById(g4.locationId));
   const cashBefore = g4.cash;
@@ -688,6 +692,221 @@ say('=== [18] ペット同伴席 ===');
 
   // 場景：寵物席的擺設與寵物位置
   check('場景有寵物墊／水碗的位置', (view.petSpots || []).length >= 2, `${(view.petSpots || []).length} 處`);
+}
+
+/* ── 19. 追加客層・従業員・依頼・天気 ───────────────────────── */
+say('');
+say('=== [19] 追加客層・従業員・依頼・天気 ===');
+{
+  // ── 客層 ──
+  const gK = createGame({ locationId: 'tokyo_shibuya', seed: 5150 });
+  const kinds = Object.keys(CUSTOMER_KINDS);
+  check('客層が 16 種類に増えた', kinds.length === 16, kinds.join(','));
+  const NEW_KINDS = ['regular', 'solo', 'business', 'influencer', 'chefguest', 'club', 'nightworker', 'petlover'];
+  check('追加客層が全部ある', NEW_KINDS.every((k) => CUSTOMER_KINDS[k]),
+    NEW_KINDS.filter((k) => !CUSTOMER_KINDS[k]).join(',') || '8 種 OK');
+  check('追加客層に時段と人数の設定がある',
+    NEW_KINDS.every((k) => Object.keys(CUSTOMER_KINDS[k].hours || {}).length > 0 && CUSTOMER_KINDS[k].party.length === 2));
+  check('追加客層は全地點に出られる（base 權重）', NEW_KINDS.every((k) => (CUSTOMER_KINDS[k].base || 0) > 0));
+  const seenKinds = new Set();
+  let guardK = 0;
+  while (gK.phase !== 'settle' && guardK++ < 2000) {
+    tick(gK, 1);
+    for (const g of gK.groups) seenKinds.add(g.kind);
+  }
+  const newSeen = NEW_KINDS.filter((k) => seenKinds.has(k));
+  check('新しい客層が実際に來店する', newSeen.length >= 5, `${newSeen.length}/8 種（${newSeen.join('、')}）`);
+  check('ペット連れ客層は必ずペットを連れてくる', (() => {
+    const g2 = createGame({ locationId: 'tokyo_shibuya', seed: 99 });
+    let n = 0, withPet = 0;
+    for (let i = 0; i < 6000 && n < 20; i++) {
+      const g = spawnGroup(g2, locationById('tokyo_shibuya'));
+      if (g.kind !== 'petlover') continue;
+      n++;
+      if (g.pet) withPet++;
+    }
+    return n > 0 && withPet === n;
+  })());
+  check('新客層の人物モデルが作れる', NEW_KINDS.every((k) => {
+    try { const m = Chars.makeCharacter({ kind: k, seed: 7 }); return !!m && m.isObject3D; } catch { return false; }
+  }));
+
+  // ── 従業員 ──
+  check('従業員が 44 名に増えた', STAFF_POOL.length === 44, `${STAFF_POOL.length} 名`);
+  check('外場 24 名・料理人 20 名',
+    STAFF_POOL.filter((s) => s.role === 'waiter').length === 24 && STAFF_POOL.filter((s) => s.role === 'chef').length === 20,
+    `w ${STAFF_POOL.filter((s) => s.role === 'waiter').length} / c ${STAFF_POOL.filter((s) => s.role === 'chef').length}`);
+  check('(role,speed,skill,stamina) が全員ユニーク',
+    new Set(STAFF_POOL.map((s) => `${s.role}|${s.speed}|${s.skill}|${s.stamina}`)).size === STAFF_POOL.length,
+    `${new Set(STAFF_POOL.map((s) => `${s.role}|${s.speed}|${s.skill}|${s.stamina}`)).size} 通り`);
+  check('能力値が実数（99 固定になっていない）',
+    STAFF_POOL.every((s) => s.speed >= 35 && s.speed <= 96 && s.skill >= 30 && s.skill <= 96 && s.stamina >= 30 && s.stamina <= 96),
+    `speed ${Math.min(...STAFF_POOL.map((s) => s.speed))}..${Math.max(...STAFF_POOL.map((s) => s.speed))} / skill ${Math.min(...STAFF_POOL.map((s) => s.skill))}..${Math.max(...STAFF_POOL.map((s) => s.skill))}`);
+  check('簽約金 = 時給 ×2', STAFF_POOL.every((s) => s.hireCost === Math.round(s.wage * 2 / 100) * 100));
+
+  // ── 依頼（ミッション）──
+  check('依頼が 27 件ある', MISSIONS.length === 27, `${MISSIONS.length} 件`);
+  check('依頼の id がユニーク', new Set(MISSIONS.map((m) => m.id)).size === MISSIONS.length);
+  check('全依頼に目標と報酬がある',
+    MISSIONS.every((m) => m.goal && m.goal.kind && m.goal.target > 0 && m.reward && Object.keys(m.reward).length > 0));
+  check('tier 1..5 が全部埋まっている', [1, 2, 3, 4, 5].every((t) => MISSIONS.some((m) => m.tier === t)));
+  const gM = createGame({ locationId: 'tokyo_shibuya', seed: 808 });
+  const rep0 = missionReport(gM);
+  check('開幕時は tier1 の依頼が出ている', rep0.active.length > 0 && rep0.unlockedTier === 1, `${rep0.active.length} 件進行中`);
+  check('進捗が有限数', rep0.byTier.every((t) => t.missions.every((r) => Number.isFinite(r.progress.cur) && r.progress.target > 0)));
+  let guardM = 0, missionEvents = 0;
+  const cashBeforeM = gM.cash;
+  while (gM.phase !== 'settle' && guardM++ < 2000) {
+    tick(gM, 1);
+    missionEvents += drainEvents(gM).filter((e) => e.type === 'mission').length;
+  }
+  const repS = missionReport(gM);
+  check('営業すると依頼が達成される', repS.completedCount > 0, `${repS.completedCount} 件達成`);
+  check('達成イベントが出る（音・トースト用）', missionEvents > 0, `${missionEvents} 件`);
+  const first = repS.claimable[0];
+  check('受取待ちが作られる', !!first, first ? `${first.mission.jp}` : '無');
+  if (first) {
+    const res = claimMission(gM, first.mission.id);
+    check('報酬を受け取れる', res.ok === true && gM.cash > cashBeforeM, (res.got || []).join('・'));
+    check('同じ依頼は二度受け取れない', claimMission(gM, first.mission.id).ok === false);
+    check('受取済みが記録される', !!gM.missions.claimed[first.mission.id]);
+  }
+  check('達成 3 件ごとに tier が解放される', (() => {
+    const g3 = createGame({ locationId: 'tokyo_shibuya', seed: 4242 });
+    let guard = 0;
+    while (g3.phase !== 'settle' && guard++ < 3000) tick(g3, 1);
+    const n = Object.keys(g3.missions.completed).length;
+    return g3.missions.unlockedTier === Math.max(1, Math.min(5, 1 + Math.floor(n / 3)));
+  })());
+  check('依頼の状態が存讀檔できる', (() => {
+    const st = deserializeGame(serializeGame(gM));
+    return Object.keys(st.missions.completed).length === Object.keys(gM.missions.completed).length
+      && Object.keys(st.missions.claimed).length === Object.keys(gM.missions.claimed).length;
+  })());
+
+  // ── 天気 ──
+  check('天気が 8 種類になった', WEATHERS.length === 8, WEATHERS.join(','));
+  check('全天気に日本語名と客足倍率がある',
+    WEATHERS.every((w) => typeof WEATHER_JP[w] === 'string' && Number.isFinite(WEATHER_TRAFFIC[w])),
+    WEATHERS.map((w) => `${WEATHER_JP[w]}${Math.round(WEATHER_TRAFFIC[w] * 100)}%`).join(' '));
+  check('立地データの天気割合は合計 100 のまま', LOCATIONS.every((l) => Object.values(l.weather).reduce((a, b) => a + b, 0) === 100));
+  check('知らない天気は晴天に丸められる', (() => {
+    const raw = serializeGame(gM);
+    raw.weather = 'meteor';
+    return deserializeGame(raw).weather === 'sunny';
+  })());
+  const weatherSeen = new Set();
+  const gW = createGame({ locationId: 'sapporo_susukino', seed: 777 });
+  for (let d = 0; d < 60; d++) {
+    weatherSeen.add(gW.weather);
+    gW.day += 1;
+    gW.weather = rollWeather(gW);
+  }
+  const extraSeen = ['storm', 'heat', 'fog', 'sleet'].filter((w) => weatherSeen.has(w));
+  check('季節で追加天気が出る', extraSeen.length >= 2, `${extraSeen.join('、') || '無'}（全 ${[...weatherSeen].join('、')}）`);
+  check('燈光が全天気に対応している', (() => {
+    try { for (const w of WEATHERS) lighting.setWeather(w); return true; } catch { return false; }
+  })(), `${WEATHERS.length} 種`);
+  lighting.setWeather('sunny');
+
+  // ── 事件（イベント）──
+  check('事件が 50 件に増えた', EVENTS.length === 50, `${EVENTS.length} 件`);
+  check('事件 id がユニーク', new Set(EVENTS.map((e) => e.id)).size === EVENTS.length);
+  check('天気限定の事件がある', EVENTS.filter((e) => e.requireWeather).length >= 8,
+    `${EVENTS.filter((e) => e.requireWeather).length} 件`);
+}
+
+/* ── 20. Cherish（スプライトシートの billboard 客）──────────────── */
+say('');
+say('=== [20] Cherish（billboard 客）===');
+{
+  const sheet = await import('../src/scene/actors.js');
+  await sheet.loadSheets();
+  const st = sheet.sheetStatus('cherish');
+  check('Cherish のシートが読み込めた', st.state === 'ready', `${st.state}${st.error ? ' — ' + st.error : ''}`);
+  check('6 コマに切り出せた', sheet.sheetFrameCount('cherish') === 6, `${sheet.sheetFrameCount('cherish')} コマ`);
+
+  // 背景がクロマキーで抜けているか（テクスチャの canvas を直接見る）
+  const preview = sheet.makeSheetCharacter('cherish');
+  check('billboard スプライトを作れる', !!preview && preview.isSprite === true);
+  if (preview) {
+    check('足元が原点（center = 0.5, 0）', preview.center.x === 0.5 && preview.center.y === 0, `${preview.center.x},${preview.center.y}`);
+    check('身長が人間サイズ（1.4〜1.9 m）', preview.scale.y > 1.4 && preview.scale.y < 1.9, `${preview.scale.y.toFixed(2)} m`);
+    const cv = preview.material.map.image;
+    const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let transparent = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] === 0) transparent++;
+    check('背景が透明になっている', transparent > 100, `透明 ${transparent} px`);
+    // 反転版も作られている
+    check('左右反転版がある', (() => {
+      const ok = sheet.setSheetFrame(preview, 2, true);
+      const mirrored = preview.userData.mirror === true && preview.userData.frame === 2;
+      sheet.setSheetFrame(preview, 0, false);
+      return ok && mirrored;
+    })());
+  }
+
+  // 實際に店内へ出して描畫されるか
+  const gC = createGame({ locationId: 'tokyo_shibuya', seed: 2468 });
+  gC.simForce = true;
+  const cam = new THREE.PerspectiveCamera(46, 1.6, 0.1, 400);
+  cam.position.set(18, 14, 18);
+  cam.lookAt(0, 1, 0);
+  cam.updateMatrixWorld(true);
+  // スプライトの客を 1 組つくる（spawnGroup の kind を Cherish に差し替え）
+  const gc = spawnGroup(gC, locationById('tokyo_shibuya'));
+  // 其他節の view が同じ id を使っているので、必ずユニークな id にする
+  gc.id = 'g_cherish_test';
+  gc.kind = 'cherish';
+  gc.kindJp = 'Cherish';
+  gc.sheet = 'cherish';
+  gc.size = 1;
+  gc.members = [gc.members[0]];
+  gc.members[0].seat = -1;
+  gc.walk = { x: 2.0, z: 5.0, speed: 1.2, dir: 0 };
+  gc.members[0].x = 2.0;
+  gc.members[0].z = 5.0;
+  gc.members[0].ox = 0;
+  gc.members[0].oz = 0;
+  gC.groups.push(gc);
+  view.update(0.016, gC, cam);
+  const rec = view.groupMeshes.get(gc.id);
+  check('Cherish のスプライトが場面に出る', !!(rec && rec.meshes[0] && rec.meshes[0].isSprite), rec ? `${rec.meshes.length} 体` : '無');
+  if (rec && rec.meshes[0]) {
+    const sp = rec.meshes[0];
+    check('シートの客として印が付く', sp.userData.isSheetActor === true && sp.userData.kind === 'cherish');
+    check('床の上に立っている（足元 y ≈ floorY）',
+      Math.abs(sp.position.y - view.floorY) < 0.35, `y=${sp.position.y.toFixed(2)} floorY=${view.floorY.toFixed(2)}`);
+    check('接地影が敷かれている', !!sp.userData.shadow);
+    // 歩行でコマが進む（sim の syncMembers が付ける pose を再現してから時計を進める）
+    gc.pose = 'walk';
+    for (const m of gc.members) m.ry = 0;
+    view.update(0.016, gC, cam);
+    const f0 = sp.userData.frame;
+    const seenFrames = new Set([f0]);
+    for (let i = 0; i < 10; i++) {
+      view.update(0.05, gC, cam);
+      seenFrames.add(sp.userData.frame);
+    }
+    check('歩行でコマが切り替わる', seenFrames.size >= 3, `コマ ${[...seenFrames].join(',')}`);
+    // カメラを反対側へ回すと左右反転が変わる
+    const m0 = sp.userData.mirror;
+    cam.position.set(-18, 14, -18);
+    cam.lookAt(0, 1, 0);
+    cam.updateMatrixWorld(true);
+    view.update(0.016, gC, cam);
+    check('カメラが回ると左右反転が切り替わる', sp.userData.mirror !== m0, `${m0} → ${sp.userData.mirror}`);
+    // クリック判定（raycast）に載る
+    check('クリック判定に使える形（Sprite + userData.kind）', !!sp.userData.kind && typeof sp.raycast === 'function');
+    // 離店したら片付く（sim の tick と同じく配列からも外す）
+    gc.state = 'gone';
+    gC.groups = gC.groups.filter((x) => x.id !== gc.id);
+    view.update(0.016, gC, cam);
+    check('離店したらスプライトと影が片付く', !view.groupMeshes.has(gc.id), `${view.groupMeshes.size} 組殘留`);
+  }
+  // 客層としても定義されている（抽選・統計・看板に乗る）
+  check('客層 cherish が定義されている', !!CUSTOMER_KINDS.cherish && CUSTOMER_KINDS.cherish.sheet === 'cherish');
+  check('Cherish は一人客', CUSTOMER_KINDS.cherish.party[0] === 1 && CUSTOMER_KINDS.cherish.party[1] === 1);
 }
 
 say('');

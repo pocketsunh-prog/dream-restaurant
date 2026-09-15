@@ -341,6 +341,14 @@ export const CUSTOMER_KINDS = [
   'couple',   // 情侶：時髦便服
   'elder',    // 長者：開襟衫 + 拐杖
   'party',    // 聚餐團：喜氣便服
+  'regular',  // 常連さん：休閒便服 + 開襟外套
+  'solo',     // おひとり様：簡潔便服 + 手提包
+  'business', // 接待：深色西裝 + 領帶 + 公事包
+  'influencer', // SNS 投稿客：時髦穿搭 + 相機
+  'chefguest', // 同業の料理人：白シャツ＋腰圍裙（休日の料理人）
+  'club',     // 部活帰り：運動部ジャージ + 大背包
+  'nightworker', // 夜勤明け：マスク + ジャケット
+  'petlover', // ペット連れ：軽い上着（ペット同伴席へ）
   'chef',     // 廚師：白袍 + 圍裙 + 廚師帽
   'waiter',   // 服務生：黑背心 + 白襯衫 + 圍裙
 ];
@@ -353,6 +361,14 @@ const OUT_FITS = {
   couple: { shirt: ['#2b2b33', '#b0405a', '#f0e6da', '#5b6f9c'], shirtStyle: 'nice', bottom: ['#2b2b33', '#3c4459', '#8a7f70'] },
   elder: { shirt: ['#b9a98f', '#9aa7a0', '#c6bba6', '#8f8b84'], shirtStyle: 'cardigan', bottom: ['#4a4a4e', '#5c5346'] },
   party: { shirt: ['#d94f5c', '#f2c23a', '#3fa08a', '#e8783c'], shirtStyle: 'festive', bottom: ['#33333a', '#4a3b52'] },
+  regular: { shirt: ['#6b7f6a', '#8a6a4a', '#4a5a72', '#a08a6a'], shirtStyle: 'cardigan', bottom: ['#4a4a4e', '#5c5346', '#3f4a56'] },
+  solo: { shirt: ['#e8e4dc', '#5f7a8a', '#8a7f9a', '#c9b8a0'], shirtStyle: 'tee', bottom: ['#3f4550', '#5a5044'] },
+  business: { shirt: ['#f2f4f7', '#e8ecf2'], shirtStyle: 'button', bottom: ['#1b2130', '#232838'] },
+  influencer: { shirt: ['#f0d0e0', '#e8e0f0', '#f2e2c0', '#d8e8f0'], shirtStyle: 'nice', bottom: ['#33333f', '#4a4257', '#2f3a44'] },
+  chefguest: { shirt: ['#f4f4f0', '#e8e4dc'], shirtStyle: 'chef', bottom: ['#2f3238', '#3b3f47'] },
+  club: { shirt: ['#2f5f9a', '#c0392b', '#2f7d4f', '#e0a020'], shirtStyle: 'tee', bottom: ['#2a3040', '#33384a'] },
+  nightworker: { shirt: ['#4a5266', '#6b6250', '#3b4a5a'], shirtStyle: 'cardigan', bottom: ['#2b2f38', '#3a3a44'] },
+  petlover: { shirt: ['#7fb2d8', '#86b98d', '#e8c04a', '#e8a0b4'], shirtStyle: 'tee', bottom: ['#4a5266', '#6b6250'] },
   chef: { shirt: ['#f6f6f4'], shirtStyle: 'chef', bottom: ['#33363d', '#3b3f47'] },
   waiter: { shirt: ['#f4f4f2'], shirtStyle: 'waiter', bottom: ['#26282c'] },
 };
@@ -389,6 +405,40 @@ const KIND_DEFS = {
   chef: {
     role: 'staff', build: 'average', adult: 1, hair: ['short', 'bun', 'bald'], age: [0.15, 0.5], fixed: true,
     bag: 'none', bagP: 0, glasses: 0.1, mask: 0.05, umbrella: 0, scarf: 0, camera: 0, hat: 'chef', apron: 'waist',
+  },
+  // ── 追加客層（8 種）──────────────────────────────────────────────
+  regular: {
+    role: 'customer', build: 'average', adult: 1, hair: ['short', 'bob', 'bun', 'ponytail'], age: [0.25, 0.72],
+    bag: 'handbag', bagP: 0.4, glasses: 0.32, mask: 0.08, umbrella: 0.2, scarf: 0.25, camera: 0,
+  },
+  solo: {
+    role: 'customer', build: 'slim', adult: 1, hair: ['short', 'bob', 'ponytail', 'bun'], age: [0.08, 0.45],
+    bag: 'handbag', bagP: 0.5, glasses: 0.28, mask: 0.1, umbrella: 0.14, scarf: 0.1, camera: 0.2,
+  },
+  business: {
+    role: 'customer', build: 'average', adult: 1, hair: ['short', 'short', 'bob'], age: [0.3, 0.68],
+    bag: 'briefcase', bagP: 0.85, glasses: 0.25, mask: 0.04, umbrella: 0.3, scarf: 0.08, camera: 0,
+  },
+  influencer: {
+    role: 'customer', build: 'slim', adult: 1, hair: ['long', 'bob', 'ponytail', 'bun'], age: [0.03, 0.26],
+    bag: 'handbag', bagP: 0.8, glasses: 0.08, mask: 0.03, umbrella: 0.06, scarf: 0.18, camera: 0.9,
+  },
+  chefguest: {
+    role: 'customer', build: 'average', adult: 1, hair: ['short', 'bun', 'bald'], age: [0.22, 0.62],
+    bag: 'none', bagP: 0.05, glasses: 0.3, mask: 0.04, umbrella: 0.1, scarf: 0.1, camera: 0.15,
+    apron: 'waist', towel: 1,
+  },
+  club: {
+    role: 'customer', build: 'average', adult: 0.3, hair: ['short', 'bob', 'ponytail'], age: [0, 0.1],
+    bag: 'backpack', bagP: 0.9, glasses: 0.14, mask: 0.08, umbrella: 0.12, scarf: 0.05, camera: 0,
+  },
+  nightworker: {
+    role: 'customer', build: 'heavy', adult: 1, hair: ['short', 'bun'], age: [0.22, 0.6],
+    bag: 'none', bagP: 0.25, glasses: 0.22, mask: 0.35, umbrella: 0.16, scarf: 0.15, camera: 0,
+  },
+  petlover: {
+    role: 'customer', build: 'average', adult: 0.85, hair: ['short', 'bob', 'ponytail', 'bun'], age: [0.1, 0.55],
+    bag: 'handbag', bagP: 0.6, glasses: 0.2, mask: 0.06, umbrella: 0.22, scarf: 0.12, camera: 0.25,
   },
   waiter: {
     role: 'staff', build: 'slim', adult: 1, hair: ['short', 'bob', 'ponytail', 'bun'], age: [0.05, 0.3], fixed: true,
@@ -529,6 +579,27 @@ function resolveLook(kind, def, opts, rnd, body) {
     if (rnd.chance(0.45)) { look.outer = rnd.pick(['#2b2b33', '#8a5a4a', '#3f4a63']); look.sleeve = look.outer; }
   } else if (kind === 'party') {
     if (rnd.chance(0.35)) { look.outer = rnd.pick(['#33333a', '#5a2f3a']); look.sleeve = look.outer; }
+  } else if (kind === 'business') {
+    // 接待：しっかりしたスーツ＋必ずネクタイ
+    look.outer = opts.outerColor || rnd.pick(['#1b2130', '#232838', '#2b2f3a']);
+    look.sleeve = look.outer;
+    look.tie = rnd.pick(['#8a2b3a', '#22304a', '#3a3a44']);
+    look.collar = '#f7f7f4';
+  } else if (kind === 'regular') {
+    // 常連さん：開襟外套をよく着ている
+    if (rnd.chance(0.55)) { look.outer = rnd.pick(['#6b7f6a', '#8a6a4a', '#4a5a72']); look.sleeve = look.outer; }
+  } else if (kind === 'influencer') {
+    look.outer = opts.outerColor || rnd.pick(['#e8d0dc', '#d8e0f0', '#f0e0b8']);
+    look.sleeve = look.outer;
+  } else if (kind === 'club') {
+    // 部活帰り：ジャージ上下
+    look.outer = opts.outerColor || rnd.pick(['#2f5f9a', '#c0392b', '#2f7d4f', '#e0a020']);
+    look.sleeve = look.outer;
+    look.bottom = opts.bottomColor || look.outer;
+  } else if (kind === 'nightworker') {
+    if (rnd.chance(0.5)) { look.outer = rnd.pick(['#3b4a5a', '#4a5266']); look.sleeve = look.outer; }
+  } else if (kind === 'petlover') {
+    if (rnd.chance(0.4)) { look.outer = rnd.pick(['#7fb2d8', '#86b98d', '#c9a86a']); look.sleeve = look.outer; }
   }
 
   // 配件（背包／手提包／公事包）

@@ -1,7 +1,7 @@
 /**
  * events.js — 突發事件資料表（Event Master Data）
  *
- * 本檔案為《夢幻餐廳 3D》的事件主資料，收錄 34 筆日本在地化的餐廳經營事件，
+ * 本檔案為《夢幻餐廳 3D》的事件主資料，收錄 50 筆日本在地化的餐廳經營事件，
  * 分為正面（positive）、負面（negative）與中性（neutral）三種。
  *
  * 欄位契約（每個 entry 必有且僅有這些欄位，名稱與型別固定）：
@@ -17,7 +17,12 @@
  *                            取自 locations.js 的 kind 列舉：
  *                            downtown|shopping|business|tourist|student|
  *                            entertainment|port|onsen|market|suburban|luxury
- *   requireWeather : null 或 sunny|rain|snow|cloudy
+ *   requireWeather : null、單一天氣字串，或天氣字串陣列（後者為擴充用法）
+ *                            成員取自 game.js 的 WEATHERS：
+ *                            sunny|cloudy|rain|snow|storm|heat|fog|sleet
+ *                            單一字串：僅在目前天氣相符時發生（原有行為）。
+ *                            陣列如 ['rain','storm']：目前天氣為任一成員即成立。
+ *                            省略／null 代表不受天氣限制（原有行為）。
  *   mitigateBy     : null 或設備 id：cctv|infrared_sensor|fire_extinguisher|
  *                            fire_system|security_host|fridge|ac_unit
  *                            買了對應設備，事件損失大幅下降（desc 會說明）
@@ -46,7 +51,7 @@ export const EVENT_KINDS = ['positive', 'negative', 'neutral'];
 
 /** 全部突發事件。 */
 export const EVENTS = [
-  // ══════════════════════════ 正面 positive（12） ══════════════════════════
+  // ══════════════════════════ 正面 positive（18） ══════════════════════════
   {
     id: 'tv_interview',
     name: 'テレビ取材',
@@ -263,8 +268,116 @@ export const EVENTS = [
     duration: [180, 360],
     effects: { trafficMul: 1.7, fame: 11, staffFatigue: 8 }
   },
+  {
+    id: 'gourmet_tv_feature',
+    name: 'グルメ番組の取材',
+    kana: 'ぐるめばんぐみのしゅざい',
+    kind: 'positive',
+    weight: 3,
+    minStars: 3,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '全國網的美食節目帶著整組攝影機來借廚房，說要拍你的招牌定食。',
+    log: '美食節目取材：全國播出，名氣大漲。',
+    desc: '全國播送的美食節目花了整個下午拍攝你的招牌定食，播出時段還排在黃金檔。人氣一舉躍升，慕名而來的客人會在往後幾天陸續上門。',
+    duration: [360, 720],
+    effects: { trafficMul: 1.5, fame: 14 }
+  },
+  {
+    id: 'inbound_surge',
+    name: 'インバウンド急増',
+    kana: 'いんばうんどきゅうぞう',
+    kind: 'positive',
+    weight: 5,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: ['tourist', 'luxury', 'port', 'downtown', 'entertainment'],
+    requireWeather: null,
+    mitigateBy: null,
+    message: '拖著行李箱的外國客一桌接一桌，指著隔壁桌的料理比手畫腳地點餐。',
+    log: '外國客激增：翻桌率明顯上升。',
+    desc: '海外旅客大量湧入，店裡整天聽得到各國語言。照片菜單與比手畫腳成了主要溝通方式，來客與現金收入同步成長，但外場員工會明顯變累。',
+    duration: [240, 480],
+    effects: { trafficMul: 1.6, cash: 25000, moodAll: 5, staffFatigue: 8 }
+  },
+  {
+    id: 'health_boom',
+    name: '健康ブーム',
+    kana: 'けんこうぶーむ',
+    kind: 'positive',
+    weight: 4,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '雜誌做了低糖質特集，客人一坐下就先問有沒有多一點蔬菜的定食。',
+    log: '健康風潮：清淡菜色大受歡迎。',
+    desc: '健康風潮吹進外食市場，少油多菜的定食成為話題，連平常不來的客層也上門嚐鮮。來客穩定增加，但改用有機蔬菜與雞胸肉的進貨成本也跟著上升。',
+    duration: [720, 1440],
+    effects: { trafficMul: 1.35, costMul: 1.08, fame: 6 }
+  },
+  {
+    id: 'payday_rush',
+    name: '給料日',
+    kana: 'きゅうりょうび',
+    kind: 'positive',
+    weight: 6,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: ['business', 'downtown', 'shopping', 'entertainment'],
+    requireWeather: null,
+    mitigateBy: null,
+    message: '發薪日的傍晚，附近辦公室的員工一批批湧進來，說今天想吃好一點。',
+    log: '發薪日人潮：客單價與來客數齊揚。',
+    desc: '每月二十五號是這一帶的發薪日，錢包剛補滿的上班族特別捨得點餐，連酒水都賣得比平常好。來客與現金收入一起上升，是月內最好賺的幾天。',
+    duration: [120, 300],
+    effects: { trafficMul: 1.45, cash: 16000, moodAll: 7 }
+  },
+  {
+    id: 'natsumatsuri_crowd',
+    name: '夏祭り',
+    kana: 'なつまつり',
+    kind: 'positive',
+    weight: 5,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: ['downtown', 'shopping', 'tourist', 'suburban', 'entertainment'],
+    requireWeather: ['sunny', 'cloudy'],
+    mitigateBy: null,
+    message: '神社的夏祭り鼓聲響起，穿浴衣的客人沿著參道一路逛到店門口。',
+    log: '夏祭り人潮：宵夜時段一位難求。',
+    desc: '夏祭り的鼓聲與屋台燈籠把整條街塞得滿滿的，浴衣客與家庭客在祭典結束後擠進店裡吃宵夜。來客與現金收入同時暴增，員工得一路忙到打烊。',
+    duration: [180, 360],
+    effects: { trafficMul: 1.7, cash: 20000, moodAll: 8, staffFatigue: 10, dirt: 8 }
+  },
+  {
+    id: 'nenmatsu_nenshi',
+    name: '年末年始の書き入れ時',
+    kana: 'ねんまつねんしのかきいれどき',
+    kind: 'positive',
+    weight: 5,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '年底的街道擠滿採買人潮，返鄉的家族與尾牙客把預約表填得滿滿的。',
+    log: '年末年始旺季：營業額衝上年度高峰。',
+    desc: '年末年始是一年裡最旺的檔期，返鄉家族、年始聚餐與觀光客同時上門。營業額大幅成長，但食材漲價與加班費也讓成本與員工疲勞一起上升。',
+    duration: [300, 720],
+    effects: { trafficMul: 1.6, cash: 30000, costMul: 1.1, moodAll: 6, staffFatigue: 12 }
+  },
 
-  // ══════════════════════════ 負面 negative（16） ══════════════════════════
+  // ══════════════════════════ 負面 negative（24） ══════════════════════════
   {
     id: 'typhoon_approaching',
     name: '台風接近',
@@ -553,8 +666,152 @@ export const EVENTS = [
     duration: [0, 0],
     effects: { cash: -15000, dirt: 25, moodAll: -4 }
   },
+  {
+    id: 'typhoon_landfall',
+    name: '台風上陸',
+    kana: 'たいふうじょうりく',
+    kind: 'negative',
+    weight: 3,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: ['rain', 'storm'],
+    mitigateBy: 'security_host',
+    message: '颱風直接在附近登陸，招牌被吹得嘎嘎作響，玻璃門外什麼都看不見。',
+    log: '颱風登陸：暴風雨讓街上淨空。',
+    desc: '颱風挾著暴風圈在本地上陸，來客幾乎歸零，備好的食材只能報廢，店裡還得忙著處理漏水的汙漬。簽約的防災警備系統（security_host）能協助加固門窗、搬移設備，把損失壓到最低。',
+    duration: [300, 720],
+    effects: { trafficMul: 0.25, cash: -60000, moodAll: -16, staffFatigue: 20, dirt: 26 }
+  },
+  {
+    id: 'blizzard',
+    name: '吹雪',
+    kana: 'ふぶき',
+    kind: 'negative',
+    weight: 4,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['snow', 'sleet'],
+    mitigateBy: 'security_host',
+    message: '風雪把整條街吹成一片白，連門口的暖簾都結上了一層冰。',
+    log: '暴風雪：交通中斷，來客凍結。',
+    desc: '暴風雪讓視線幾乎為零，客人不敢出門，食材配送也全面延誤。員工得頂著風雪提早到店除雪、替水管與設備防凍。防災警備系統（security_host）能協助除雪與防凍，減少停擺時間。',
+    duration: [240, 600],
+    effects: { trafficMul: 0.35, cash: -18000, moodAll: -12, staffFatigue: 18, dirt: 14 }
+  },
+  {
+    id: 'heat_wave',
+    name: '猛暑日',
+    kana: 'もうしょび',
+    kind: 'negative',
+    weight: 5,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['heat'],
+    mitigateBy: 'fridge',
+    message: '氣溫飆破三十八度，柏油路都在冒煙，廚房裡像烤箱一樣。',
+    log: '猛暑日：食慾下降、食材耗損加快。',
+    desc: '連日猛暑讓客人食慾大減、只想點冷食，廚房溫度飆高，生鮮食材的耗損也明顯加快。妥善使用冷藏設備（fridge）控溫，能減少報廢與隨之而來的客訴。',
+    duration: [300, 720],
+    effects: { trafficMul: 0.8, costMul: 1.12, cash: -10000, moodAll: -10, staffFatigue: 15 }
+  },
+  {
+    id: 'long_rain',
+    name: '長雨',
+    kana: 'ながあめ',
+    kind: 'negative',
+    weight: 5,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: ['rain'],
+    mitigateBy: 'fridge',
+    message: '雨已經下了整整一週，門口的傘架積滿了水，客人明顯少了一截。',
+    log: '連日長雨：客足持續低迷。',
+    desc: '雨季的長雨一連下了好幾天，外出用餐的人變少，濕氣也讓乾貨與麵粉容易受潮變質。來客下滑、保存耗損增加，只能靠外帶訂單撐住營收；善用冷藏設備（fridge）管理庫存可減少報廢。',
+    duration: [1440, 4320],
+    effects: { trafficMul: 0.7, costMul: 1.1, moodAll: -8, dirt: 12 }
+  },
+  {
+    id: 'dense_fog',
+    name: '濃霧',
+    kana: 'のうむ',
+    kind: 'negative',
+    weight: 3,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['fog'],
+    mitigateBy: null,
+    message: '濃霧把街景吞掉一半，招牌燈在霧裡暈成一團光，客人說差點找不到店。',
+    log: '濃霧：能見度差，來客與配送受阻。',
+    desc: '濃霧讓能見度降到幾十公尺，開車的客人不敢上路，食材配送也遲到。門口的招牌幾乎看不見，來客數下滑，遲到的員工還得摸黑趕路。',
+    duration: [120, 360],
+    effects: { trafficMul: 0.7, cash: -6000, moodAll: -6, staffFatigue: 6 }
+  },
+  {
+    id: 'food_origin_fraud',
+    name: '産地偽装の報道',
+    kana: 'さんちぎそうのほうどう',
+    kind: 'negative',
+    weight: 3,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '晚間新聞踢爆供應商偽造產地標示，你昨天才進的那批貨正好在名單上。',
+    log: '產地偽裝報導：菜單信任度動搖。',
+    desc: '供應商把進口貨標成國產高級食材，新聞一報就燒到用貨的店家。客人開始逐道追問產地，人氣與現金收入一起下滑，得靠公開進貨來源慢慢重建信任。',
+    duration: [720, 1440],
+    effects: { trafficMul: 0.6, fame: -14, cash: -25000, moodAll: -10, staffFatigue: 8 }
+  },
+  {
+    id: 'kitchen_equipment_recall',
+    name: '厨房機器のリコール',
+    kana: 'ちゅうぼうききのりこーる',
+    kind: 'negative',
+    weight: 3,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: 'fire_extinguisher',
+    message: '廠商寄來一封掛號信，說你主力爐具的型號有安全疑慮，必須立刻停用。',
+    log: '廚房機器召回：設備停用與檢修支出。',
+    desc: '製造商公告爐具型號有起火疑慮，要求全面停用並等待料件更換。主力爐口停擺、出餐速度大降，還得支付臨時檢修費。平時備妥滅火器（fire_extinguisher）與檢修包，能縮短停擺時間。',
+    duration: [180, 480],
+    effects: { cash: -40000, equipBroken: 'stove', trafficMul: 0.8, moodAll: -8, staffFatigue: 8 }
+  },
+  {
+    id: 'water_pipe_burst',
+    name: '水道管の破裂',
+    kana: 'すいどうかんのはれつ',
+    kind: 'negative',
+    weight: 3,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['snow', 'sleet'],
+    mitigateBy: null,
+    message: '寒流把地下的老舊水管凍裂了，水從店門口的地面不斷湧出來。',
+    log: '水管凍裂：停水、廚房淹水。',
+    desc: '嚴寒讓埋在地下的老舊水管凍裂，水柱從門口湧出，廚房被迫停水、地板一片狼藉。修繕費與清理時間都跑不掉，還得臨時買水應急才能繼續出餐。',
+    duration: [180, 480],
+    effects: { cash: -38000, trafficMul: 0.5, moodAll: -10, dirt: 22, staffFatigue: 12 }
+  },
 
-  // ══════════════════════════ 中性 neutral（6） ══════════════════════════
+  // ══════════════════════════ 中性 neutral（8） ══════════════════════════
   {
     id: 'shotengai_cleanup',
     name: '商店街の清掃活動',
@@ -662,6 +919,42 @@ export const EVENTS = [
     desc: '綜藝節目的外景隊借了門口的街道拍攝，圍觀人潮擋住入口動線。雖然拿到了些許場地費，但真正進門用餐的客人變少了。',
     duration: [60, 180],
     effects: { cash: 6000, trafficMul: 0.85, moodAll: -3 }
+  },
+  {
+    id: 'hatsuyuki',
+    name: '初雪',
+    kana: 'はつゆき',
+    kind: 'neutral',
+    weight: 4,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: ['snow', 'sleet'],
+    mitigateBy: null,
+    message: '今年第一片雪落在門口的暖簾上，客人進門時都忍不住回頭多看一眼。',
+    log: '今年初雪：窗邊座位特別受歡迎。',
+    desc: '今年的初雪無聲地落下，靠窗的座位忽然成了最搶手的位置，客人邊吃邊看雪。來客數變化不大，但店裡的氣氛明顯柔和了些，地板也得多拖幾次。',
+    duration: [120, 360],
+    effects: { moodAll: 5, trafficMul: 1.05, dirt: 6, staffFatigue: 3 }
+  },
+  {
+    id: 'peer_inspection',
+    name: '同業者の視察',
+    kana: 'どうぎょうしゃのしさつ',
+    kind: 'neutral',
+    weight: 3,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '隔壁町的老闆帶著筆記本上門，從菜單一路問到廚房的動線。',
+    log: '同業視察：員工緊張、口碑微升。',
+    desc: '同業的老闆特地來店視察，坐在角落一頁頁抄著菜單與價格，還要求參觀廚房。員工被看得渾身不自在，但對方事後在商圈聚會上替你說了幾句好話。',
+    duration: [60, 180],
+    effects: { moodAll: -4, staffFatigue: 6, fame: 2 }
   }
 ];
 
@@ -679,12 +972,27 @@ export function eventById(id) {
 }
 
 /**
+ * 判斷天氣條件是否成立。
+ * requireWeather 可為 null（不限天氣）、單一天氣字串（原有用法），
+ * 或天氣字串陣列（擴充用法，命中任一成員即可）。
+ * @param {null|string|string[]} required 事件的天氣條件
+ * @param {string} weather 目前天氣
+ * @returns {boolean} 是否符合
+ */
+function weatherMatches(required, weather) {
+  if (required === null || required === undefined) return true;
+  if (Array.isArray(required)) return required.indexOf(weather) !== -1;
+  return required === weather;
+}
+
+/**
  * 依當下遊戲狀態抽出一個突發事件。
  *
  * 篩選條件：
  *   stars        : minStars <= stars <= maxStars
  *   minute       : onlyWhileOpen 的事件僅在 660..1320（11:00-22:00）內出現
- *   weather      : 事件有 requireWeather 時必須相符
+ *   weather      : 事件有 requireWeather 時必須相符；
+ *                   requireWeather 為陣列時，天氣只要命中任一成員即可
  *   locationKind : 事件有 locations 時必須包含此地點種類
  *   exclude      : 排除清單中的 id
  *
@@ -712,7 +1020,7 @@ export function rollEvent(state) {
     stars >= event.minStars &&
     stars <= event.maxStars &&
     !(event.onlyWhileOpen && (minute < 660 || minute > 1320)) &&
-    (event.requireWeather === null || event.requireWeather === weather) &&
+    weatherMatches(event.requireWeather, weather) &&
     (event.locations === null || event.locations.indexOf(locationKind) !== -1) &&
     exclude.indexOf(event.id) === -1
   ));

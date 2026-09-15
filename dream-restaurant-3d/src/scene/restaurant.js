@@ -8,6 +8,7 @@ import * as Chars from './characters.js';
 import { uniformById } from '../data/uniforms.js';
 import { dishById } from '../data/dishes.js';
 import { allTables, crowdInfo } from '../sim/game.js';
+import { sheetReady, makeSheetCharacter, setSheetFrame } from './actors.js';
 
 /* ------------------------------------------------------------ 工具 */
 
@@ -1251,11 +1252,18 @@ export class RestaurantView {
       seen.add(g.id);
       let rec = this.groupMeshes.get(g.id);
       if (!rec) {
-        rec = { meshes: [], pets: [] };
+        rec = { meshes: [], pets: [], shadows: [], sheet: null };
+        // スプライトシートで描く客層（Cherish）：billboard スプライトを使う
+        const useSheet = !!(g.sheet && sheetReady(g.sheet));
+        rec.sheet = useSheet ? g.sheet : null;
         for (let i = 0; i < g.size; i++) {
           const seed = g.members[i]?.seed ?? (i * 977 + 13);
           let m = null;
-          try { m = Chars.makeCharacter({ kind: g.kind, seed, height: 1.62 + (seed % 17) / 100 }); } catch { m = null; }
+          if (useSheet) {
+            m = makeSheetCharacter(g.sheet);
+          } else {
+            try { m = Chars.makeCharacter({ kind: g.kind, seed, height: 1.62 + (seed % 17) / 100 }); } catch { m = null; }
+          }
           if (!m || !m.isObject3D) {
             m = new THREE.Mesh(
               new THREE.CapsuleGeometry(0.2, 0.9, 4, 8),
@@ -1263,7 +1271,12 @@ export class RestaurantView {
             );
             m.position.y = 0.7;
           }
-          shadowize(m);
+          if (useSheet) {
+            // billboard は光を受けないので、接地影だけ別に敷く
+            m.userData.kind = g.kind;
+          } else {
+            shadowize(m);
+          }
           this.root.add(m);
           rec.meshes.push(m);
         }
@@ -1289,9 +1302,14 @@ export class RestaurantView {
         m.visible = true;
         const onTatami = (mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && this._onTatami(g, mem);
         const y = gy + ((mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && onTatami ? this.tatamiY : this.floorY);
+        m.position.set(mem.x, y, mem.z);
+        // ── billboard（Cherish）：6 コマ歩行をカメラ基準で回し、進行方向で左右反転 ──
+        if (m.userData.isSheetActor) {
+          this._updateSheetActor(m, mem, pose, y, i);
+          continue;
+        }
         // 榻榻米上的矮桌是「盤坐」：座高只有坐墊那麼高，不然人會飄在半空中
         m.userData.seatHeight = (floorSeat && onTatami) ? 0.09 : 0.45;
-        m.position.set(mem.x, y, mem.z);
         m.rotation.y = mem.ry || 0;
         try { Chars.setPose(m, pose === 'eat' ? 'eat' : pose, this._clock + i * 0.3); } catch { /* 姿勢失敗就維持 */ }
       }
@@ -1319,6 +1337,12 @@ export class RestaurantView {
       if (seen.has(id)) continue;
       for (const m of rec.meshes) {
         this.root.remove(m);
+        // billboard の接地影は root 直下にあるので一緒に片付ける
+        const sh = m.userData && m.userData.shadow;
+        if (sh) {
+          this.root.remove(sh);
+          sh.geometry?.dispose?.();
+        }
         try { Chars.disposeCharacter?.(m); } catch { /* ignore */ }
       }
       for (const p of (rec.pets || [])) this.root.remove(p);
@@ -1330,6 +1354,40 @@ export class RestaurantView {
   _onTatami(g, mem) {
     const t = this.plan.tatami;
     return mem.x > t.x - t.w / 2 && mem.x < t.x + t.w / 2 && mem.z > t.z - t.d / 2 && mem.z < t.z + t.d / 2;
+  }
+
+  /**
+   * billboard スプライト（Cherish）の 1 フレーム更新。
+   *   ・歩行：6 コマを位置＋時計から回す（同じ場所で止まらない）
+   *   ・待機／着席：1 コマ目。着席は少し下げて座って見せる
+   *   ・左右反転：進行方向とカメラの右方向の內積で決める（カメラが回っても自然）
+   *   ・接地影：スプライトには影が無いので AO を敷く
+   */
+  _updateSheetActor(sp, mem, pose, baseY, idx) {
+    const walking = pose === 'walk' || pose === 'carry';
+    const seated = pose === 'sit' || pose === 'eat';
+    const phase = Math.floor((mem.x + mem.z) * 3) + Math.floor(this._clock * 7) + idx;
+    const frame = walking ? (phase % 6) : (seated ? 1 : 0);
+    const ry = mem.ry || 0;
+    // 進行方向（+Z が正面）とカメラの右方向から左右反転を決める
+    let mirror = false;
+    const cam = this.camera;
+    if (cam) {
+      const fx = Math.sin(ry), fz = Math.cos(ry);
+      const rx = cam.matrixWorld.elements[0];
+      const rz = cam.matrixWorld.elements[2];
+      mirror = (fx * rx + fz * rz) < 0;
+    }
+    setSheetFrame(sp, frame, mirror);
+    const drop = seated ? 0.28 : 0;                 // 座っているときは少し沈める
+    sp.position.set(mem.x, baseY - drop, mem.z);
+    if (!sp.userData.shadow) {
+      const sh = aoBlob(this.root, mem.x, baseY + 0.012, mem.z, 0.42, 0.24, 0.85);
+      sh.userData.owner = sp;
+      sp.userData.shadow = sh;
+    } else {
+      sp.userData.shadow.position.set(mem.x, baseY + 0.012, mem.z);
+    }
   }
 
   /* ── 調理場的動態：爐火、蒸氣、調理中の標籤 ───────────────────── */
@@ -1458,8 +1516,9 @@ export class RestaurantView {
 
   /* ── 每幀更新 ───────────────────────────────────────────────── */
 
-  update(dt, state) {
+  update(dt, state, camera) {
     this._clock += dt;
+    if (camera) this.camera = camera;
     if (state.menu) this._menuRef = state.menu;
     this.syncGroups(state, dt);
     this.syncStaff(state);

@@ -11,6 +11,7 @@ import { LOCATIONS, locationById } from '../data/locations.js';
 import { DISHES, dishById } from '../data/dishes.js';
 import { STAFF_POOL, staffById, candidatesFor, ROLE_LABEL } from '../data/staff.js';
 import { initEvents, tickEvents, recomputeMults, activeEventInfo, forceEvent } from './events.js';
+import { initMissions, tickMissions } from './missions.js';
 
 /* ---------------------------------------------------------------- 常數 */
 
@@ -18,9 +19,23 @@ export const OPEN_MINUTE = 11 * 60;
 export const CLOSE_MINUTE = 23 * 60;
 export const START_CASH = 999_999_999;
 
-export const WEATHERS = ['sunny', 'cloudy', 'rain', 'snow'];
-export const WEATHER_JP = { sunny: '晴れ', cloudy: '曇り', rain: '雨', snow: '雪' };
-export const WEATHER_TRAFFIC = { sunny: 1.0, cloudy: 0.94, rain: 0.78, snow: 0.66 };
+export const WEATHERS = ['sunny', 'cloudy', 'rain', 'snow', 'storm', 'heat', 'fog', 'sleet'];
+export const WEATHER_JP = {
+  sunny: '晴れ', cloudy: '曇り', rain: '雨', snow: '雪',
+  storm: '暴風雨', heat: '猛暑', fog: '霧', sleet: 'みぞれ'
+};
+/**
+ * 天気ごとの客足倍率。雨・雪・暴風雨・みぞれは客足を落とし、
+ * 猛暑は逆に少しだけ増える（外を歩きたくないので伸びは控えめ）。
+ */
+export const WEATHER_TRAFFIC = {
+  sunny: 1.0, cloudy: 0.94, rain: 0.78, snow: 0.66,
+  storm: 0.42, heat: 1.06, fog: 0.88, sleet: 0.72
+};
+/** 天気の「つらさ」0..1（顧客の機嫌・屋外系イベントの判定に使う） */
+export const WEATHER_SEVERITY = {
+  sunny: 0, cloudy: 0.1, rain: 0.5, snow: 0.7, storm: 1, heat: 0.6, fog: 0.35, sleet: 0.75
+};
 
 /** 走路速度：公尺 / 遊戲分鐘（會再乘上員工 speed 能力） */
 export const WALK_M_PER_MIN = 2.6;
@@ -37,7 +52,19 @@ export const CUSTOMER_KINDS = {
   family:  { jp: '家族連れ', zh: '家庭客', party: [3, 5], spend: 1.05, patience: 0.95, hours: { 11: 1.2, 12: 1.6, 17: 1.8, 18: 2.0, 19: 1.8, 20: 1.2 } },
   couple:  { jp: 'カップル', zh: '情侶',  party: [2, 2], spend: 1.25, patience: 1.15, hours: { 18: 2.0, 19: 2.4, 20: 2.2, 21: 1.6, 22: 1.0 } },
   elder:   { jp: 'ご年配',  zh: '銀髮族', party: [1, 2], spend: 0.95, patience: 1.4,  hours: { 11: 1.6, 12: 1.4, 17: 1.4, 18: 1.2 } },
-  party:   { jp: '宴会',   zh: '聚餐團', party: [4, 6], spend: 1.35, patience: 0.9,  hours: { 18: 2.2, 19: 2.4, 20: 2.0, 21: 1.2 } }
+  party:   { jp: '宴会',   zh: '聚餐團', party: [4, 6], spend: 1.35, patience: 0.9,  hours: { 18: 2.2, 19: 2.4, 20: 2.0, 21: 1.2 } },
+  // ── 追加客層：立地の customerMix に無くても base の割合で全地點に現れる ──
+  //    pet  = 必ずペット連れ / fame = 満足したときの評價への追加ウエイト
+  regular:    { jp: '常連さん',    zh: '常客',     party: [1, 2], spend: 1.1,  patience: 1.45, base: 7, hours: { 11: 1.4, 12: 1.6, 13: 1.4, 17: 1.4, 18: 1.8, 19: 1.8, 20: 1.6, 21: 1.4, 22: 1.0 } },
+  solo:       { jp: 'おひとり様',  zh: '單人客',   party: [1, 1], spend: 0.95, patience: 1.2,  base: 6, hours: { 11: 1.4, 12: 1.8, 13: 1.8, 14: 1.6, 15: 1.4, 16: 1.2, 17: 1.4, 18: 1.6, 19: 1.6, 20: 1.4 } },
+  business:   { jp: '接待',        zh: '商務接待', party: [2, 4], spend: 1.75, patience: 1.25, base: 3, hours: { 18: 2.4, 19: 2.6, 20: 2.2, 21: 1.4 } },
+  influencer: { jp: 'SNS投稿客',   zh: '社群客',   party: [1, 2], spend: 1.45, patience: 1.05, base: 3, fame: 1.6, hours: { 12: 1.8, 13: 1.6, 14: 1.4, 18: 1.6, 19: 1.8, 20: 1.6 } },
+  chefguest:  { jp: '同業の料理人', zh: '同業廚師', party: [1, 2], spend: 1.3,  patience: 1.15, base: 2, fame: 1.4, hours: { 14: 2.0, 15: 2.2, 16: 1.8, 17: 1.4 } },
+  club:       { jp: '部活帰り',    zh: '社團學生', party: [3, 5], spend: 0.85, patience: 1.15, base: 4, hours: { 16: 2.0, 17: 2.4, 18: 2.0, 19: 1.2 } },
+  nightworker:{ jp: '夜勤明け',    zh: '夜班下班', party: [1, 2], spend: 1.05, patience: 0.95, base: 3, hours: { 11: 2.0, 12: 1.6, 21: 1.4, 22: 1.8 } },
+  petlover:   { jp: 'ペット連れ',  zh: '寵物客',   party: [2, 3], spend: 1.15, patience: 1.2,  base: 4, pet: true, hours: { 11: 1.6, 12: 1.6, 13: 1.4, 14: 1.4, 15: 1.2, 16: 1.2 } },
+  // スプライトシート（6 コマ歩行）で描かれる特別な常連。一人で來て、甘い物とコーヒーを好む。
+  cherish:    { jp: 'Cherish',     zh: 'Cherish',   party: [1, 1], spend: 1.5,  patience: 1.4,  base: 3, fame: 1.5, sheet: 'cherish', hours: { 11: 1.4, 12: 1.6, 13: 1.6, 14: 1.8, 15: 1.8, 16: 1.4, 17: 1.2, 18: 1.4, 19: 1.6, 20: 1.4 } }
 };
 export const KIND_IDS = Object.keys(CUSTOMER_KINDS);
 const KIND_JP = Object.fromEntries(Object.entries(CUSTOMER_KINDS).map(([k, v]) => [k, v.jp]));
@@ -363,6 +390,7 @@ export function createGame({ locationId = 'tokyo_shibuya', seed = 20240601, star
 
   state.weather = rollWeather(state, loc);
   initEvents(state);
+  initMissions(state);
   return state;
 }
 
@@ -502,7 +530,7 @@ export function emptyDay() {
  *   locations : 每個待過的地點的最佳日、累計營收、天數
  */
 export function emptyLedger() {
-  return { dishes: {}, kinds: {}, hours: {}, staff: {}, locations: {} };
+  return { dishes: {}, kinds: {}, hours: {}, staff: {}, locations: {}, meta: {} };
 }
 
 /** 把 ledger 補齊（讀舊存檔時用） */
@@ -514,7 +542,8 @@ export function ensureLedger(state) {
     kinds: L.kinds || base.kinds,
     hours: L.hours || base.hours,
     staff: L.staff || base.staff,
-    locations: L.locations || base.locations
+    locations: L.locations || base.locations,
+    meta: L.meta || base.meta
   };
   return state.ledger;
 }
@@ -535,15 +564,41 @@ function menuPrice(state, id) {
   return m?.price || dishById(id)?.price || 0;
 }
 
+/**
+ * その日の天気を決める。
+ *   1) 立地ごとの基本割合（sunny / cloudy / rain / snow、合計 100）で抽選
+ *   2) その上で季節・氣温・前日からの流れによる追加天気を上書き抽選する
+ *      （猛暑・暴風雨・霧・みぞれ）。立地データを増やさずに天気の種類を増やすための仕組み。
+ */
 export function rollWeather(state, loc = locationById(state.locationId)) {
   const w = loc?.weather || { sunny: 40, cloudy: 30, rain: 20, snow: 10 };
   const r = state.rng() * 100;
+  let base = 'sunny';
   let acc = 0;
   for (const k of WEATHERS) {
-    acc += w[k] || 0;
-    if (r < acc) return k;
+    const share = w[k] || 0;
+    if (!share) continue;
+    acc += share;
+    if (r < acc) { base = k; break; }
   }
-  return 'sunny';
+  // 追加天気の抽選（月 = 30 日區切りの季節で判定）
+  const day = state.day || 1;
+  const season = Math.floor(((day - 1) % 360) / 30);      // 0..11（0 = 4 月想定）
+  const coldSeason = season >= 9 || season <= 2;          // 冬〜初春
+  const hotSeason = season >= 4 && season <= 7;            // 夏
+  const severe = WEATHER_SEVERITY[base] || 0;
+  const roll = state.rng();
+  // 猛暑：夏の晴れ／曇りの日に出やすい
+  if (hotSeason && (base === 'sunny' || base === 'cloudy') && roll < 0.22) return 'heat';
+  // 暴風雨：雨の日がさらに荒れる（初秋が最も多い）
+  if (base === 'rain' && roll < (season >= 6 && season <= 9 ? 0.3 : 0.16)) return 'storm';
+  // みぞれ：冬の雨（雪にならない程度の冷たい雨）
+  if (base === 'rain' && coldSeason && roll < 0.34) return 'sleet';
+  // 霧：寒い時期の曇り／晴れの朝
+  if (coldSeason && (base === 'cloudy' || base === 'sunny') && roll < 0.2) return 'fog';
+  // 前日が荒れていたら、翌日は少し落ち着いた曇りになりやすい
+  if (severe >= 0.7 && base === 'sunny' && roll < 0.28) return 'cloudy';
+  return base;
 }
 
 export function money(v) {
@@ -720,14 +775,31 @@ export function pickKind(state, loc) {
   const mix = loc.customerMix || {};
   const pool = [];
   let total = 0;
-  for (const [kind, weight] of Object.entries(mix)) {
-    if (!weight) continue;
+  // テスト／デモ用：forceKindLeft があるうちはその客層を優先する（Cherish の確認に使う）
+  if (state.forceKindLeft > 0 && CUSTOMER_KINDS[state.forceKind]) {
+    state.forceKindLeft -= 1;
+    return state.forceKind;
+  }
+  // 立地的な客層（customerMix）＋ 全地點共通の追加客層（base）の両方を候補にする
+  const consider = (kind, weight) => {
     const def = CUSTOMER_KINDS[kind];
-    if (!def) continue;
+    if (!def || !weight) return;
     const h = (def.hours[hour] || 0) + 0.08;
     const w = weight * h;
     total += w;
     pool.push({ kind, w: total });
+  };
+  for (const [kind, weight] of Object.entries(mix)) {
+    if (CUSTOMER_KINDS[kind]) consider(kind, weight);
+    else consider(kind, weight);   // mix にしか無い客層もそのまま扱う
+  }
+  // customerMix に載っていない追加客層（base 持ち）を加える
+  for (const [kind, def] of Object.entries(CUSTOMER_KINDS)) {
+    if (mix[kind] !== undefined) continue;
+    if (!def.base) continue;
+    // 知名度が上がると「わざわざ來てくれる」客層（同業・SNS）が少し増える
+    const fameBoost = def.fame ? (0.7 + Math.min(1.1, (state.fame || 0) / 55)) : 1;
+    consider(kind, def.base * fameBoost);
   }
   if (!total) return 'office';
   const r = state.rng() * total;
@@ -747,10 +819,10 @@ export function spawnGroup(state, loc) {
   const kind = pickKind(state, loc);
   const size = partySizeFor(state, kind);
   const def = CUSTOMER_KINDS[kind];
-  // 顧客多樣化：寵物（約 13% 的家庭／情侶／銀髮族會帶寵物）
+  // 顧客多樣化：寵物（家庭／情侶／銀髮約 13%；ペット連れ客層は必ず連れてくる）
   const PET_KINDS = ['dog', 'cat', 'rabbit', 'bird'];
   let pet = null, petSeed = 0;
-  if ((kind === 'family' || kind === 'couple' || kind === 'elder') && state.rng() < 0.13) {
+  if (def.pet || ((kind === 'family' || kind === 'couple' || kind === 'elder') && state.rng() < 0.13)) {
     pet = PET_KINDS[Math.floor(state.rng() * PET_KINDS.length)];
     petSeed = Math.floor(state.rng() * 9999);
   }
@@ -782,6 +854,8 @@ export function spawnGroup(state, loc) {
     spend: def.spend,
     pet,
     petSeed,
+    // スプライトシートで描く客層（billboard）。未指定なら手続き的モデルを使う
+    sheet: def.sheet || null,
     fromWest,
     exit: { x: exitX, z: exitZ },
     released: false,
@@ -798,7 +872,10 @@ export function spawnGroup(state, loc) {
     });
   }
   state.today.kindCount[kind] = (state.today.kindCount[kind] || 0) + 1;
-  if (pet) state.today.petGroups = (state.today.petGroups || 0) + 1;
+  if (pet) {
+    state.today.petGroups = (state.today.petGroups || 0) + 1;
+    bumpLedger(state, 'meta', 'petGroups', { count: 1 });
+  }
   bumpLedger(state, 'kinds', kind, { groups: 1, guests: size });
   bumpLedger(state, 'hours', String(Math.min(23, Math.floor(state.minute / 60))), { groups: 1, guests: size });
   return g;
@@ -924,6 +1001,15 @@ export function tick(state, dtMin) {
   const evs = tickEvents(state, dtMin);
   for (const e of evs) emit(state, 'event', e);
 
+  // ミッション（依頼）：達成したら通知イベントを積む（賞金は HUD の「受取」で）
+  const fresh = tickMissions(state);
+  for (const f of fresh) {
+    emit(state, 'mission', {
+      id: f.mission.id, jp: f.mission.jp, zh: f.mission.zh,
+      reward: f.mission.reward
+    });
+  }
+
   for (let i = state.groups.length - 1; i >= 0; i--) {
     if (state.groups[i].state === 'gone') state.groups.splice(i, 1);
   }
@@ -978,6 +1064,7 @@ function updateGroup(state, g, dtMin) {
       if (!g.doorAnnounced) {
         g.doorAnnounced = true;
         emit(state, 'door', { size: g.size, kind: g.kind });
+        if (g.sheet === 'cherish') emit(state, 'cherish', { size: g.size });
       }
       // 有位子 → 保留桌位並建立帶位任務；沒位子 → 到店外排隊
       if (!trySeatTable(state, g)) {
@@ -1270,6 +1357,8 @@ function settlePayment(state, g, rev, quality = 1) {
   const hour = String(Math.min(23, Math.floor(state.minute / 60)));   // 打烊後的收尾一律算最後一小時
   bumpLedger(state, 'kinds', g.kind, { guests: g.size, revenue: rev + tip });
   bumpLedger(state, 'hours', hour, { guests: g.size, revenue: rev + tip });
+  // 荒天（暴風雨・雪・みぞれ・猛暑）の接客数はミッションで使う
+  if ((WEATHER_SEVERITY[state.weather] || 0) >= 0.6) bumpLedger(state, 'meta', 'severeServed', { count: g.size });
   for (const id of (g.orders || [])) bumpLedger(state, 'dishes', id, { revenue: menuPrice(state, id) });
   const table = tableOf(state, g);
   if (table) {
@@ -1279,7 +1368,9 @@ function settlePayment(state, g, rev, quality = 1) {
       addTask(state, 'cleanTable', { tableId: table.id, tx: table.x, tz: table.z, floor: table.floor || 0 });
     }
   }
-  state.fame = Math.min(100, state.fame + 0.05 * g.size * quality);
+  // 客層ごとの「噂の広がり」：同業の料理人や SNS 投稿客は満足すると評價が大きく動く
+  const fameMul = CUSTOMER_KINDS[g.kind]?.fame ?? 1;
+  state.fame = Math.min(100, state.fame + 0.05 * g.size * quality * fameMul);
 }
 
 /**
@@ -1434,6 +1525,7 @@ function completeTask(state, s, task) {
       state.restroom.dirt = 0;
       emit(state, 'clean', { what: 'restroom' });
       stat({ cleaned: 1 });
+      bumpLedger(state, 'meta', 'cleanRestroom', { count: 1 });
       break;
     }
     default: break;
