@@ -1351,7 +1351,7 @@ function updateGroup(state, g, dtMin) {
       }
       const chefs = state.staff.filter((s) => s.role === 'chef').length;
       if (chefs === 0 || g.t > g.patience) {
-        emit(state, 'angry', { size: g.size, kind: g.kind, reason: chefs ? 'slowKitchen' : 'noChef' });
+        emitAngry(state, g, chefs ? 'slowKitchen' : 'noChef');
         state.today.angry += g.size;
         state.angryTotal += g.size;
         releaseTable(state, g);
@@ -1374,7 +1374,7 @@ function updateGroup(state, g, dtMin) {
       }
       const waiters = state.staff.filter((s) => s.role === 'waiter').length;
       if (waiters === 0 || g.t > g.patience) {
-        emit(state, 'angry', { size: g.size, kind: g.kind, reason: waiters ? 'slowServe' : 'noWaiter' });
+        emitAngry(state, g, waiters ? 'slowServe' : 'noWaiter');
         state.today.angry += g.size;
         state.angryTotal += g.size;
         clearPassFor(state, g.id);

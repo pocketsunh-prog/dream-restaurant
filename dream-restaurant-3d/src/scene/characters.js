@@ -348,7 +348,10 @@ export const CUSTOMER_KINDS = [
   'chefguest', // 同業の料理人：白シャツ＋腰圍裙（休日の料理人）
   'club',     // 部活帰り：運動部ジャージ + 大背包
   'nightworker', // 夜勤明け：マスク + ジャケット
-  'petlover', // ペット連れ：軽い上着（ペット同伴席へ）
+  'petlover',
+  'actor',
+  'celebrity',
+  'tvcrew',
   'chef',     // 廚師：白袍 + 圍裙 + 廚師帽
   'waiter',   // 服務生：黑背心 + 白襯衫 + 圍裙
 ];
@@ -369,6 +372,9 @@ const OUT_FITS = {
   club: { shirt: ['#2f5f9a', '#c0392b', '#2f7d4f', '#e0a020'], shirtStyle: 'tee', bottom: ['#2a3040', '#33384a'] },
   nightworker: { shirt: ['#4a5266', '#6b6250', '#3b4a5a'], shirtStyle: 'cardigan', bottom: ['#2b2f38', '#3a3a44'] },
   petlover: { shirt: ['#7fb2d8', '#86b98d', '#e8c04a', '#e8a0b4'], shirtStyle: 'tee', bottom: ['#4a5266', '#6b6250'] },
+  actor: { shirt: ['#22242c', '#3b3f4a', '#efece4'], shirtStyle: 'nice', bottom: ['#1e2028', '#2b2f3a'] },
+  celebrity: { shirt: ['#e8578a', '#f2c23a', '#7a4a8a', '#39c0c0'], shirtStyle: 'festive', bottom: ['#2a2a34', '#4a4257'] },
+  tvcrew: { shirt: ['#2f3a4a', '#3f4a5a', '#5a5f52'], shirtStyle: 'tee', bottom: ['#2b2f38', '#3a3a44'] },
   chef: { shirt: ['#f6f6f4'], shirtStyle: 'chef', bottom: ['#33363d', '#3b3f47'] },
   waiter: { shirt: ['#f4f4f2'], shirtStyle: 'waiter', bottom: ['#26282c'] },
 };
@@ -439,6 +445,18 @@ const KIND_DEFS = {
   petlover: {
     role: 'customer', build: 'average', adult: 0.85, hair: ['short', 'bob', 'ponytail', 'bun'], age: [0.1, 0.55],
     bag: 'handbag', bagP: 0.6, glasses: 0.2, mask: 0.06, umbrella: 0.22, scarf: 0.12, camera: 0.25,
+  },
+  actor: {
+    role: 'customer', build: 'slim', adult: 1, hair: ['short', 'bob', 'bun'], age: [0.08, 0.35],
+    bag: 'handbag', bagP: 0.5, glasses: 0.95, mask: 0.25, umbrella: 0.05, scarf: 0.35, camera: 0.1,
+  },
+  celebrity: {
+    role: 'customer', build: 'slim', adult: 1, hair: ['long', 'bob', 'ponytail', 'bun'], age: [0.05, 0.28],
+    bag: 'handbag', bagP: 0.8, glasses: 0.9, mask: 0.3, umbrella: 0.05, scarf: 0.2, camera: 0.3,
+  },
+  tvcrew: {
+    role: 'customer', build: 'average', adult: 1, hair: ['short', 'bob', 'ponytail', 'bun'], age: [0.12, 0.45],
+    bag: 'backpack', bagP: 0.9, glasses: 0.35, mask: 0.06, umbrella: 0.15, scarf: 0.08, camera: 1,
   },
   waiter: {
     role: 'staff', build: 'slim', adult: 1, hair: ['short', 'bob', 'ponytail', 'bun'], age: [0.05, 0.3], fixed: true,

@@ -310,6 +310,9 @@ export class RestaurantView {
       // 吊燈、行燈（每層）
         this.buildLightingFixtures(fg, f, isGround);
 
+      // 各樓層に男性用・女性用の洗手間（2F 以上；1F は _buildGroundFixtures が作る）
+      if (f > 0) this._buildRestrooms(fg, f);
+
       // 桌子＋椅子＋餐具（各樓層）
       this._buildTablesForFloor(fg, p.floorPlans[f]?.tables || [], f);
     }
@@ -439,6 +442,31 @@ export class RestaurantView {
       sp.userData = { cv, tex, key: '' };
       this.root.add(sp);
       this.cookLabels.push(sp);
+    }
+  }
+
+  /* ── 各樓層の洗手間（男性用・女性用）─────────────
+     floorPlans[f].restrooms = { m: {x,z}, f: {x,z} } をそのまま使う。 */
+  _buildRestrooms(fg, floorIdx) {
+    const p = this.plan;
+    const rw = p.floorPlans && p.floorPlans[floorIdx] ? p.floorPlans[floorIdx].restrooms : null;
+    if (!rw) return;
+    const zWall = -p.depth / 2 + 0.16;
+    this.restroomSpots = this.restroomSpots || [];
+    for (const which of ['m', 'f']) {
+      const spot = rw[which];
+      if (!spot) continue;
+      const door = makePropSafe('noren', { w: 1.0, h: 0.55, text: which === 'm' ? '男性' : '女性', color: which === 'm' ? '#2f4858' : '#7a3f52' }, { x: 1.0, y: 0.55, z: 0.06 });
+      door.position.set(spot.x, 1.92, zWall);
+      fg.add(shadowize(door));
+      const sign = makePropSafe('signboard', { w: 0.5, h: 0.3, text: which === 'm' ? '♂' : '♀' }, { x: 0.5, y: 0.3, z: 0.07 });
+      sign.position.set(spot.x, 2.55, zWall - 0.02);
+      fg.add(shadowize(sign));
+      const basin = makePropSafe('sink', { w: 0.7, h: 0.85, d: 0.45 }, { x: 0.7, y: 0.85, z: 0.45 });
+      basin.position.set(spot.x, 0, -p.depth / 2 + 0.55);
+      fg.add(shadowize(basin));
+      aoBlob(fg, spot.x, 0.011, -p.depth / 2 + 0.45, 0.6, 0.35, 0.5);
+      this.restroomSpots.push({ floor: floorIdx, which, x: spot.x, z: spot.z });
     }
   }
 

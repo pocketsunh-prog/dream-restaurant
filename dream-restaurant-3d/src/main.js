@@ -427,6 +427,16 @@ function handleSimEvent(ev) {
     hud.toast('常連の Cherish が來店（今日もおひとり様）', 'good');
     return;
   }
+  if (ev.type === 'famous') {
+    audio.playSfx('starup', { gain: 1 });
+    hud.toast('\u2b50 ' + ev.jp + '\uff08' + ev.zh + '\uff09\u304c\u4f86\u5e97\uff01 \u3057\u3063\u304b\u308a\u304a\u3082\u3066\u306a\u3057\u3057\u307e\u3057\u3087\u3046', 'good');
+    return;
+  }
+  if (ev.type === 'famousAngry') {
+    audio.playSfx('error', { gain: 1 });
+    hud.toast('\ud83d\udca5 ' + ev.jp + '\uff08' + ev.zh + '\uff09\u3092\u6012\u3089\u305b\u3066\u3057\u307e\u3063\u305f\u2026 \u5642\u3067\u8a55\u50f9\u304c\u4e0b\u304c\u308a\u307e\u3059', 'bad');
+    return;
+  }
   // 星級アップ（打烊結算で條件を満たしたとき）
   if (ev.type === 'starup') {
     audio.playSfx('starup', { gain: 1 });

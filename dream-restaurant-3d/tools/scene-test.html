@@ -701,7 +701,7 @@ say('=== [19] 追加客層・従業員・依頼・天気 ===');
   // ── 客層 ──
   const gK = createGame({ locationId: 'tokyo_shibuya', seed: 5150 });
   const kinds = Object.keys(CUSTOMER_KINDS);
-  check('客層が 16 種類に増えた', kinds.length === 16, kinds.join(','));
+  check('客層が 19 種類に増えた', kinds.length === 19, kinds.join(','));
   const NEW_KINDS = ['regular', 'solo', 'business', 'influencer', 'chefguest', 'club', 'nightworker', 'petlover'];
   check('追加客層が全部ある', NEW_KINDS.every((k) => CUSTOMER_KINDS[k]),
     NEW_KINDS.filter((k) => !CUSTOMER_KINDS[k]).join(',') || '8 種 OK');
