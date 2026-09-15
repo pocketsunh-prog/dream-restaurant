@@ -228,7 +228,6 @@ function facePainter(f, palette) {
   const { skinLight, line, irisBase, lipCol } = palette;
   const SS = FACE_SS;
   const S = (v) => v * SS;
-  const ink = (a) => hexA(line, a);
 
   const ellipse = (cx, cy, rx, ry, col) => {
     f.fillStyle = col;
