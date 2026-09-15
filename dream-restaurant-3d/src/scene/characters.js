@@ -74,6 +74,12 @@ function hexLerp(a, b, t) {
 }
 const shade = (hex, amt) =>
   hexLerp(hex, amt >= 0 ? '#ffffff' : '#000000', Math.abs(amt));
+// 給 canvas 用的半透明色（#rrggbb + alpha → rgba()）
+function hexA(hex, a) {
+  const c = new THREE.Color(hex);
+  const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + clamp(a, 0, 1).toFixed(3) + ')';
+}
 
 /* ── 幾何快取（同參數共用一個 BufferGeometry；disposeCharacter 模組共用不釋放） ── */
 const _geoCache = new Map();
@@ -203,95 +209,374 @@ function faceMatOf(tex) {
 const FACE_W = 32;
 const FACE_H = 26;
 const FACE_ASPECT = FACE_W / FACE_H;
+// 臉部貼圖的超取樣倍率：實際畫布是 128×104，畫完再縮回 32×26
+// （刻意用「實際尺寸畫布 + 座標乘 SS」而不是 ctx.setTransform：後者在部分
+//   無頭瀏覽器的 2D canvas 上會把 arc/ellipse/clip 畫歪）
+const FACE_SS = 4;
 
 function canUseCanvas() {
   return typeof document !== 'undefined' && !!document.createElement;
 }
 
-function facePainter(f, dark) {
-  // 以「點」為單位繪製（nearest 放大 → 點陣臉，遠看很清楚）
-  const px = (x, y, w, h, col) => { f.fillStyle = col; f.fillRect(x, y, w, h); };
-  const rounded = (x, y, w, h, col, corner) => {
+/* 臉部繪製小工具（全部以 32×26 的「臉座標」為單位；實作在 FACE_SS 倍解析度畫布上，最後縮回去）
+   目的：同樣是程序產生、同樣是 32×26 的 CanvasTexture，但五官可以畫得柔軟、有層次。
+   ─ eye()   ：縱長杏眼的動畫眼（上眼線／虹膜漸層／眼神光／上眼瞼陰影／下睫毛）
+   ─ brow()  ：細而有角度的眉（角度由表情決定；老人較低較細）
+   ─ mouth() ：閉嘴微笑／開口笑（牙齒）／生氣咬牙
+   ─ blush() ：臉頰腮紅（放射狀漸層、極淡） */
+function facePainter(f, palette) {
+  const { skinLight, line, irisBase, lipCol } = palette;
+  const SS = FACE_SS;
+  const S = (v) => v * SS;
+  const ink = (a) => hexA(line, a);
+
+  const ellipse = (cx, cy, rx, ry, col) => {
     f.fillStyle = col;
-    f.fillRect(x, y + (corner ? 0 : 0), w, h);
-    if (corner) { f.fillRect(x + 1, y, w - 2, h); f.fillRect(x, y + 1, w, h - 2); }
+    f.beginPath();
+    f.ellipse(S(cx), S(cy), S(Math.max(rx, 0.04)), S(Math.max(ry, 0.04)), 0, 0, Math.PI * 2);
+    f.fill();
   };
-  const eye = (cx, cy) => {
-    px(cx - 3, cy - 1, 6, 3, dark);       // 眼白／眼型
-    px(cx - 2, cy, 5, 2, '#2b2119');      // 瞳孔
-    px(cx - 2, cy - 2, 5, 1, dark);       // 上眼線
-    px(cx + 1, cy - 1, 1, 1, '#f4efe6');  // 一點眼神光
+  const path = (col, pts, close) => {
+    f.fillStyle = col;
+    f.beginPath();
+    f.moveTo(S(pts[0][0]), S(pts[0][1]));
+    for (let i = 1; i < pts.length; i++) f.lineTo(S(pts[i][0]), S(pts[i][1]));
+    if (close !== false) f.closePath();
+    f.fill();
   };
-  const brow = (cx, cy, tilt, thick, col) => {
-    for (let i = 0; i < 8; i++) {
-      const y = cy + Math.round(tilt * (i - 3.5) / 3.5);
-      px(cx - 4 + i, y, 1, thick, col);
+  const curve = (pts) => {
+    f.beginPath();
+    f.moveTo(S(pts[0][0]), S(pts[0][1]));
+    for (let i = 1; i + 2 < pts.length; i += 3) f.bezierCurveTo(S(pts[i][0]), S(pts[i][1]), S(pts[i + 1][0]), S(pts[i + 1][1]), S(pts[i + 2][0]), S(pts[i + 2][1]));
+  };
+  const stroke = (w, col, cap) => {
+    f.lineWidth = S(w);
+    f.strokeStyle = col;
+    f.lineCap = cap || 'round';
+    f.lineJoin = 'round';
+    f.stroke();
+  };
+  const grad = (x0, y0, x1, y1) => f.createLinearGradient(S(x0), S(y0), S(x1), S(y1));
+
+  // 虹膜：外圈較深 → 底部透光，兩層（上暗下亮）做出動畫眼睛的通透感
+  function iris(cx, cy, top, bot, w, h) {
+    const outline = () => {
+      f.beginPath();
+      f.ellipse(S(cx), S(cy), S(w * 0.5), S(h * 0.5), 0, 0, Math.PI * 2);
+    };
+    f.save();
+    outline();
+    f.clip();
+    f.fillStyle = irisBase;
+    f.fillRect(S(cx - w), S(cy - h), S(w * 2), S(h * 2));
+    const g = grad(cx, top, cx, bot);
+    g.addColorStop(0, hexA(irisBase, 0.55));
+    g.addColorStop(0.52, hexA(irisBase, 0));
+    g.addColorStop(1, 'rgba(255,255,255,0.60)');
+    f.fillStyle = g;
+    f.fillRect(S(cx - w), S(cy - h), S(w * 2), S(h * 2));
+    f.restore();
+    // 深色外圍（不要用純黑：用比虹膜更深的同色系）
+    outline();
+    stroke(0.26, hexLerp(irisBase, '#1a1420', 0.5));
+    ellipse(cx, cy, w * 0.30, h * 0.31, hexA('#241c26', 0.26));   // 瞳孔（深紫褐，不是黑）
+    ellipse(cx - w * 0.15, cy - h * 0.21, w * 0.17, h * 0.19, 'rgba(255,255,255,0.96)');  // 主眼神光
+    ellipse(cx + w * 0.17, cy + h * 0.17, w * 0.085, h * 0.10, 'rgba(255,255,255,0.80)'); // 小亮點
+  }
+
+  // 單眼。side: +1 = 畫面左眼、-1 = 畫面右眼（內眼角／外眼角方向）
+  function eye(cx, cy, w, h, side, o) {
+    const opt = o || {};
+    const rx = w * 0.5;
+    const sharp = opt.sharp == null ? 0.2 : opt.sharp;
+    const eyePath = () => {
+      f.beginPath();
+      f.moveTo(S(cx + side * rx * (1 - sharp * 0.35)), S(cy - h * 0.03));
+      f.bezierCurveTo(S(cx + side * rx * 0.42), S(cy - h * 0.50), S(cx - side * rx * 0.30), S(cy - h * 0.52), S(cx - side * rx), S(cy - h * 0.26));
+      f.bezierCurveTo(S(cx - side * rx * 0.50), S(cy + h * 0.26), S(cx + side * rx * 0.28), S(cy + h * 0.50), S(cx + side * rx), S(cy + h * 0.24));
+      f.closePath();
+    };
+    f.save();
+    eyePath();
+    f.fillStyle = opt.sclera || '#fdf8f4';
+    f.fill();
+    f.clip();
+    const ix = cx + side * w * 0.02;
+    iris(ix, cy + h * 0.01, cy - h * 0.55, cy + h * 0.55, w * 0.62, h * 0.90);
+    // 上眼瞼陰影：蓋在眼珠上方，眼睛才有深度
+    const sh = grad(cx, cy - h * 0.52, cx, cy + h * 0.06);
+    sh.addColorStop(0, hexA(line, 0.34));
+    sh.addColorStop(1, hexA(line, 0));
+    f.fillStyle = sh;
+    f.fillRect(S(cx - w), S(cy - h), S(w * 2), S(h * 2));
+    f.restore();
+    // 上眼線（外眼角變細、內眼角收尖）
+    eyePath();
+    stroke(0.30, hexA(line, 0.95), 'round');
+    flick(cx, cy, w, h, side);
+    // 下眼線：很細、只落在中段
+    f.beginPath();
+    f.moveTo(S(cx + side * rx * 0.30), S(cy + h * 0.45));
+    f.bezierCurveTo(S(cx - side * rx * 0.12), S(cy + h * 0.48), S(cx - side * rx * 0.40), S(cy + h * 0.38), S(cx - side * rx * 0.70), S(cy + h * 0.16));
+    stroke(0.10, hexA(line, 0.15), 'round');
+    // 女性化的下睫毛：外眼角一撮短短的
+    if (opt.lashes) {
+      f.beginPath();
+      f.moveTo(S(cx + side * rx * 0.80), S(cy + h * 0.06));
+      f.lineTo(S(cx + side * rx * 1.14), S(cy - h * 0.20));
+      stroke(0.14, hexA(line, 0.45), 'round');
+      f.beginPath();
+      f.moveTo(S(cx + side * rx * 0.52), S(cy + h * 0.40));
+      f.lineTo(S(cx + side * rx * 0.74), S(cy + h * 0.20));
+      stroke(0.12, hexA(line, 0.35), 'round');
     }
-  };
-  return { px, rounded, eye, brow };
+  }
+
+  // 外眼角那一撇睫毛（所有角色都有，短而柔）
+  function flick(cx, cy, w, h, side) {
+    f.beginPath();
+    f.moveTo(S(cx + side * w * 0.42), S(cy - h * 0.22));
+    f.lineTo(S(cx + side * w * 0.62), S(cy - h * 0.44));
+    stroke(0.22, hexA(line, 0.88), 'round');
+  }
+
+  // 眉：pos = 眉尾（外側）比眉頭高的量（+ 上揚、- 下垂）；pos 為 null → 生氣眉（內低外高）
+  function brow(cx, cy, w, tilt, col, pos) {
+    const half = w * 0.5;
+    const inner = cx - tilt * half;              // 靠近鼻子的那一端
+    const outer = cx + tilt * half;
+    const ix = inner, ox = outer;
+    const iy = cy + (pos == null ? 0.30 : -pos * 0.5);
+    const oy = cy + (pos == null ? -0.64 : pos * 0.5);
+    const c1x = cx - tilt * w * 0.16, c1y = iy + (oy - iy) * 0.30 - 0.34;
+    const c2x = cx + tilt * w * 0.20, c2y = oy + (iy - oy) * 0.25 - 0.26;
+    const tip = w * 0.17;
+    curve([[ix, iy], [c1x, c1y], [c2x, c2y], [ox - tilt * tip, oy]]);
+    stroke(0.78, hexA(col, 1), 'round');
+    curve([[ix + w * 0.04, iy - 0.06],
+      [c1x + w * 0.03, c1y - 0.06], [c2x + w * 0.02, c2y - 0.06], [ox - tilt * tip * 1.1, oy - 0.03]]);
+    stroke(0.34, hexA(col, 0.95), 'round');
+  }
+
+  // 嘴：mode = 'smile' 閉嘴微笑／'open' 開口笑／'grit' 生氣咬牙
+  function mouth(mx, my, w, mode) {
+    const half = w * 0.5;
+    if (mode === 'open') {
+      // 開口笑：上緣是唇線、下緣是圓弧（D 字），裡面露齒＋舌
+      f.beginPath();
+      f.moveTo(S(mx - half), S(my - 0.10));
+      f.bezierCurveTo(S(mx - w * 0.52), S(my + 1.75), S(mx + w * 0.52), S(my + 1.75), S(mx + half), S(my - 0.10));
+      f.closePath();
+      f.fillStyle = '#4b2328';
+      f.fill();
+      stroke(0.26, hexA(line, 0.72), 'round');
+      f.save();
+      f.beginPath();
+      f.moveTo(S(mx - half), S(my - 0.10));
+      f.bezierCurveTo(S(mx - w * 0.52), S(my + 1.75), S(mx + w * 0.52), S(my + 1.75), S(mx + half), S(my - 0.10));
+      f.closePath();
+      f.clip();
+      f.fillStyle = '#fdf8f2';
+      f.fillRect(S(mx - w), S(my - 0.18), S(w * 2), S(0.92));
+      ellipse(mx, my + w * 0.40, w * 0.20, w * 0.15, '#c9615f');   // 舌
+      f.restore();
+      ellipse(mx, my + w * 0.28, w * 0.20, w * 0.08, hexA('#5c2b30', 0.5));
+    } else if (mode === 'grit') {
+      // 生氣咬牙：深色嘴縫＋上排牙齒，下唇壓一條深色線
+      path('#4a2429', [[mx - half * 0.95, my - 0.10], [mx + half * 0.95, my + 0.12],
+        [mx + half * 0.95, my + 1.02], [mx - half * 0.95, my + 0.78]]);
+      stroke(0.14, '#fdf8f4', 'butt');
+      f.beginPath();
+      f.moveTo(S(mx - half * 0.9), S(my + 0.46));
+      f.bezierCurveTo(S(mx - w * 0.16), S(my + 0.66), S(mx + w * 0.16), S(my + 0.70), S(mx + half * 0.9), S(my + 0.50));
+      stroke(0.22, hexA(line, 0.85), 'round');
+      f.beginPath();
+      f.moveTo(S(mx - half * 0.92), S(my + 1.12));
+      f.bezierCurveTo(S(mx - w * 0.14), S(my + 1.52), S(mx + w * 0.16), S(my + 1.42), S(mx + half * 0.92), S(my + 0.86));
+      stroke(0.36, hexLerp(lipCol, '#000000', 0.3), 'round');
+    } else {
+      // 閉嘴微笑：唇形＋唇線＋一點下唇亮面
+      const dip = 0.30;
+      f.beginPath();
+      f.moveTo(S(mx - half), S(my));
+      f.bezierCurveTo(S(mx - w * 0.28), S(my + dip), S(mx + w * 0.28), S(my + dip), S(mx + half), S(my));
+      f.bezierCurveTo(S(mx + w * 0.24), S(my + dip + 1.15), S(mx - w * 0.24), S(my + dip + 1.15), S(mx - half), S(my));
+      f.closePath();
+      f.fillStyle = lipCol;
+      f.fill();
+      f.beginPath();
+      f.moveTo(S(mx - half), S(my));
+      f.bezierCurveTo(S(mx - w * 0.28), S(my + dip), S(mx + w * 0.28), S(my + dip), S(mx + half), S(my));
+      stroke(0.28, hexA(hexLerp(lipCol, '#5c2b30', 0.38), 0.95), 'round');
+      f.beginPath();
+      f.moveTo(S(mx - w * 0.26), S(my + dip + 0.52));
+      f.bezierCurveTo(S(mx - w * 0.09), S(my + dip + 0.95), S(mx + w * 0.09), S(my + dip + 0.95), S(mx + w * 0.26), S(my + dip + 0.52));
+      stroke(0.16, hexA(hexLerp(lipCol, '#ffffff', 0.5), 0.5), 'round');
+    }
+  }
+
+  function blush(cx, cy, rx, ry, a) {
+    const k = a == null ? 1 : a;
+    const g = f.createRadialGradient(S(cx), S(cy), 0, S(cx), S(cy), S(Math.max(rx, ry)));
+    g.addColorStop(0, 'rgba(232,124,120,' + (0.30 * k).toFixed(3) + ')');
+    g.addColorStop(0.55, 'rgba(232,124,120,' + (0.13 * k).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(232,124,120,0)');
+    f.fillStyle = g;
+    f.beginPath();
+    f.ellipse(S(cx), S(cy), S(rx), S(ry), 0, 0, Math.PI * 2);
+    f.fill();
+  }
+
+  return { ellipse, path, curve, stroke, eye, brow, mouth, blush };
 }
 
 function buildFaceCanvas(kind, expression, look) {
+  const SS = FACE_SS;                                // 超取樣倍率（臉座標 × SS = 實際畫布）
   const cv = document.createElement('canvas');
-  cv.width = FACE_W;
-  cv.height = FACE_H;
-  const f = cv.getContext('2d');
-  if (!f) return null;
+  cv.width = FACE_W * SS;                            // 實際畫布 128×104，最後縮回 32×26
+  cv.height = FACE_H * SS;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return null;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-  const skin = look.skin;
+  const skin = look.skin || '#f6d9bf';
   const age = look.age || 0;
-  const dark = hexLerp(skin, '#2b2119', 0.72);
-  const browCol = look.browCol || hexLerp(dark, '#000000', 0.15);
-  const lipCol = age > 0.8 ? hexLerp(dark, '#7a5c50', 0.35) : hexLerp(dark, '#8c4a4a', 0.28);
-  const p = facePainter(f, dark);
-
-  // 底：膚色 + 細微明暗
-  f.fillStyle = skin;
-  f.fillRect(0, 0, FACE_W, FACE_H);
-  f.fillStyle = 'rgba(0,0,0,0.05)';
-  f.fillRect(0, 14, FACE_W, 12);                      // 下半臉略暗
-  f.fillStyle = 'rgba(255,255,255,0.06)';
-  f.fillRect(3, 3, FACE_W - 6, 7);                    // 額頭亮
-
-  const ex = 8, ey = 13;
-  p.eye(ex, ey);
-  p.eye(FACE_W - 1 - ex, ey);
+  const child = age < 0.18;
+  const baby = age < 0.1;
+  const old = age > 0.78;
 
   const angry = expression === 'angry';
   const happy = expression === 'happy';
-  const bt = angry ? 1.1 : 0.25;
-  p.brow(ex + 1, angry ? 7 : 6, bt, 2, browCol);
-  p.brow(FACE_W - 1 - ex - 1, angry ? 7 : 6, -bt, 2, browCol);
 
-  // 嘴
+  // 顏料：全部由 look 既有的欄位推導（膚色／髮色），沒給就退回合理預設
+  const hairTone = look.hairTone || '#3a2a1e';
+  const skinLight = hexLerp(skin, '#fff4e8', 0.06);  // 只提亮一點：臉是貼圖，本來就比素體亮
+  const line = hexLerp(hexLerp(skin, '#4a2f28', 0.72), hairTone, 0.34);     // 線畫色（暖褐，不是純黑）
+  const browCol = look.browCol || hexLerp(hairTone, '#000000', 0.1);
+  const irisBase = hexLerp(hairTone, '#6f5a8c', 0.55);                      // 虹膜：深而不死黑
+  const lipCol = old ? hexLerp(skin, '#a06a63', 0.44) : hexLerp(skin, '#c9605f', 0.46);
+  const sclera = hexLerp('#ffffff', skin, 0.06);
+
+  // 角色編號：只用來決定眉型／嘴角等「個性」，不會讓五官走位
+  const keyStr = [skin, age.toFixed(2), hairTone, browCol, look.skirt ? 'f' : 'm', look.hair || ''].join('~');
+  const rnd = makeRand('face:' + keyStr);
+  const browTilt = rnd.range(0.88, 1.12);            // 眉的傾斜（>1 = 八字眉、<1 = 劍眉）
+  const lipW = rnd.range(0.94, 1.06);
+  const cheekT = rnd.range(0.9, 1.1);
+
+  // 女性化的下睫毛：只依賴 look 已經有的欄位（裙裝／長髮），沒有就中性處理
+  const hs = look.hair;
+  const feminine = !!look.skirt || (look.skirt == null && (hs === 'long' || hs === 'ponytail'));
+
+  const p = facePainter(ctx, { skinLight, line, irisBase, lipCol });
+
   const mx = FACE_W / 2;
-  const my = 22;
-  if (angry) {
-    for (let i = 0; i <= 6; i++) p.px(mx - 3 + i, my - Math.round(Math.abs(i - 3) * 0.5), 1, 2, lipCol);
-  } else if (happy) {
-    for (let i = 0; i <= 8; i++) p.px(mx - 4 + i, my - Math.round(Math.abs(i - 4) * 0.7), 1, 2, lipCol);
-    p.px(mx - 3, my - 2, 6, 1, hexLerp(lipCol, '#ffffff', 0.75)); // 露齒
-  } else {
-    p.px(mx - 3, my, 7, 2, lipCol);
-    p.px(mx - 2, my - 1, 5, 1, lipCol);
-  }
+  const ex = FACE_W * 0.252;                         // 眼中心（左右對稱）
+  const ey = FACE_H * 0.405;                         // 眼睛位置：比舊版高一點，臉頰留白更好看
+  const eyeW = (6.4 + (baby ? 0.9 : child ? 0.5 : 0) - age * 0.5) * (feminine ? 1.05 : 1);
+  const eyeH = (7.6 + (baby ? 1.5 : child ? 0.9 : 0) - age * 0.9) * (feminine ? 1.04 : 1);
 
-  // 腮紅（年輕角色）
-  if (age < 0.5) {
-    f.fillStyle = 'rgba(200,110,100,0.18)';
-    f.fillRect(4, 17, 5, 2);
-    f.fillRect(FACE_W - 9, 17, 5, 2);
-  }
-  // 年長者：法令紋
-  if (age > 0.8) {
-    f.fillStyle = 'rgba(0,0,0,0.10)';
-    f.fillRect(7, 19, 3, 1);
-    f.fillRect(FACE_W - 10, 19, 3, 1);
-    f.fillRect(4, 8, 5, 1);
-    f.fillRect(FACE_W - 9, 8, 5, 1);
-  }
+  // 0 × 0 → 以下全部用「臉座標 × SS」直接畫在 128×104 上（不用 ctx transform）
+  const S = (v) => v * SS;
+  ctx.clearRect(0, 0, cv.width, cv.height);
 
-  return cv;
+  // 1) 臉型：蜜桃形（上寬下窄）＋ 邊緣通透，貼在頭球上不會出現方形色塊
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(S(mx), S(FACE_H * 0.075));
+  ctx.bezierCurveTo(S(FACE_W * 0.83), S(FACE_H * 0.095), S(FACE_W * 0.94), S(FACE_H * 0.42), S(FACE_W * 0.845), S(FACE_H * 0.625));
+  ctx.bezierCurveTo(S(FACE_W * 0.76), S(FACE_H * 0.865), S(FACE_W * 0.63), S(FACE_H * 0.99), S(mx), S(FACE_H * 0.99));
+  ctx.bezierCurveTo(S(FACE_W * 0.37), S(FACE_H * 0.99), S(FACE_W * 0.24), S(FACE_H * 0.865), S(FACE_W * 0.155), S(FACE_H * 0.625));
+  ctx.bezierCurveTo(S(FACE_W * 0.06), S(FACE_H * 0.42), S(FACE_W * 0.17), S(FACE_H * 0.095), S(mx), S(FACE_H * 0.075));
+  ctx.closePath();
+  ctx.clip();
+
+  // 底色：比素體膚色稍亮（臉是貼圖，沒有吃頭部的光照）
+  ctx.fillStyle = skinLight;
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  // 額頭亮部／下半臉暗部／下頜收暗
+  let g = ctx.createLinearGradient(0, S(FACE_H * 0.06), 0, S(FACE_H * 0.62));
+  g.addColorStop(0, 'rgba(255,255,255,0.16)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, cv.width, S(FACE_H * 0.7));
+  g = ctx.createLinearGradient(0, S(FACE_H * 0.58), 0, S(FACE_H));
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(96,54,44,0.20)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, S(FACE_H * 0.5), cv.width, S(FACE_H * 0.5));
+  g = ctx.createRadialGradient(S(mx), S(FACE_H * 0.86), 0, S(mx), S(FACE_H * 0.86), S(FACE_W * 0.55));
+  g.addColorStop(0, 'rgba(150,90,70,0.13)');
+  g.addColorStop(1, 'rgba(150,90,70,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, S(FACE_H * 0.4), cv.width, S(FACE_H * 0.6));
+
+  // 2) 眼睛（先畫眼、再畫眉，眉毛不會被眼線壓到）
+  p.eye(mx - ex, ey, eyeW, eyeH, +1, { lashes: feminine && !old, sclera });
+  p.eye(mx + ex, ey, eyeW, eyeH, -1, { lashes: feminine && !old, sclera });
+
+  // 3) 眉：neutral 平順、happy 抬高、angry 內低外高（八字壓下來）
+  const by = ey - eyeH * 0.5 - (baby ? 1.55 : child ? 1.45 : 1.25) - (old ? -0.15 : 0);
+  const browW = (5.4 + (child ? 0.4 : 0) - age * 0.35) * (feminine ? 0.95 : 1.05);
+  if (angry) p.brow(mx - ex, by + 0.25, browW, browTilt, browCol, null);
+  else if (happy) p.brow(mx - ex, by - 1.05, browW, browTilt * 1.05, browCol, 0.55);
+  else p.brow(mx - ex, by, browW, browTilt, browCol, old ? 0.04 : 0.30);
+  if (angry) p.brow(mx + ex, by + 0.25, browW, -browTilt, browCol, null);
+  else if (happy) p.brow(mx + ex, by - 1.05, browW, -browTilt * 1.05, browCol, -0.55);
+  else p.brow(mx + ex, by, browW, -browTilt, browCol, old ? -0.04 : -0.30);
+
+  // 4) 鼻：只是一個小陰影＋一點高光
+  p.ellipse(mx + 0.05, FACE_H * 0.575, 0.78, 0.55, hexA(line, 0.20));
+  p.ellipse(mx - 0.02, FACE_H * 0.568, 0.26, 0.20, 'rgba(255,255,255,0.35)');
+  p.ellipse(mx - 0.85, FACE_H * 0.592, 0.15, 0.11, hexA(line, 0.12));
+  p.ellipse(mx + 0.95, FACE_H * 0.592, 0.15, 0.11, hexA(line, 0.12));
+
+  // 5) 嘴
+  const mouthY = FACE_H * 0.765;
+  const mw = (child ? 5.6 : 6.2) * lipW;
+  p.mouth(mx, mouthY, mw, angry ? 'grit' : happy ? 'open' : 'smile');
+
+  // 6) 腮紅：極淡的放射漸層（年輕角色）
+  if (age < 0.55) {
+    const a = 0.5 + (0.55 - age) * 0.9;
+    p.blush(mx - ex - 0.35, ey + FACE_H * 0.115, 2.5 * cheekT, 2.0, a);
+    p.blush(mx + ex + 0.35, ey + FACE_H * 0.115, 2.5 * cheekT, 2.0, a);
+  }
+  // 年長者：法令紋／額紋／眼尾紋，淡淡幾筆
+  if (old) {
+    const wr = hexA(line, 0.15);
+    p.curve([[mx - 3.4, FACE_H * 0.60], [mx - 2.4, FACE_H * 0.68], [mx - 1.9, FACE_H * 0.77]]);
+    p.stroke(0.16, wr, 'round');
+    p.curve([[mx + 3.4, FACE_H * 0.60], [mx + 2.4, FACE_H * 0.68], [mx + 1.9, FACE_H * 0.77]]);
+    p.stroke(0.16, wr, 'round');
+    p.curve([[mx - 2.6, FACE_H * 0.14], [mx - 1.2, FACE_H * 0.115], [mx + 0.2, FACE_H * 0.135]]);
+    p.stroke(0.14, hexA(line, 0.11), 'round');
+    p.curve([[mx - 1.0, FACE_H * 0.185], [mx + 0.4, FACE_H * 0.165], [mx + 1.8, FACE_H * 0.185]]);
+    p.stroke(0.14, hexA(line, 0.10), 'round');
+    p.curve([[mx - ex - 1.5, ey - 0.15], [mx - ex - 2.3, ey + 0.05], [mx - ex - 2.5, ey + 0.45]]);
+    p.stroke(0.14, wr, 'round');
+    p.curve([[mx + ex + 1.5, ey - 0.15], [mx + ex + 2.3, ey + 0.05], [mx + ex + 2.5, ey + 0.45]]);
+    p.stroke(0.14, wr, 'round');
+  }
+  ctx.restore();
+
+  // 7) 縮回 32×26（超取樣的細節都靠這一步的濾波平滑掉）
+  return downscaleFace(cv);
+}
+
+// 把 SS 倍畫布縮回 FACE_W×FACE_H（透明像素要先清乾淨，不能留超取樣的方塊）
+function downscaleFace(big) {
+  const out = document.createElement('canvas');
+  out.width = FACE_W;
+  out.height = FACE_H;
+  const c = out.getContext('2d');
+  if (!c) return big;
+  c.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in c) c.imageSmoothingQuality = 'high';
+  c.clearRect(0, 0, FACE_W, FACE_H);
+  c.drawImage(big, 0, 0, big.width, big.height, 0, 0, FACE_W, FACE_H);
+  return out;
 }
 
 function faceTexture(faceKey, expression, look) {
@@ -302,7 +587,8 @@ function faceTexture(faceKey, expression, look) {
     if (!canvas) return null;
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.magFilter = THREE.NearestFilter;
+    // 臉是手繪感的柔邊五官，用線性放大（nearest 會讓 32×26 的貼圖變成黑塊）
+    tex.magFilter = THREE.LinearFilter;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.generateMipmaps = true;
     tex.wrapS = THREE.ClampToEdgeWrapping;
@@ -777,7 +1063,9 @@ export function makeCharacter(opts = {}) {
   jaw.scale.set(headW * 0.40, headHH * 0.36, headW * 0.40);
 
   /* 臉：CanvasTexture 貼在頭前方的平面上 */
-  const faceKey = [look.skin, look.age.toFixed(2), look.hairTone, look.browCol].join('~');
+  // key 加上髮型／裙裝：眉型與下睫毛會跟著這兩個欄位變（快取仍然是 per (key, 表情)）
+  const faceKey = [look.skin, look.age.toFixed(2), look.hairTone, look.browCol,
+    look.hair || '', look.skirt ? 'f' : 'm'].join('~');
   faceTex = canUseCanvas() ? faceTexture(faceKey, 'neutral', look) : null;
   const faceW = headW * 0.98;
   const faceH = faceW / FACE_ASPECT;
