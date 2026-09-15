@@ -79,6 +79,7 @@ export function defaultSettings() {
   return {
     openMinute: OPEN_MINUTE,
     closeMinute: CLOSE_MINUTE,
+    floorCount: 1,            // 1〜3 樓
     speed: 1,                 // 開局速度
     autoRotate: false,        // 攝影機自動環繞
     fov: 46,
@@ -95,6 +96,29 @@ export function defaultSettings() {
 
 export function openMinute(state) { return state?.settings?.openMinute ?? OPEN_MINUTE; }
 export function closeMinute(state) { return state?.settings?.closeMinute ?? CLOSE_MINUTE; }
+
+/** 更新營業時間（至少 2 小時，且開店早於打烊） */
+/** 每加一層的擴建費用（索引 = 要新增的樓層） */
+export const FLOOR_COST = [0, 0, 800000, 2400000];
+
+export function setFloorCount(state, n) {
+  const target = Math.max(1, Math.min(3, Math.round(n)));
+  const current = state.plan?.floorCount || 1;
+  if (target === current) return { ok: true, floorCount: current, cost: 0 };
+  if (target < current) return { ok: false, error: '不能減少樓層' };
+  // 一層一層往上加：1→3 也要付 2F + 3F 的錢
+  let cost = 0;
+  for (let f = current + 1; f <= target; f++) cost += FLOOR_COST[f] || 0;
+  if (state.cash < cost) return { ok: false, error: `資金不足（擴建 ¥${cost.toLocaleString('en-US')}）` };
+  state.cash -= cost;
+  state.today.floorCost = (state.today.floorCost || 0) + cost;
+  state.settings.floorCount = target;
+  // 重建平面
+  state.plan = buildFloorPlan(state.seed + state.day, { floorCount: target });
+  // 同步桌子狀態
+  for (const s of state.staff) { s.taskId = null; s.carry = 0; }
+  return { ok: true, floorCount: target, cost };
+}
 
 /** 更新營業時間（至少 2 小時，且開店早於打烊） */
 export function setBusinessHours(state, open, close) {
@@ -123,47 +147,107 @@ export function setSetting(state, path, value) {
 
 /* ------------------------------------------------------- 店內平面配置 */
 
+/**
+ * 產生餐廳平面（支援多樓層）。
+ * 一樓（floor 0）有大門、廚房、吧台、廁所；樓上（floor 1, 2）純用餐區。
+ * 樓梯固定在 (stairX, stairZ)，連通所有樓層。
+ */
 export function buildFloorPlan(seed = 1, rooms = {}) {
   const rng = mulberry32(seed >>> 0);
   const W = 13.2, D = 9.6;
+  const FLOOR_HEIGHT = 3.4;
+  const stairX = -5.6, stairZ = 1.4;   // 樓梯位置（所有樓層相同 XY）
 
-  const tables = [];
-  const mk = (id, x, z, seats, style) => {
-    const t = { id, x, z, seats, style, occupants: [], seatPos: [], occupied: false, groupId: null, kind: 'free', dirty: 0 };
-    const R = style === 'chabudai' ? 0.78 : 0.82;
-    for (let i = 0; i < seats; i++) {
-      const ang = (i / seats) * Math.PI * 2 + (style === 'chabudai' ? Math.PI / 4 : 0);
-      t.seatPos.push({ x: x + Math.cos(ang) * R, z: z + Math.sin(ang) * R, ry: -ang + Math.PI });
+  /** 產生單一樓層的桌子 */
+  function buildFloorTables(floorIdx, rng2) {
+    const tables = [];
+    const mk = (id, x, z, seats, style) => {
+      const t = { id, x, z, floor: floorIdx, seats, style, occupants: [], seatPos: [], occupied: false, groupId: null, kind: 'free', dirty: 0 };
+      const R = style === 'chabudai' ? 0.78 : 0.82;
+      for (let i = 0; i < seats; i++) {
+        const ang = (i / seats) * Math.PI * 2 + (style === 'chabudai' ? Math.PI / 4 : 0);
+        // ry 是「坐著的人」的面向：角色模型正面為 +Z，所以面向要指向桌心。
+        // （以前寫成 -ang + PI，椅子與客人都是側向桌子 90°，看起來就是「椅子很亂」。）
+        t.seatPos.push({
+          x: x + Math.cos(ang) * R,
+          z: z + Math.sin(ang) * R,
+          ry: Math.atan2(-Math.cos(ang), -Math.sin(ang)),
+          ang
+        });
+      }
+      tables.push(t);
+      return t;
+    };
+    if (floorIdx === 0) {
+      // 一樓：靠窗四人桌 + 南側二人桌 + 榻榻米（北側是調理場與出餐口）
+      const cols = [-4.6, -1.9];
+      const rows = [-2.55, 0.15];
+      let n = 0;
+      for (const z of rows) for (const x of cols) mk('t' + (++n), x + (rng2() - 0.5) * 0.12, z + (rng2() - 0.5) * 0.12, 4, 'table');
+      mk('t' + (++n), 3.1, -1.1, 4, 'table');
+      mk('t' + (++n), 0.8, 0.15, 4, 'table');
+      mk('t' + (++n), -4.9, 2.7, 2, 'table');
+      mk('t' + (++n), -3.1, 2.75, 2, 'table');
+      mk('t' + (++n), 3.5, 2.5, 4, 'chabudai');
+      mk('t' + (++n), 5.3, 2.5, 4, 'chabudai');
+    } else {
+      // 樓上：四人桌兩排（樓梯旁留走道）
+      const cols = [-4.6, -1.9, 0.8, 3.4];
+      const rows = [-2.5, 0.2];
+      let n = floorIdx * 100;
+      for (const z of rows) {
+        for (const x of cols) {
+          // 樓梯位置（x=-5.6, z=1.4）旁邊不擺桌
+          if (Math.abs(x + 4.6) < 0.5 && Math.abs(z - 1.4) < 1.0) continue;
+          mk('t' + (++n), x + (rng2() - 0.5) * 0.1, z + (rng2() - 0.5) * 0.1, 4, 'table');
+        }
+      }
     }
-    tables.push(t);
-    return t;
-  };
-
-  const cols = [-4.6, -1.9, 0.8];
-  const rows = [-2.55, 0.15];
-  let n = 0;
-  for (const z of rows) {
-    for (const x of cols) mk('t' + (++n), x + (rng() - 0.5) * 0.12, z + (rng() - 0.5) * 0.12, 4, 'table');
+    return tables;
   }
-  mk('t' + (++n), -4.9, 2.7, 2, 'table');
-  mk('t' + (++n), -3.1, 2.75, 2, 'table');
-  mk('t' + (++n), 3.5, 2.5, 4, 'chabudai');
-  mk('t' + (++n), 5.3, 2.5, 4, 'chabudai');
+
+  const floorCount = Math.max(1, Math.min(3, rooms.floorCount || 1));
+  const floorPlans = [];
+  for (let f = 0; f < floorCount; f++) {
+    const tables = buildFloorTables(f, rng);
+    floorPlans.push({
+      tables,
+      stair: { x: stairX, z: stairZ },
+      // 各樓層的地板高度（繪圖用）
+      yOffset: f * FLOOR_HEIGHT
+    });
+  }
 
   return {
     width: W,
     depth: D,
-    tables,
+    floorCount,
+    floorHeight: FLOOR_HEIGHT,
+    floorPlans,
+    stairs: { x: stairX, z: stairZ },
+    // 一樓專用設施位置（相容舊版 UI 與路徑搜尋）
     counter: { x: -5.2, z: -0.3, len: 3.4 },
-    kitchen: { x: 3.6, z: -3.4, w: 5.6, d: 2.2 },
-    stove: { x: 4.6, z: -2.7 },          // 廚師作業位置
-    pass: { x: 2.0, z: -2.3 },           // 出餐口（廚師放菜、外場取菜）
-    restroom: { x: 6.3, z: -4.3 },       // 洗手間
+    // 調理場（厨房）：北牆一帶，開放式（看得到廚師做菜）
+    kitchen: { x: 3.6, z: -4.0, w: 5.6, d: 1.9 },
+    stove: { x: 3.4, z: -3.55 },
+    pass: { x: 1.9, z: -3.0 },
+    restroom: { x: -6.0, z: -4.1 },
     entrance: { x: 1.2, z: D / 2 - 0.1 },
-    outside: { x: 1.2, z: D / 2 + 3.2 },
+    outside: { x: 1.2, z: D / 2 + 1.7 },
+    // 街道（人行道兩端）：客人從這裡走過來，吃飽也從這裡走回去
+    street: { ax: -12.4, az: D / 2 + 1.6, bx: 12.4, bz: D / 2 + 1.6 },
+    // 候位動線：從店門口沿人行道往東排（step = 每組間距）
+    queue: { x: 2.6, z: D / 2 + 2.3, step: 1.15 },
     tatami: { x: 4.4, z: 2.5, w: 4.4, d: 3.4 },
     ...rooms
   };
+}
+
+/** 取得某一樓層的桌子（全部樓層的 flat list 相容舊版） */
+export function allTables(plan) {
+  const out = [];
+  for (const fp of plan.floorPlans || []) out.push(...fp.tables);
+  return out;
 }
 
 /* ------------------------------------------------------------ 事件 */
@@ -240,6 +324,7 @@ export function createGame({ locationId = 'tokyo_shibuya', seed = 20240601, star
     eventMults: { traffic: 1, cost: 1, mood: 0, fatigue: 0 },
     taskSeq: 1,
     today: emptyDay(),
+    ledger: emptyLedger(),
     history: [],
     weather: 'sunny',
     log: [],
@@ -281,6 +366,7 @@ export function createGame({ locationId = 'tokyo_shibuya', seed = 20240601, star
 
 /** 由候選資料建立「已雇用員工」 */
 export function makeHiredStaff(cand, day = 1) {
+  const uniformId = cand.role === 'chef' ? 'chef_classic' : 'waiter_classic';
   return {
     id: cand.id,
     name: cand.name,
@@ -298,6 +384,7 @@ export function makeHiredStaff(cand, day = 1) {
     desc: cand.desc,
     appearance: cand.appearance,
     hiredDay: day,
+    uniformId,
     mood: 72,
     fatigue: 0,
     taskId: null,
@@ -306,6 +393,14 @@ export function makeHiredStaff(cand, day = 1) {
     carry: 0,
     workMinutes: 0
   };
+}
+
+/** 更換員工制服 */
+export function setStaffUniform(state, staffId, uniformId) {
+  const s = state.staff.find((x) => x.id === staffId);
+  if (!s) return { ok: false, error: '沒有這位員工' };
+  s.uniformId = uniformId;
+  return { ok: true, staff: s };
 }
 
 /** 指派員工的待機位置（廚房／外場） */
@@ -333,6 +428,50 @@ export function emptyDay() {
   };
 }
 
+/* ------------------------------------------------- 累計帳（排行榜用） */
+
+/**
+ * 全期累計帳：排行榜（店內排行／全地點排行）的資料來源。
+ *   dishes    : 每道菜的累計點餐數與營收
+ *   kinds     : 客層的組數／人數／營收
+ *   hours     : 時段（0-23）的組數／人數／營收
+ *   staff     : 每位員工的任務數與經手營收
+ *   locations : 每個待過的地點的最佳日、累計營收、天數
+ */
+export function emptyLedger() {
+  return { dishes: {}, kinds: {}, hours: {}, staff: {}, locations: {} };
+}
+
+/** 把 ledger 補齊（讀舊存檔時用） */
+export function ensureLedger(state) {
+  const L = state.ledger && typeof state.ledger === 'object' ? state.ledger : {};
+  const base = emptyLedger();
+  state.ledger = {
+    dishes: L.dishes || base.dishes,
+    kinds: L.kinds || base.kinds,
+    hours: L.hours || base.hours,
+    staff: L.staff || base.staff,
+    locations: L.locations || base.locations
+  };
+  return state.ledger;
+}
+
+/** 累加某個 bucket 的欄位（bucket 不存在就建立） */
+function bumpLedger(state, bucket, key, add) {
+  const L = ensureLedger(state);
+  const b = L[bucket];
+  if (!b) return null;
+  const cur = b[key] || (b[key] = {});
+  for (const [k, v] of Object.entries(add)) cur[k] = (cur[k] || 0) + v;
+  return cur;
+}
+
+/** 菜單上的售價（沒有自訂價就用定價） */
+function menuPrice(state, id) {
+  const m = (state.menu || []).find((x) => x.id === id);
+  return m?.price || dishById(id)?.price || 0;
+}
+
 export function rollWeather(state, loc = locationById(state.locationId)) {
   const w = loc?.weather || { sunny: 40, cloudy: 30, rain: 20, snow: 10 };
   const r = state.rng() * 100;
@@ -351,7 +490,7 @@ export function money(v) {
 
 export function seatsOfPlan(plan) {
   let n = 0;
-  for (const t of plan?.tables || []) n += t.seats;
+  for (const t of allTables(plan)) n += t.seats;
   return n;
 }
 
@@ -463,6 +602,7 @@ function addTask(state, type, data = {}) {
     claimedBy: null,
     phase: 'todo',
     workLeft: 0,
+    floor: 0,                 // 任務在哪一層（0 = 一樓）；服務生會走到那一層執行
     ...data
   };
   state.tasks.push(t);
@@ -539,10 +679,25 @@ function partySizeFor(state, kind) {
   return Math.max(1, Math.min(raw, 2 + state.stars));
 }
 
-function spawnGroup(state, loc) {
+/** 產生一組客人（測試用對外匯出） */
+export function spawnGroup(state, loc) {
   const kind = pickKind(state, loc);
   const size = partySizeFor(state, kind);
   const def = CUSTOMER_KINDS[kind];
+  // 顧客多樣化：寵物（約 13% 的家庭／情侶／銀髮族會帶寵物）
+  const PET_KINDS = ['dog', 'cat', 'rabbit', 'bird'];
+  let pet = null, petSeed = 0;
+  if ((kind === 'family' || kind === 'couple' || kind === 'elder') && state.rng() < 0.13) {
+    pet = PET_KINDS[Math.floor(state.rng() * PET_KINDS.length)];
+    petSeed = Math.floor(state.rng() * 9999);
+  }
+  // 從街道的一端走過來（東西兩側隨機，看起來像真的從街上過來）
+  const street = state.plan.street || { ax: -12.4, az: state.plan.outside.z, bx: 12.4, bz: state.plan.outside.z };
+  const fromWest = state.rng() < 0.5;
+  const startX = fromWest ? street.ax : street.bx;
+  const startZ = fromWest ? street.az : street.bz;
+  const exitX = fromWest ? street.bx : street.ax;      // 離店後往另一頭走去
+  const exitZ = fromWest ? street.bz : street.az;
   const g = {
     id: 'g' + (state.nextGroupId++),
     kind,
@@ -554,6 +709,7 @@ function spawnGroup(state, loc) {
     wait: 0,
     tableId: null,
     seatIdx: [],
+    floor: 0,
     orders: [],
     eatLeft: 0,
     paid: 0,
@@ -561,20 +717,49 @@ function spawnGroup(state, loc) {
     served: false,
     escorted: false,
     spend: def.spend,
-    walk: { x: state.plan.outside.x, z: state.plan.outside.z, speed: 1.0, dir: 0 },
+    pet,
+    petSeed,
+    fromWest,
+    exit: { x: exitX, z: exitZ },
+    released: false,
+    walk: { x: startX, z: startZ, speed: 1.15, dir: fromWest ? Math.PI / 2 : -Math.PI / 2 },
     members: []
   };
   for (let i = 0; i < size; i++) {
-    g.members.push({ seed: Math.floor(state.rng() * 1e9), seat: -1, eating: false, x: g.walk.x, z: g.walk.z, ry: 0 });
+    // 隊伍成形：兩人一排，前後稍微錯開，走在路上不會疊成一團
+    const ox = ((i % 2) - 0.5) * 0.52;
+    const oz = (Math.floor(i / 2) - 0.4) * 0.5;
+    g.members.push({
+      seed: Math.floor(state.rng() * 1e9), seat: -1, eating: false,
+      x: startX, z: startZ, ry: g.walk.dir, ox, oz
+    });
   }
   state.today.kindCount[kind] = (state.today.kindCount[kind] || 0) + 1;
+  bumpLedger(state, 'kinds', kind, { groups: 1, guests: size });
+  bumpLedger(state, 'hours', String(Math.min(23, Math.floor(state.minute / 60))), { groups: 1, guests: size });
   return g;
 }
 
-/** 找一張「乾淨、坐得下、沒人用」的桌子 */
-export function findTable(state, size) {
+/** 幫新客人分配到一個有容量的樓層（回傳樓層 index 或 null） */
+export function pickFloorForGroup(state, size) {
+  const plan = state.plan;
+  if (plan.floorCount <= 1) return 0;
+  // 優先分配到桌子最充足的樓層
+  let best = 0, bestSeats = -1;
+  for (let f = 0; f < plan.floorCount; f++) {
+    let free = 0;
+    for (const t of plan.floorPlans[f].tables) {
+      if (!t.occupied && t.dirty === 0 && t.seats >= size) free += t.seats;
+    }
+    if (free > bestSeats) { bestSeats = free; best = f; }
+  }
+  // 若全部沒空位，還是分配到 0 樓（等等候位）
+  return best;
+}
+export function findTable(state, size, floorIdx = null) {
+  const tables = allTables(state.plan).filter((t) => floorIdx === null || t.floor === floorIdx);
   let best = null;
-  for (const t of state.plan.tables) {
+  for (const t of tables) {
     if (t.occupied || t.dirty > 0) continue;
     if (t.seats < size) continue;
     const waste = t.seats - size;
@@ -593,6 +778,7 @@ function orderFor(state, group) {
     if (!d) break;
     picks.push(d.id);
     state.today.dishCount[d.id] = (state.today.dishCount[d.id] || 0) + 1;
+    bumpLedger(state, 'dishes', d.id, { count: 1 });
     d.stock = Math.max(0, d.stock - 1);
   }
   return picks;
@@ -689,15 +875,23 @@ function moveToward(w, tx, tz, dtMin, speed) {
 /* ------------------------------------------------------- 顧客狀態機 */
 
 function tableOf(state, g) {
-  return state.plan.tables.find((t) => t.id === g.tableId) || null;
+  return allTables(state.plan).find((t) => t.id === g.tableId) || null;
 }
 
 function updateGroup(state, g, dtMin) {
   const plan = state.plan;
   switch (g.state) {
     case 'entering': {
+      // 從街上走過來：先在店門前的人行道集合，再走進門（不會穿牆斜切）
+      if (!g.frontReached) {
+        const fx = plan.entrance.x + (g.fromWest ? 1.6 : -1.6);
+        const fz = plan.outside.z;
+        g.frontReached = moveToward(g.walk, fx, fz, dtMin, 1.25);
+        syncMembers(g, 'walk', dtMin);
+        if (!g.frontReached) break;
+      }
       const atDoor = moveToward(g.walk, plan.entrance.x, plan.entrance.z, dtMin, 1.15);
-      syncMembers(g, 'walk');
+      syncMembers(g, 'walk', dtMin);
       if (!atDoor) break;
       // 門口鈴只響一次
       if (!g.doorAnnounced) {
@@ -716,8 +910,13 @@ function updateGroup(state, g, dtMin) {
     case 'queue': {
       g.wait += dtMin;
       const idx = Math.max(0, state.queue.indexOf(g.id));
-      moveToward(g.walk, plan.outside.x - 0.75 * idx, plan.outside.z + 0.28 * idx, dtMin, 1.0);
-      syncMembers(g, 'wait');
+      const q = plan.queue || { x: plan.entrance.x + 1.4, z: plan.outside.z, step: 1.15 };
+      // 沿著人行道（店外街道）排成一列，隊伍越長排越遠
+      const qx = q.x + q.step * idx;
+      const qz = q.z + (idx % 2 ? 0.16 : 0);
+      const arrived = moveToward(g.walk, qx, qz, dtMin, 1.0);
+      if (arrived) g.walk.dir = Math.atan2(plan.entrance.x - g.walk.x, plan.entrance.z - g.walk.z);
+      syncMembers(g, arrived ? 'wait' : 'walk', dtMin);
       if (!state.queue.includes(g.id)) state.queue.push(g.id);
       state.today.maxQueue = Math.max(state.today.maxQueue, state.queue.length);
       if (g.wait > g.patience) {
@@ -727,6 +926,7 @@ function updateGroup(state, g, dtMin) {
         state.angryTotal += g.size;
         removeFromQueue(state, g.id);
         g.state = 'angryLeave';
+        g.released = false;
         break;
       }
       trySeatTable(state, g);
@@ -735,7 +935,7 @@ function updateGroup(state, g, dtMin) {
 
     case 'waitSeat': {
       g.wait += dtMin;
-      syncMembers(g, 'wait');
+      syncMembers(g, 'wait', dtMin);
       if (g.escorted) { g.state = 'toSeat'; g.t = 0; break; }
       if (g.wait > g.patience * 0.75) {
         emit(state, 'angry', { size: g.size, kind: g.kind, reason: 'noWaiter' });
@@ -743,19 +943,29 @@ function updateGroup(state, g, dtMin) {
         state.angryTotal += g.size;
         releaseTable(state, g);
         g.state = 'angryLeave';
+        g.released = false;
       }
       break;
     }
 
     case 'toSeat': {
       const table = tableOf(state, g);
-      if (!table) { g.state = 'leaving'; break; }
+      if (!table) { g.state = 'leaving'; g.released = false; break; }
       g.t += dtMin;
+      // 樓上的位子：先走到樓梯再上樓
+      if ((table.floor || 0) > 0 && (g.floor || 0) !== table.floor) {
+        const st = plan.stairs || { x: -5.6, z: 1.4 };
+        const atStairs = moveToward(g.walk, st.x, st.z, dtMin, 1.35);
+        syncMembers(g, 'walk', dtMin);
+        if (atStairs) g.floor = table.floor;
+        break;
+      }
       const seat = table.seatPos[g.seatIdx[0] % table.seats];
       const arrived = moveToward(g.walk, seat.x, seat.z, dtMin, 1.5);
-      syncMembers(g, 'walk');
+      syncMembers(g, 'walk', dtMin);
       if (arrived || g.t > 6) {
         emit(state, 'seat', { size: g.size });
+        g.floor = table.floor || 0;
         g.members.forEach((m, i) => {
           const sp = table.seatPos[g.seatIdx[i] % table.seats];
           m.x = sp.x; m.z = sp.z; m.ry = sp.ry;
@@ -769,7 +979,7 @@ function updateGroup(state, g, dtMin) {
 
     case 'ordering': {
       g.t += dtMin;
-      syncMembers(g, 'sit');
+      syncMembers(g, 'sit', dtMin);
       if (g.t >= g.orderWait) {
         g.orders = orderFor(state, g);
         if (!g.orders.length) { g.state = 'waitPay'; g.t = 0; break; }
@@ -778,7 +988,8 @@ function updateGroup(state, g, dtMin) {
         addTask(state, 'cook', {
           groupId: g.id, tableId: g.tableId,
           dishIds: g.orders.slice(),
-          tx: plan.stove.x, tz: plan.stove.z,
+          tx: plan.stove.x, tz: plan.stove.z + 0.9,
+          floor: 0,
           work: cookMinutes(state, g.orders)
         });
         g.state = 'waitCook';
@@ -789,16 +1000,17 @@ function updateGroup(state, g, dtMin) {
 
     case 'waitCook': {
       g.t += dtMin;
-      syncMembers(g, 'sit');
+      syncMembers(g, 'sit', dtMin);
       if (state.pass.some((p) => p.groupId === g.id)) {
         if (!hasTask(state, 'deliver', (t) => t.groupId === g.id)) {
           const table = tableOf(state, g);
           const seat = table?.seatPos?.[0];
           addTask(state, 'deliver', {
             groupId: g.id, tableId: g.tableId,
-            tx: plan.pass.x, tz: plan.pass.z,
+            tx: plan.pass.x, tz: plan.pass.z + 0.7,
             toX: seat?.x ?? table?.x ?? plan.pass.x,
-            toZ: seat?.z ?? table?.z ?? plan.pass.z
+            toZ: seat?.z ?? table?.z ?? plan.pass.z,
+            floor: table?.floor ?? g.floor ?? 0
           });
         }
         g.state = 'waitServe';
@@ -819,7 +1031,7 @@ function updateGroup(state, g, dtMin) {
 
     case 'waitServe': {
       g.t += dtMin;
-      syncMembers(g, 'sit');
+      syncMembers(g, 'sit', dtMin);
       if (g.served) {
         emit(state, 'serve', { size: g.size });
         g.served = false;
@@ -843,7 +1055,7 @@ function updateGroup(state, g, dtMin) {
 
     case 'eating': {
       g.eatLeft -= dtMin;
-      syncMembers(g, 'eat');
+      syncMembers(g, 'eat', dtMin);
       if (g.eatLeft <= 0) {
         g.state = 'waitPay';
         g.t = 0;
@@ -851,7 +1063,8 @@ function updateGroup(state, g, dtMin) {
         const seat = table?.seatPos?.[0];
         addTask(state, 'collect', {
           groupId: g.id, tableId: g.tableId,
-          tx: seat?.x ?? table?.x ?? 0, tz: seat?.z ?? table?.z ?? 0
+          tx: seat?.x ?? table?.x ?? 0, tz: seat?.z ?? table?.z ?? 0,
+          floor: table?.floor ?? g.floor ?? 0
         });
       }
       break;
@@ -859,8 +1072,8 @@ function updateGroup(state, g, dtMin) {
 
     case 'waitPay': {
       g.t += dtMin;
-      syncMembers(g, 'sit');
-      if (g.paid > 0) { g.state = 'leaving'; g.t = 0; break; }
+      syncMembers(g, 'sit', dtMin);
+      if (g.paid > 0) { g.state = 'leaving'; g.t = 0; g.released = false; break; }
       const waiters = state.staff.filter((s) => s.role === 'waiter').length;
       if (waiters === 0 || g.t > g.patience * 1.4) {
         const rev = dishRevenue(state, g.orders, g.spend, g.size);
@@ -868,18 +1081,39 @@ function updateGroup(state, g, dtMin) {
         emit(state, 'pay', { amount: rev, size: g.size, self: true });
         g.state = 'leaving';
         g.t = 0;
+        g.released = false;
       }
       break;
     }
 
     case 'angryLeave':
     case 'leaving': {
-      const done = moveToward(g.walk, plan.outside.x, plan.outside.z, dtMin, 1.3);
-      syncMembers(g, g.state === 'angryLeave' ? 'angry' : 'walk');
-      if (done || g.t > 24) {
-        releaseTable(state, g);
-        g.state = 'gone';
+      const angry = g.state === 'angryLeave';
+      // 樓上的客人：先走到樓梯下樓
+      if ((g.floor || 0) > 0 && !g.released) {
+        const st = plan.stairs || { x: -5.6, z: 1.4 };
+        const atStairs = moveToward(g.walk, st.x, st.z, dtMin, 1.2);
+        syncMembers(g, angry ? 'angry' : 'walk', dtMin);
+        if (atStairs) g.floor = 0;
+        g.t += dtMin;
+        break;
       }
+      // 1) 先走出大門（到人行道）→ 這時候就把桌子還給櫃檯，服務生才能收桌
+      if (!g.released) {
+        const atDoor = moveToward(g.walk, plan.entrance.x, plan.entrance.z, dtMin, 1.3);
+        if (atDoor) {
+          g.released = true;
+          releaseTable(state, g);
+        }
+        syncMembers(g, angry ? 'angry' : 'walk', dtMin);
+        g.t += dtMin;
+        break;
+      }
+      // 2) 沿著人行道往街道另一頭走去，走遠了才真的消失
+      const exit = g.exit || { x: plan.street?.bx ?? plan.outside.x, z: plan.street?.bz ?? plan.outside.z };
+      const done = moveToward(g.walk, exit.x, exit.z, dtMin, 1.5);
+      syncMembers(g, angry ? 'angry' : 'walk', dtMin);
+      if (done || g.t > 90) g.state = 'gone';
       g.t += dtMin;
       break;
     }
@@ -909,10 +1143,12 @@ function trySeatTable(state, g) {
   g.state = 'waitSeat';
   g.wait = 0;
   g.escorted = false;
+  g.floor = table.floor || 0;
   addTask(state, 'seat', {
     groupId: g.id, tableId: table.id,
     tx: g.walk.x, tz: g.walk.z,
-    toX: table.x, toZ: table.z
+    toX: table.x, toZ: table.z,
+    floor: table.floor || 0
   });
   return true;
 }
@@ -948,22 +1184,44 @@ function settlePayment(state, g, rev, quality = 1) {
   state.today.served += g.size;
   state.servedTotal += g.size;
   g.paid = rev + tip;
+  // 累計帳：客層／時段／菜色營收（排行榜用）
+  const hour = String(Math.min(23, Math.floor(state.minute / 60)));   // 打烊後的收尾一律算最後一小時
+  bumpLedger(state, 'kinds', g.kind, { guests: g.size, revenue: rev + tip });
+  bumpLedger(state, 'hours', hour, { guests: g.size, revenue: rev + tip });
+  for (const id of (g.orders || [])) bumpLedger(state, 'dishes', id, { revenue: menuPrice(state, id) });
   const table = tableOf(state, g);
   if (table) {
     table.dirty = 1;
     table.kind = 'dirty';
     if (!hasTask(state, 'cleanTable', (t) => t.tableId === table.id)) {
-      addTask(state, 'cleanTable', { tableId: table.id, tx: table.x, tz: table.z });
+      addTask(state, 'cleanTable', { tableId: table.id, tx: table.x, tz: table.z, floor: table.floor || 0 });
     }
   }
   state.fame = Math.min(100, state.fame + 0.05 * g.size * quality);
 }
 
-function syncMembers(g, pose) {
+/**
+ * 把整組人排到隊伍位置上。
+ * 每個人有自己的隊形偏移（ox/oz，隊伍座標），會依目前行進方向旋轉到世界座標；
+ * dtMin > 0 時用平滑追趕，避免入座／離座瞬間「全體瞬移」。
+ */
+function syncMembers(g, pose, dtMin = 0) {
   g.pose = pose;
+  const dir = g.walk.dir || 0;
+  const cd = Math.cos(dir), sd = Math.sin(dir);
   for (const m of g.members) {
     if (m.seat >= 0 && (pose === 'sit' || pose === 'eat')) continue;
-    m.x = g.walk.x; m.z = g.walk.z; m.ry = g.walk.dir;
+    const ox = m.ox || 0, oz = m.oz || 0;
+    const tx = g.walk.x + ox * cd + oz * sd;
+    const tz = g.walk.z - ox * sd + oz * cd;
+    if (dtMin > 0) {
+      const k = Math.min(0.6, dtMin * 5.0);
+      m.x += (tx - m.x) * k;
+      m.z += (tz - m.z) * k;
+    } else {
+      m.x = tx; m.z = tz;
+    }
+    m.ry = dir;
   }
 }
 
@@ -980,10 +1238,11 @@ function updateStaff(state, dtMin) {
 
     if (!s.taskId) {
       const t = claimTask(state, s);
-      if (t) { s.taskId = t.id; task = t; }
+      if (t) { s.taskId = t.id; task = t; s.floor = t.floor || 0; }
       else {
         const home = s.home || { x: 0, z: 0 };
         const arrived = moveToward(s, home.x, home.z, dtMin * walkSpeed(s), 1);
+        if (arrived) s.floor = 0;
         s.pose = arrived ? (s.role === 'chef' ? 'stand' : 'wait') : 'walk';
         continue;
       }
@@ -993,6 +1252,15 @@ function updateStaff(state, dtMin) {
     if (task.phase === 'todo') { task.phase = 'walk'; s.pose = 'walk'; }
 
     if (task.phase === 'walk') {
+      // 任務在別的樓層 → 先走到樓梯，到了就換樓層（視覺上真的走樓梯上下樓）
+      const targetFloor = task.floor || 0;
+      if ((s.floor || 0) !== targetFloor) {
+        const st = state.plan.stairs || { x: -5.6, z: 1.4 };
+        const atStairs = moveToward(s, st.x, st.z, dtMin * walkSpeed(s), 1);
+        s.pose = 'walk';
+        if (atStairs) s.floor = targetFloor;
+        continue;
+      }
       const arrived = moveToward(s, task.tx, task.tz, dtMin * walkSpeed(s), 1);
       s.pose = arrived ? (s.role === 'chef' ? 'stand' : 'wait') : 'walk';
       if (arrived) {
@@ -1014,7 +1282,8 @@ function updateStaff(state, dtMin) {
 
     if (task.phase === 'work') {
       task.workLeft -= dtMin;
-      s.pose = s.role === 'chef' ? 'stand' : 'wait';
+      // 廚師在爐前的動作：手在鍋上攪拌（cook 姿勢由 characters.js 提供）
+      s.pose = s.role === 'chef' ? (task.type === 'cook' ? 'cook' : 'stand') : 'wait';
       if (task.workLeft <= 0) completeTask(state, s, task);
     }
   }
@@ -1035,10 +1304,12 @@ function claimTask(state, staff) {
 }
 
 function completeTask(state, s, task) {
+  const stat = (add) => bumpLedger(state, 'staff', s.id, add);
   switch (task.type) {
     case 'seat': {
       const g = state.groups.find((x) => x.id === task.groupId);
       if (g) g.escorted = true;
+      stat({ seated: g?.size || 1 });
       break;
     }
     case 'cook': {
@@ -1047,6 +1318,7 @@ function completeTask(state, s, task) {
         dishes: task.dishIds || [], placedAt: state.minute, taken: false
       });
       emit(state, 'cooked', { dishes: (task.dishIds || []).length });
+      stat({ cooked: (task.dishIds || []).length || 1 });
       break;
     }
     case 'deliver': {
@@ -1055,6 +1327,7 @@ function completeTask(state, s, task) {
       const g = state.groups.find((x) => x.id === task.groupId);
       if (g) g.served = true;
       state.pass = state.pass.filter((x) => !(x.groupId === task.groupId && x.taken));
+      stat({ delivered: g?.size || 1 });
       s.carry = 0;
       break;
     }
@@ -1065,21 +1338,25 @@ function completeTask(state, s, task) {
         const quality = 1 + Math.max(-0.4, Math.min(0.4, (s.skill - 60) / 200));
         settlePayment(state, g, rev, quality);
         emit(state, 'pay', { amount: rev, size: g.size, by: s.name });
+        stat({ payments: 1, revenue: g.paid || rev });
       }
       break;
     }
     case 'cleanTable': {
-      const t = state.plan.tables.find((x) => x.id === task.tableId);
+      const t = allTables(state.plan).find((x) => x.id === task.tableId);
       if (t) { t.dirty = 0; t.kind = 'free'; }
+      stat({ cleaned: 1 });
       break;
     }
     case 'cleanRestroom': {
       state.restroom.dirt = 0;
       emit(state, 'clean', { what: 'restroom' });
+      stat({ cleaned: 1 });
       break;
     }
     default: break;
   }
+  stat({ tasks: 1 });
   s.mood = Math.min(100, s.mood + 0.6);
   state.today.tasksDone = (state.today.tasksDone || 0) + 1;
   s.taskId = null;
@@ -1115,7 +1392,7 @@ function cleanupTasks(state) {
 export function settleDay(state) {
   const loc = locationById(state.locationId) || LOCATIONS[0];
   const rent = loc.rentPerDay;
-  const util = 3200 + state.plan.tables.length * 260;
+  const util = 3200 + allTables(state.plan).length * 260;
   const hours = Math.max(0, (closeMinute(state) - openMinute(state)) / 60);
   let wages = 0;
   for (const s of state.staff) wages += Math.round(s.wage * hours);
@@ -1148,6 +1425,19 @@ export function settleDay(state) {
     weather: state.weather
   };
   state.history.push(report);
+
+  // 累計帳：各地點的成績（全地點排行 + 店史紀錄用）
+  const L = ensureLedger(state);
+  const rec = L.locations[loc.id] || (L.locations[loc.id] = {
+    days: 0, totalRevenue: 0, bestRevenue: 0, bestDay: 0, bestGuests: 0, bestNet: 0, lastDay: 0
+  });
+  rec.days = (rec.days || 0) + 1;
+  rec.totalRevenue = (rec.totalRevenue || 0) + gross;
+  rec.lastDay = state.day;
+  if (gross > (rec.bestRevenue || 0)) { rec.bestRevenue = gross; rec.bestDay = state.day; }
+  if (state.today.guests > (rec.bestGuests || 0)) rec.bestGuests = state.today.guests;
+  if (net > (rec.bestNet || 0)) rec.bestNet = net;
+  report.best = { revenue: rec.bestRevenue, day: rec.bestDay, guests: rec.bestGuests, days: rec.days };
   return report;
 }
 
@@ -1163,7 +1453,7 @@ export function startNextDay(state) {
   state.pass.length = 0;
   state.restroom.dirt = 0;
   state.equipBroken = { fridge: false, ac_unit: false, stove: false };
-  state.plan.tables.forEach((t) => { t.occupied = false; t.groupId = null; t.dirty = 0; t.kind = 'free'; });
+  allTables(state.plan).forEach((t) => { t.occupied = false; t.groupId = null; t.dirty = 0; t.kind = 'free'; });
   state.groups.length = 0;
   state.queue.length = 0;
   for (const m of state.menu) m.stock = Math.max(m.stock, 60);
@@ -1202,11 +1492,227 @@ export function taskSummary(state) {
   return { total: state.tasks.length, by, queue: state.queue.length, pass: state.pass.length };
 }
 
+/** 熱門菜單報表：各品項的點餐數、營收與占比（由高到低） */
+export function topMenuReport(state) {
+  const dc = state.today?.dishCount || {};
+  const menuById = new Map((state.menu || []).map(m => [m.id, m]));
+  let totalCount = 0;
+  for (const n of Object.values(dc)) totalCount += n;
+  const items = Object.entries(dc)
+    .map(([id, count]) => {
+      const m = menuById.get(id);
+      const def = dishById(id);
+      const price = m?.price || def?.price || 0;
+      return {
+        id,
+        name: def?.name || id,
+        nameZh: def?.nameZh || id,
+        price,
+        count,
+        revenue: count * price,
+        pct: totalCount ? +(count / totalCount * 100).toFixed(1) : 0
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+  return { items, totalCount, totalRevenue: items.reduce((a, i) => a + i.revenue, 0) };
+}
+
+/* ------------------------------------------------- 調理場（廚房的樣子） */
+
+/**
+ * 調理場の状況：現在誰在煮什麼、煮到幾成、出餐口上有什麼菜。
+ * 給「料理を見る」面板與場景中的調理標籤使用（純資料，無 DOM）。
+ */
+export function kitchenReport(state) {
+  const plan = state.plan;
+  const chefs = (state.staff || []).filter((s) => s.role === 'chef');
+  const byId = new Map((state.tasks || []).map((t) => [t.id, t]));
+  const dishRows = (ids) => (ids || []).map((id) => {
+    const d = dishById(id);
+    return {
+      id,
+      name: d?.name || id,
+      nameZh: d?.nameZh || id,
+      cookTime: d?.cookTime || 0,
+      price: menuPrice(state, id)
+    };
+  });
+
+  const cooking = chefs.map((s) => {
+    const t = s.taskId ? byId.get(s.taskId) : null;
+    const isCook = !!t && t.type === 'cook';
+    const total = isCook ? (t.work || 0) : 0;
+    return {
+      id: s.id, name: s.name, uniformId: s.uniformId,
+      skill: s.skill, mood: Math.round(s.mood ?? 0), fatigue: Math.round(s.fatigue || 0),
+      taskId: t?.id || null,
+      phase: isCook ? t.phase : 'idle',
+      working: isCook && t.phase === 'work',
+      dishes: isCook ? dishRows(t.dishIds) : [],
+      progress: isCook && total > 0 ? +(1 - Math.max(0, t.workLeft) / total).toFixed(3) : 0
+    };
+  });
+
+  const pass = (state.pass || []).map((p) => {
+    const t = allTables(state.plan).find((x) => x.id === p.tableId);
+    const g = (state.groups || []).find((x) => x.id === p.groupId);
+    return {
+      groupId: p.groupId, tableId: p.tableId, floor: t?.floor || 0,
+      dishes: dishRows(p.dishes), count: (p.dishes || []).length,
+      waitMin: Math.max(0, Math.round(state.minute - (p.placedAt ?? state.minute))),
+      taken: !!p.taken,
+      guestKind: g?.kindJp || ''
+    };
+  });
+
+  return {
+    chefs: cooking,
+    pass,
+    stove: { x: plan.stove.x, z: plan.stove.z },
+    counts: {
+      chefs: chefs.length,
+      cooking: cooking.filter((c) => c.working).length,
+      walking: cooking.filter((c) => c.phase === 'walk').length,
+      idle: cooking.filter((c) => c.phase === 'idle').length,
+      ready: pass.filter((p) => !p.taken).length
+    }
+  };
+}
+
+/* ------------------------------------------------- 番付（排行榜） */
+
+/** 該地點的「平均日商」基準：別的店家在這裡大概做多少生意 */
+export function locationPotential(loc) {
+  if (!loc) return 0;
+  return Math.round(loc.trafficBase * (loc.spendLevel || 1) * 2200 * (0.92 + (loc.stars || 1) * 0.04));
+}
+
+/**
+ * 排行榜（番付）：
+ *   local  — 這家店自己的排行（菜色、員工、客層、時段、店史紀錄）
+ *   global — 全部 28 個地點的排行（別的店家的平均日商 vs 本店的最佳日）
+ */
+export function rankings(state) {
+  const L = ensureLedger(state);
+  const loc = locationById(state.locationId) || LOCATIONS[0];
+
+  // ── 店內：菜色 ──
+  const dishTotal = Object.values(L.dishes).reduce((a, v) => a + (v.count || 0), 0) || 1;
+  const dishAll = Object.entries(L.dishes)
+    .map(([id, v]) => {
+      const d = dishById(id);
+      return {
+        id, name: d?.name || id, nameZh: d?.nameZh || id,
+        count: v.count || 0, revenue: Math.round(v.revenue || 0),
+        pct: +(((v.count || 0) / dishTotal) * 100).toFixed(1),
+        today: state.today?.dishCount?.[id] || 0
+      };
+    })
+    .sort((a, b) => b.count - a.count || b.revenue - a.revenue)
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+
+  // ── 店內：員工 ──
+  const staffRows = (state.staff || []).map((s) => {
+    const st = L.staff[s.id] || {};
+    return {
+      id: s.id, name: s.name, role: s.role, roleJp: ROLE_LABEL[s.role] || s.role,
+      skill: s.skill, speed: s.speed, mood: Math.round(s.mood ?? 0), fatigue: Math.round(s.fatigue || 0),
+      wage: s.wage, uniformId: s.uniformId,
+      tasks: st.tasks || 0, cooked: st.cooked || 0, delivered: st.delivered || 0,
+      seated: st.seated || 0, cleaned: st.cleaned || 0, payments: st.payments || 0,
+      revenue: Math.round(st.revenue || 0),
+      score: (st.tasks || 0)
+    };
+  });
+  const chefs = staffRows.filter((s) => s.role === 'chef').sort((a, b) => b.cooked - a.cooked || b.tasks - a.tasks).map((r, i) => ({ ...r, rank: i + 1 }));
+  const waiters = staffRows.filter((s) => s.role === 'waiter').sort((a, b) => b.revenue - a.revenue || b.tasks - a.tasks).map((r, i) => ({ ...r, rank: i + 1 }));
+
+  // ── 店內：客層與時段 ──
+  const kindTotal = Object.values(L.kinds).reduce((a, v) => a + (v.guests || 0), 0) || 1;
+  const kinds = Object.entries(L.kinds)
+    .map(([k, v]) => {
+      const def = CUSTOMER_KINDS[k] || {};
+      return {
+        id: k, name: def.jp || k, nameZh: def.zh || k,
+        groups: v.groups || 0, guests: v.guests || 0, revenue: Math.round(v.revenue || 0),
+        pct: +(((v.guests || 0) / kindTotal) * 100).toFixed(0)
+      };
+    })
+    .sort((a, b) => b.guests - a.guests)
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+
+  const hours = Object.entries(L.hours)
+    .map(([h, v]) => ({ hour: Number(h), groups: v.groups || 0, guests: v.guests || 0, revenue: Math.round(v.revenue || 0) }))
+    .sort((a, b) => a.hour - b.hour);
+  const bestHour = hours.slice().sort((a, b) => b.revenue - a.revenue)[0] || null;
+
+  const rec = L.locations[loc.id] || { days: 0, totalRevenue: 0, bestRevenue: 0, bestDay: 0, bestGuests: 0, bestNet: 0 };
+
+  // ── 全地點 ──
+  const global = LOCATIONS.map((l) => {
+    const r = L.locations[l.id] || {};
+    const potential = locationPotential(l);
+    const myBest = Math.round(r.bestRevenue || 0);
+    return {
+      id: l.id, name: l.name, nameZh: l.nameZh, region: l.region, city: l.city,
+      kind: l.kind, stars: l.stars, trafficBase: l.trafficBase, rentPerDay: l.rentPerDay,
+      spendLevel: l.spendLevel, specialties: l.specialties,
+      potential, myBest, myDays: r.days || 0, isHere: l.id === loc.id,
+      score: Math.max(potential, myBest)
+    };
+  }).sort((a, b) => b.score - a.score).map((r, i) => ({ ...r, rank: i + 1 }));
+
+  const todayRevenue = Math.round(state.today?.revenue || 0);
+  const myScore = Math.max(rec.bestRevenue || 0, todayRevenue);
+  const myRow = global.find((g) => g.isHere) || null;
+  const myRank = myRow ? myRow.rank : global.length;                  // 自店這個地點的名次
+  const revenueRank = Math.min(global.length, global.filter((g) => g.potential > myScore).length + 1);
+  const beaten = global.filter((g) => g.potential < myScore).length;
+
+  return {
+    locationId: loc.id,
+    locationName: loc.name,
+    locationNameZh: loc.nameZh,
+    day: state.day,
+    local: {
+      dishes: dishAll,
+      dishesToday: topMenuReport(state).items,
+      chefs,
+      waiters,
+      kinds,
+      hours,
+      bestHour,
+      record: {
+        days: rec.days || 0,
+        totalRevenue: Math.round(rec.totalRevenue || 0),
+        bestRevenue: Math.round(rec.bestRevenue || 0),
+        bestDay: rec.bestDay || 0,
+        bestGuests: rec.bestGuests || 0,
+        bestNet: Math.round(rec.bestNet || 0),
+        todayRevenue,
+        todayGuests: state.today?.guests || 0
+      }
+    },
+    global,
+    summary: {
+      myScore,
+      myRank,                       // 自店在全部地點中的名次（1..28）
+      revenueRank,                  // 用營業額換算的目安名次（1..28）
+      totalLocations: global.length,
+      beaten,
+      potentialHere: locationPotential(loc),
+      todayRevenue
+    }
+  };
+}
+
 export { ROLE_LABEL, activeEventInfo, forceEvent, recomputeMults, candidatesFor, staffById };
 
 export default {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
   buildFloorPlan, findTable, money, clockText, trafficMultiplier,
   hireStaff, fireStaff, candidateInfo, refreshCandidates, taskSummary, drainEvents,
-  buyEquipment, repairEquipment, EQUIPMENT_CATALOG
+  buyEquipment, repairEquipment, EQUIPMENT_CATALOG, setStaffUniform, topMenuReport, spawnGroup,
+  setFloorCount, allTables, pickFloorForGroup,
+  kitchenReport, rankings, locationPotential, emptyLedger, ensureLedger
 };

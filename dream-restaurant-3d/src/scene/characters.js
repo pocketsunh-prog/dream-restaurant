@@ -396,7 +396,7 @@ const KIND_DEFS = {
   },
 };
 
-export const POSES = ['stand', 'walk', 'sit', 'eat', 'wait', 'angry', 'happy', 'carry'];
+export const POSES = ['stand', 'walk', 'sit', 'eat', 'wait', 'angry', 'happy', 'carry', 'cook'];
 
 /* ── 身高／體型 ── */
 function resolveBody(kind, def, opts, rnd) {
@@ -1119,6 +1119,14 @@ function getPoseDefs() {
       legL: { splay: 0.07 }, legR: { splay: 0.07 },
       seated: false,
     },
+    // 站在爐前調理：身體前傾看鍋、雙手在鍋上（updateCook 會加攪拌動作）
+    cook: {
+      torsoBend: -0.16, headBend: 0.24, torsoTwist: 0.04,
+      legL: { splay: 0.09 }, legR: { splay: 0.09 },
+      armL: { swing: -0.86, out: 0.26, bend: -1.15 },
+      armR: { swing: -0.92, out: -0.22, bend: -1.28 },
+      seated: false,
+    },
   };
   return _POSE_DEFS;
 }
@@ -1302,6 +1310,22 @@ function updateEat(g, t, st, seated) {
   st.torsoBend += 0.02 * reach;
 }
 
+// 調理：站在爐前，右手拿勺子攪拌（小圓周運動）、左手扶鍋，身體微微前後
+function updateCook(g, t, st) {
+  const ph = t * 2.2 + (g.userData.id % 5) * 0.7;
+  st.armR.swing = -0.92 + 0.16 * Math.sin(ph);
+  st.armR.out = -0.22 + 0.10 * Math.cos(ph);
+  st.armR.bend = -1.28 + 0.15 * Math.sin(ph + 0.6);
+  st.armR.across = 0.11 * Math.cos(ph);
+  st.armL.swing = -0.86 + 0.09 * Math.sin(ph * 0.7 + 1.2);
+  st.armL.out = 0.26 + 0.05 * Math.cos(ph * 0.7);
+  st.armL.bend = -1.15 + 0.08 * Math.sin(ph * 0.5);
+  st.torsoBend += -0.05 + 0.025 * Math.sin(ph);
+  st.torsoTwist += 0.055 * Math.sin(ph * 0.5);
+  st.headBend += 0.22 + 0.035 * Math.sin(ph * 0.9);
+  st.headYaw += 0.05 * Math.sin(ph * 0.35);
+}
+
 function updateFace(g, name) {
   const ud = g.userData;
   if (!ud._faceTex || !canUseCanvas()) return;
@@ -1378,6 +1402,7 @@ function applyPose(g, name, t) {
   else if (name === 'happy') updateHappy(g, t, mo.cur);
   else if (name === 'angry') updateAngry(g, t, mo.cur);
   else if (name === 'eat') updateEat(g, t, mo.cur, seated);
+  else if (name === 'cook') updateCook(g, t, mo.cur);
 
   if (seated) {
     updateSit(g, mo.cur, seatH, ud.shoeDown || 0.039);
@@ -1517,3 +1542,67 @@ export function characterInfo() {
     roles: ['customer', 'staff'],
   };
 }
+
+/**
+ * 把制服資料轉成 makeCharacter 的選項（直接注入 shirtColor / bottomColor / color）。
+ * @param {{shirt?:string,pants?:string,vest?:string,accent?:string,hat?:string}} uniform
+ */
+export function uniformToOpts(uniform) {
+  if (!uniform) return {};
+  return {
+    shirtColor: uniform.shirt || uniform.color,
+    bottomColor: uniform.pants,
+    vestColor: uniform.vest,
+    accent: uniform.accent,
+    hatColor: uniform.hat
+  };
+}
+
+/** 為顧客加寵物回呼：回傳一個掛在 group 底下的寵物群組（無寵物回 null） */
+export function makePet(kind, seed = 1) {
+  const g = new THREE.Group();
+  g.name = 'pet';
+  const col = kind === 'dog' ? 0xc9a26b : kind === 'cat' ? 0x8a8078 : kind === 'rabbit' ? 0xe8e0d8 : 0xc9a26b;
+  const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.85 });
+  if (kind === 'dog' || kind === 'cat') {
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.18, 4, 8), mat);
+    body.position.y = 0.13; body.castShadow = true; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat);
+    head.position.set(0, 0.16, 0.13); head.castShadow = true; g.add(head);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 4), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.6 }));
+    nose.position.set(0, 0.15, 0.2); g.add(nose);
+    for (const dz of [-0.05, 0.05]) {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.05, 4), mat);
+      ear.position.set(dz, 0.22, 0.1); g.add(ear);
+    }
+    if (kind === 'cat') {
+      for (const sx of [-0.04, 0.04]) {
+        const whisker = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.004, 0.004), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+        whisker.position.set(sx * 2, 0.145, 0.18); g.add(whisker);
+      }
+    } else {
+      const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.015, 0.08, 3, 5), mat);
+      tail.position.set(0, 0.16, -0.16); tail.rotation.x = -0.9; g.add(tail);
+    }
+  } else if (kind === 'rabbit') {
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat);
+    body.scale.set(1, 0.9, 1.1); body.position.y = 0.1; body.castShadow = true; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), mat);
+    head.position.set(0, 0.16, 0.06); head.castShadow = true; g.add(head);
+    for (const sx of [-0.02, 0.02]) {
+      const ear = new THREE.Mesh(new THREE.CapsuleGeometry(0.012, 0.07, 3, 5), mat);
+      ear.position.set(sx, 0.24, 0.04); g.add(ear);
+    }
+  } else {
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), new THREE.MeshStandardMaterial({ color: 0x4a8ac0, roughness: 0.7 }));
+    body.position.y = 0.18; body.castShadow = true; g.add(body);
+    const wing = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 4), new THREE.MeshStandardMaterial({ color: 0x2a5a8a }));
+    wing.position.set(0.04, 0.18, 0); wing.scale.set(1.3, 0.4, 1); g.add(wing);
+  }
+  g.scale.setScalar(0.7 + (seed % 5) * 0.04);
+  return g;
+}
+
+export default {
+  makeCharacter, setPose, disposeCharacter, characterInfo, uniformToOpts, makePet, CUSTOMER_KINDS
+};

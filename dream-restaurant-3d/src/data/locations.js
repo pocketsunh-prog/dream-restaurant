@@ -55,6 +55,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['ramen', 'gyoza', 'karaage'],
     weather: { sunny: 42, cloudy: 30, rain: 22, snow: 6 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "yo", ambiance: "warm" },
     desc: '澀谷中心街是年輕潮流與夜生活的十字路口，全天人流不斷，學生與上班族混雜。這裡最適合翻桌快、價格親民的街頭食堂。'
   },
   {
@@ -74,6 +75,7 @@ export const LOCATIONS = [
     decorStyle: 'showa',
     specialties: ['yakitori', 'ramen', 'oden'],
     weather: { sunny: 42, cloudy: 30, rain: 22, snow: 6 },
+    theme: { wall: "#c9a882", wallAccent: "#a07850", floor: "#7a5c3c", accent: "#c0392b", light: "#ffd9a8", style: "showa", musicScale: "minyo", ambiance: "warm" },
     desc: '新宿回憶橫丁是保留戰後風情的窄巷燒烤街，入夜後擠滿小酌的上班族與慕名而來的觀光客。狹小的店面最適合居酒屋型的串燒與關東煮。'
   },
   {
@@ -93,6 +95,7 @@ export const LOCATIONS = [
     decorStyle: 'traditional',
     specialties: ['tempura', 'soba', 'unagi', 'onigiri'],
     weather: { sunny: 43, cloudy: 30, rain: 21, snow: 6 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "yo", ambiance: "warm" },
     desc: '淺草仲見世位於淺草寺參道，白天觀光客與修學旅行團絡繹不絕，老字號氣息濃厚。天婦羅、蕎麥與糰子類和食老舖在此最能發揮。'
   },
   {
@@ -112,6 +115,7 @@ export const LOCATIONS = [
     decorStyle: 'luxury',
     specialties: ['sushi', 'kaiseki', 'tempura', 'unagi'],
     weather: { sunny: 44, cloudy: 30, rain: 20, snow: 6 },
+    theme: { wall: "#e8e0d0", wallAccent: "#c0b090", floor: "#a08868", accent: "#c9a227", light: "#fff8e8", style: "luxury", musicScale: "in", ambiance: "bright" },
     desc: '銀座是日本最具代表性的高級商圈，百貨公司與老舖料亭林立，客單價極高。頂級壽司、懷石與割烹類店家在此最為合適。'
   },
   {
@@ -131,6 +135,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['curry_rice', 'ramen', 'donburi', 'karaage'],
     weather: { sunny: 42, cloudy: 30, rain: 22, snow: 6 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "yo", ambiance: "neutral" },
     desc: '秋葉原電氣街是動漫與電子產品的聖地，學生與外國觀光客密度極高。平價咖哩、丼飯與速食型拉麵最能滿足快速用餐的需求。'
   },
   {
@@ -150,6 +155,7 @@ export const LOCATIONS = [
     decorStyle: 'kissaten',
     specialties: ['kissaten_set', 'curry_rice', 'yakitori'],
     weather: { sunny: 42, cloudy: 30, rain: 22, snow: 6 },
+    theme: { wall: "#d4c4a8", wallAccent: "#a89070", floor: "#8a7058", accent: "#6b8e23", light: "#fff0c0", style: "kissaten", musicScale: "in", ambiance: "neutral" },
     desc: '吉祥寺太陽道是東京西郊的在地商店街，家庭主婦與下班居民構成穩定客源。純喫茶與家庭取向的定食、咖哩最受歡迎。'
   },
   {
@@ -169,6 +175,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['champon', 'gyoza', 'ramen', 'donburi'],
     weather: { sunny: 43, cloudy: 30, rain: 21, snow: 6 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "yo", ambiance: "neutral" },
     desc: '橫濱中華街是日本最大的中華街，觀光客與家庭客並肩而行，假日人潮洶湧。強棒麵、餃子與中華拉麵等熱食攤位最能聚客。'
   },
   {
@@ -188,6 +195,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['takoyaki', 'okonomiyaki', 'ramen'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "minyo", ambiance: "neutral" },
     desc: '道頓堀是大阪南區的霓虹美食河岸，觀光客與下班人潮徹夜不散，翻桌率驚人。章魚燒、大阪燒等粉物料理在此是必備招牌。'
   },
   {
@@ -207,6 +215,7 @@ export const LOCATIONS = [
     decorStyle: 'showa',
     specialties: ['takoyaki', 'okonomiyaki', 'karaage'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#c9a882", wallAccent: "#a07850", floor: "#7a5c3c", accent: "#c0392b", light: "#ffd9a8", style: "showa", musicScale: "yo", ambiance: "warm" },
     desc: '新世界是通天閣下的昭和懷舊下町，以價格導向的在地常客與銀髮族為主。便宜、份量足的粉物料理正是此地的靈魂。'
   },
   {
@@ -226,6 +235,7 @@ export const LOCATIONS = [
     decorStyle: 'traditional',
     specialties: ['kaiseki', 'sushi', 'oden', 'teishoku'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "in", ambiance: "warm" },
     desc: '祇園是京都花街的核心，石板路兩側盡是茶屋與高級料亭，客層講究氛圍與服務。懷石與高級壽司等精緻和食在此最相稱。'
   },
   {
@@ -245,6 +255,7 @@ export const LOCATIONS = [
     decorStyle: 'traditional',
     specialties: ['sushi', 'soba', 'onigiri', 'teishoku'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "minyo", ambiance: "warm" },
     desc: '錦市場被稱為京都的廚房，狹長拱廊裡擠滿採買的居民與觀光客。壽司、蕎麥與飯糰等即食和食攤位從清晨就開始熱鬧。'
   },
   {
@@ -264,6 +275,7 @@ export const LOCATIONS = [
     decorStyle: 'modern',
     specialties: ['yakiniku', 'shabu_shabu', 'ramen'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#d8d2c4", wallAccent: "#b8b0a0", floor: "#9c8a6e", accent: "#3a6ea5", light: "#fff4e2", style: "modern", musicScale: "yo", ambiance: "bright" },
     desc: '三宮是神戶的交通與商業樞紐，辦公人潮與時尚客層交錯，晚間應酬需求旺盛。以神戶牛為號召的燒肉與涮涮鍋店在此最具吸引力。'
   },
   {
@@ -283,6 +295,7 @@ export const LOCATIONS = [
     decorStyle: 'modern',
     specialties: ['miso_katsu', 'hitsumabushi', 'teishoku', 'karaage'],
     weather: { sunny: 42, cloudy: 30, rain: 24, snow: 4 },
+    theme: { wall: "#d8d2c4", wallAccent: "#b8b0a0", floor: "#9c8a6e", accent: "#3a6ea5", light: "#fff4e2", style: "modern", musicScale: "yo", ambiance: "bright" },
     desc: '榮是名古屋最繁華的購物區，百貨、地下街與商辦共構出穩定客流。味噌炸豬排與鰻魚飯三吃等名古屋名物是此地招牌。'
   },
   {
@@ -302,6 +315,7 @@ export const LOCATIONS = [
     decorStyle: 'izakaya',
     specialties: ['jingisukan', 'seafood_bowl', 'ramen', 'sake_set'],
     weather: { sunny: 34, cloudy: 30, rain: 16, snow: 20 },
+    theme: { wall: "#4a3826", wallAccent: "#2e2018", floor: "#3a2a1a", accent: "#e05a45", light: "#ffb070", style: "izakaya", musicScale: "minyo", ambiance: "warm" },
     desc: '薄野（すすきの）是北海道最大的歡樂街，雪國的夜晚聚集大量飲酒客，冬季仍有旺盛的宵夜需求。成吉思汗烤肉、海鮮丼與味噌拉麵能撐起整夜的生意。'
   },
   {
@@ -321,6 +335,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['seafood_bowl', 'donburi', 'sushi', 'ramen'],
     weather: { sunny: 34, cloudy: 30, rain: 16, snow: 20 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "minyo", ambiance: "neutral" },
     desc: '函館朝市以清晨的活跳海鮮聞名，觀光客一早就來排隊吃海鮮丼，午后即收攤。從清晨開始營業的海鮮與丼飯店舖在此最為吃香。'
   },
   {
@@ -340,6 +355,7 @@ export const LOCATIONS = [
     decorStyle: 'izakaya',
     specialties: ['gyoza', 'yakiniku', 'sake_set'],
     weather: { sunny: 36, cloudy: 30, rain: 20, snow: 14 },
+    theme: { wall: "#4a3826", wallAccent: "#2e2018", floor: "#3a2a1a", accent: "#e05a45", light: "#ffb070", style: "izakaya", musicScale: "minyo", ambiance: "warm" },
     desc: '國分町是東北最大的夜之街，仙台的上班族下班後幾乎都往這裡聚集。餃子、燒肉與日本酒搭配的居酒屋最適合此地。'
   },
   {
@@ -359,6 +375,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['ramen', 'gyoza', 'oden', 'sake_set'],
     weather: { sunny: 42, cloudy: 30, rain: 28, snow: 0 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "minyo", ambiance: "neutral" },
     desc: '博多中洲是被屋台與霓虹包圍的歡樂街，深夜人潮與觀光客帶來極高的翻桌率。豚骨拉麵、一口餃子與關東煮等博多名物是此地的基本盤。'
   },
   {
@@ -378,6 +395,7 @@ export const LOCATIONS = [
     decorStyle: 'showa',
     specialties: ['okonomiyaki', 'ramen', 'karaage'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#c9a882", wallAccent: "#a07850", floor: "#7a5c3c", accent: "#c0392b", light: "#ffd9a8", style: "showa", musicScale: "yo", ambiance: "warm" },
     desc: '好味村是廣島市中心的大阪燒主題大樓，在地客與觀光客慕名前來，鐵板前座位總是滿的。大阪燒專門店與平價鐵板料理在此最能生存。'
   },
   {
@@ -397,6 +415,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['champon', 'gyoza', 'seafood_bowl', 'udon'],
     weather: { sunny: 42, cloudy: 30, rain: 28, snow: 0 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "yo", ambiance: "neutral" },
     desc: '長崎新地中華街是日本三大中華街之一，觀光客與家庭客比例高，街道小巧而熱鬧。強棒麵與皿烏龍等長崎中華料理是必備菜色。'
   },
   {
@@ -416,6 +435,7 @@ export const LOCATIONS = [
     decorStyle: 'street',
     specialties: ['soki_soba', 'gyoza_okinawa', 'seafood_bowl'],
     weather: { sunny: 52, cloudy: 30, rain: 18, snow: 0 },
+    theme: { wall: "#c8c0b0", wallAccent: "#908878", floor: "#786850", accent: "#e05a45", light: "#ffd090", style: "street", musicScale: "yo", ambiance: "neutral" },
     desc: '國際通是沖繩最熱鬧的購物大道，觀光客與家庭旅遊人潮終年不斷，全年高溫無雪。沖繩蕎麥與苦瓜料理等在地口味最能吸引旅客。'
   },
   {
@@ -435,6 +455,7 @@ export const LOCATIONS = [
     decorStyle: 'traditional',
     specialties: ['seafood_bowl', 'sushi', 'tempura', 'teishoku'],
     weather: { sunny: 30, cloudy: 32, rain: 24, snow: 14 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "minyo", ambiance: "warm" },
     desc: '近江町市場是金澤的廚房，清晨的日本海漁獲與加賀蔬菜吸引居民與觀光客上門。海鮮丼與壽司等講求鮮度的店家清晨即開門營業。'
   },
   {
@@ -454,6 +475,7 @@ export const LOCATIONS = [
     decorStyle: 'kissaten',
     specialties: ['kissaten_set', 'onigiri', 'soba'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#d4c4a8", wallAccent: "#a89070", floor: "#8a7058", accent: "#6b8e23", light: "#fff0c0", style: "kissaten", musicScale: "yo", ambiance: "neutral" },
     desc: '奈良町是元興寺一帶的町家老街，觀光客與在地人步調悠閒，午後客流平緩。喫茶店、飯糰與蕎麥等輕食最能融入古都風景。'
   },
   {
@@ -473,6 +495,7 @@ export const LOCATIONS = [
     decorStyle: 'showa',
     specialties: ['seafood_bowl', 'yakitori', 'donburi', 'onigiri'],
     weather: { sunny: 42, cloudy: 30, rain: 22, snow: 6 },
+    theme: { wall: "#c9a882", wallAccent: "#a07850", floor: "#7a5c3c", accent: "#c0392b", light: "#ffd9a8", style: "showa", musicScale: "minyo", ambiance: "warm" },
     desc: '阿美橫丁是上野高架橋下的傳統市場街，叫賣聲與小吃攤吸引全年齡層，上午就開始熱鬧。海鮮丼、串燒與乾貨小吃以低價與速度取勝。'
   },
   {
@@ -492,6 +515,7 @@ export const LOCATIONS = [
     decorStyle: 'modern',
     specialties: ['teishoku', 'curry_rice', 'tonkatsu', 'kissaten_set'],
     weather: { sunny: 43, cloudy: 30, rain: 21, snow: 6 },
+    theme: { wall: "#d8d2c4", wallAccent: "#b8b0a0", floor: "#9c8a6e", accent: "#3a6ea5", light: "#fff4e2", style: "modern", musicScale: "in", ambiance: "bright" },
     desc: '海濱幕張是千葉的會展與商辦新都心，平日以辦公人潮為主、假日與展期落差極大。定食、咖哩與喫茶套餐等商業午餐最符合這裡的需求。'
   },
   {
@@ -511,6 +535,7 @@ export const LOCATIONS = [
     decorStyle: 'traditional',
     specialties: ['seafood_bowl', 'sushi', 'teishoku', 'sake_set'],
     weather: { sunny: 42, cloudy: 30, rain: 24, snow: 4 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "miyako", ambiance: "warm" },
     desc: '熱海溫泉是東京近郊的老牌溫泉地，旅館住客與家庭旅客從早到晚川流不息，清晨與傍晚各有一次用餐高峰。海鮮丼、壽司與會席定食最能配合泡湯行程。'
   },
   {
@@ -530,6 +555,7 @@ export const LOCATIONS = [
     decorStyle: 'traditional',
     specialties: ['kaiseki', 'teishoku', 'sake_set', 'sushi'],
     weather: { sunny: 44, cloudy: 28, rain: 28, snow: 0 },
+    theme: { wall: "#e0dcc8", wallAccent: "#b0a080", floor: "#8c7050", accent: "#8b4513", light: "#ffe0b0", style: "traditional", musicScale: "miyako", ambiance: "warm" },
     desc: '道後溫泉是日本最古老的溫泉之一，旅館與觀光客帶來高消費力的過夜客層，清晨入浴後與晚間會席是兩大時段。懷石與會席料理等高單價和食在此最為合適。'
   },
   {
@@ -549,6 +575,7 @@ export const LOCATIONS = [
     decorStyle: 'modern',
     specialties: ['ramen', 'tonkatsu', 'karaage'],
     weather: { sunny: 42, cloudy: 30, rain: 28, snow: 0 },
+    theme: { wall: "#d8d2c4", wallAccent: "#b8b0a0", floor: "#9c8a6e", accent: "#3a6ea5", light: "#fff4e2", style: "modern", musicScale: "yo", ambiance: "bright" },
     desc: '下通是熊本市中心最大的拱廊商店街，學生與在地家庭客是主力，雨天照樣有人潮。豚骨拉麵、炸物與丼飯等平價餐點在此最受歡迎。'
   },
   {
@@ -568,6 +595,7 @@ export const LOCATIONS = [
     decorStyle: 'showa',
     specialties: ['ramen', 'karaage', 'seafood_bowl'],
     weather: { sunny: 42, cloudy: 30, rain: 28, snow: 0 },
+    theme: { wall: "#c9a882", wallAccent: "#a07850", floor: "#7a5c3c", accent: "#c0392b", light: "#ffd9a8", style: "showa", musicScale: "yo", ambiance: "warm" },
     desc: '天文館是鹿兒島最繁華的繁華街，購物人潮與夜間飲酒客並存，學生比例偏高。拉麵、炸物與海鮮料理最貼近南九州的口味偏好。'
   }
 ];

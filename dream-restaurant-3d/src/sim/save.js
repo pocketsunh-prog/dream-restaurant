@@ -2,9 +2,9 @@
 // save.js — 存讀檔（localStorage，6 個槽位：1〜5 ＋ auto）
 //   遊戲狀態幾乎都是純資料，只有亂數函式需要另外存「狀態數字」才能完全還原。
 // ============================================================================
-import { mulberry32, defaultSettings } from './game.js';
+import { mulberry32, defaultSettings, ensureLedger } from './game.js';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const SAVE_KEY = 'dreamrestaurant3d.save.';
 export const SLOTS = [
   { id: '1', label: 'スロット 1' },
@@ -68,6 +68,15 @@ export function deserializeGame(data) {
   state.equipment = state.equipment || ['fridge', 'ac_unit'];
   state.equipBroken = state.equipBroken || { fridge: false, ac_unit: false, stove: false };
   state.candidates = state.candidates || [];
+  // 平面圖欄位（舊存檔沒有街道／候位動線）
+  if (state.plan) {
+    const D = state.plan.depth || 9.6;
+    state.plan.street = state.plan.street || { ax: -12.4, az: D / 2 + 1.6, bx: 12.4, bz: D / 2 + 1.6 };
+    state.plan.queue = state.plan.queue || { x: 2.6, z: D / 2 + 2.3, step: 1.15 };
+    state.plan.floorHeight = state.plan.floorHeight || 3.4;
+  }
+  // 累計帳（排行榜）：舊存檔會補成空表
+  ensureLedger(state);
   state.version = SAVE_VERSION;
   return state;
 }

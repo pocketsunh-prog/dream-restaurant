@@ -15,6 +15,19 @@
 <h1>Dream Restaurant 3D — scene / data / sim 驗證</h1>
 <pre id="out">running…</pre>
 <canvas id="cv" width="640" height="400"></canvas>
+<script>
+// 例外也要看得到（無頭瀏覽器不方便看 console）
+function __reportErr(kind, msg, stack) {
+  const o = document.getElementById('out');
+  if (o && o.textContent.trim().startsWith('running')) {
+    o.textContent = `[${document.title}] ${kind}: ${msg}\n${stack || ''}`;
+  }
+  document.title = 'SCENE-ERR';
+  console.log('SCENE_TEST_' + kind + ' ' + msg);
+}
+window.addEventListener('error', (e) => __reportErr('ERROR', e.message, e.error && e.error.stack));
+window.addEventListener('unhandledrejection', (e) => __reportErr('REJECT', (e.reason && e.reason.message) || e.reason, e.reason && e.reason.stack));
+</script>
 <script type="importmap">
 { "imports": {
   "three": "../vendor/three.module.js",
@@ -31,17 +44,23 @@ import { createLighting } from '../src/scene/lighting.js';
 import { RestaurantView, propStats } from '../src/scene/restaurant.js';
 import { createGame, tick, settleDay, startNextDay, resolveSpecialties, seatsOfPlan, money,
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, buyEquipment, repairEquipment,
-  forceEvent, trafficMultiplier } from '../src/sim/game.js';
+  forceEvent, trafficMultiplier, setStaffUniform, topMenuReport, spawnGroup, allTables,
+  kitchenReport, rankings, setFloorCount, setBusinessHours, setSetting } from '../src/sim/game.js';
+import { serializeGame, deserializeGame, saveToSlot, loadFromSlot, slotInfo, deleteSlot, listSlots, storageAvailable } from '../src/sim/save.js';
 import { EVENTS } from '../src/data/events.js';
+import { UNIFORMS } from '../src/data/uniforms.js';
 
 const out = document.getElementById('out');
 const L = [];
 let fails = 0;
 const say = (t) => L.push(t);
+// 進度標記寫進標題：無頭瀏覽器可以先 dump 標題看跑到哪一段
+const stage = (t) => { document.title = 'STAGE ' + t; };
 const check = (name, ok, detail = '') => {
   if (!ok) fails++;
   L.push(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' :: ' + detail : ''}`);
 };
+stage('start');
 
 /* ── 1. 資料 ───────────────────────────────────────────── */
 say('=== [1] 資料集 ===');
@@ -74,14 +93,14 @@ const c1 = Chars.makeCharacter({ kind: 'office', seed: 42 });
 check('人物可建立', !!c1 && c1.isObject3D);
 check('人物有骨架 parts', !!(c1?.userData?.parts?.head && c1?.userData?.parts?.hips));
 let poseOk = true;
-try { for (const p of ['stand', 'walk', 'sit', 'eat', 'wait', 'angry', 'happy']) Chars.setPose(c1, p, 1.0); } catch { poseOk = false; }
-check('7 種姿勢可用', poseOk);
+try { for (const p of ['stand', 'walk', 'sit', 'eat', 'wait', 'angry', 'happy', 'carry', 'cook']) Chars.setPose(c1, p, 1.0); } catch { poseOk = false; }
+check('9 種姿勢可用', poseOk);
 let meshPerChar = 0; c1.traverse((o) => { if (o.isMesh) meshPerChar++; });
 check('單一人物 mesh 數 <= 60', meshPerChar <= 60, `${meshPerChar}`);
 
 /* ── 3. 場景 ───────────────────────────────────────────── */
 say('');
-say('=== [3] 場景 ===');
+stage('sec3'); say('=== [3] 場景 ===');
 const canvas = document.getElementById('cv');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(1);
@@ -106,11 +125,18 @@ scene.traverse((o) => {
 });
 check('場景 mesh 數 > 250', meshes > 250, `${meshes}（投影 ${casters}）`);
 check('沒有 NaN 座標', nanBox === 0, `${nanBox}`);
-check('房間外殼存在', !!view.shell, view.shell ? view.shell.children.length + ' 面' : '無');
-check('桌子數與平面一致', view.tableProps.length === game.plan.tables.length, `${view.tableProps.length}`);
+check('房間外殼存在', !!(view.floorGroups && view.floorGroups.length), view.floorGroups ? view.floorGroups.length + ' 層' : '無');
+check('桌子數與平面一致', view.tableProps.length === allTables(game.plan).length, `${view.tableProps.length}`);
 check('座位數 36', seatsOfPlan(game.plan) === 36, `${seatsOfPlan(game.plan)}`);
+check('一樓有調理場（爐台・出餐口・吧台）', !!(view.cookFx && view.burners?.length), `${view.burners?.length} 個爐口`);
+check('調理標籤 sprite 已建立', Array.isArray(view.cookLabels) && view.cookLabels.length >= 2, `${view.cookLabels?.length}`);
+check('候位動線（繩）已建立', !!view.queueLane, view.queueLane ? view.queueLane.children.length + ' 件' : '無');
 check('沒有道具退回佔位幾何', propStats.fallback === 0,
   propStats.fallback === 0 ? `成功建立 ${propStats.ok} 件` : `退回 ${propStats.fallback} 件：${[...new Set(propStats.missing)].join(',')}`);
+// 多樓層
+check('預設 1 樓', game.plan.floorCount === 1, `${game.plan.floorCount}`);
+check('一樓有桌子', game.plan.floorPlans[0].tables.length > 0, `${game.plan.floorPlans[0].tables.length} 張`);
+check('桌子分散在各樓層', allTables(game.plan).length === game.plan.floorPlans.reduce((a, fp) => a + fp.tables.length, 0), `${allTables(game.plan).length}`);
 
 /* ── 4. 模擬 ───────────────────────────────────────────── */
 say('');
@@ -130,7 +156,7 @@ check('隔天可正常開始', game.phase === 'open' && game.day === 2);
 /* ── 5. 渲染 ───────────────────────────────────────────── */
 say('');
 say('=== [5] 渲染（室內機位）===');
-game.plan.tables.forEach((t, i) => { t.occupied = i < 4; });
+allTables(game.plan).forEach((t, i) => { t.occupied = i < 4; });
 for (let i = 0; i < 3; i++) tick(game, 1);
 view.update(0.016, game);
 camera.position.set(6.4, 5.2, 9.6);
@@ -151,7 +177,7 @@ lighting.setTimeOfDay(12);
 
 /* ── 7. 員工服務流程 ───────────────────────────────────────── */
 say('');
-say('=== [7] 員工與服務流程 ===');
+stage('sec7'); say('=== [7] 員工與服務流程 ===');
 {
   const g2 = createGame({ locationId: 'osaka_dotonbori', seed: 99 });
   check('開局有 1 料理人 + 1 ホール',
@@ -212,19 +238,24 @@ say('=== [8] 候位排隊 ===');
 {
   const g3 = createGame({ locationId: 'tokyo_shibuya', seed: 5 });
   // 把所有桌子佔滿 → 新客人應該去排隊
-  for (const t of g3.plan.tables) { t.occupied = true; t.groupId = 'x'; }
+  for (const t of allTables(g3.plan)) { t.occupied = true; t.groupId = 'x'; }
   let guard3 = 0;
   while (g3.queue.length === 0 && guard3++ < 400) tick(g3, 1);
   check('沒位子時客人會排隊', g3.queue.length > 0, `候位 ${g3.queue.length} 組`);
   const queued = g3.groups.find((x) => x.state === 'queue');
   check('排隊中的客人狀態正確', !!queued && queued.wait >= 0);
   // 空出一張桌 → 應該有人被帶位
-  g3.plan.tables[0].occupied = false;
-  g3.plan.tables[0].groupId = null;
-  let guard4 = 0;
-  while (g3.queue.length > 0 && guard4++ < 200) tick(g3, 1);
-  check('有位子後會補位（帶位任務）', g3.queue.length < 1 || g3.tasks.some((t) => t.type === 'seat'),
-    `剩 ${g3.queue.length} 組排隊`);
+  const firstQueued = g3.groups.find((g) => g.state === 'queue');
+  allTables(g3.plan)[0].occupied = false;
+  allTables(g3.plan)[0].groupId = null;
+  let guard4 = 0, sawSeatTask = false, gotTable = false;
+  while (guard4++ < 120) {
+    tick(g3, 1);
+    if (g3.tasks.some((t) => t.type === 'seat')) sawSeatTask = true;
+    if (firstQueued && firstQueued.tableId) gotTable = true;
+  }
+  check('有位子後會補位（帶位任務）', sawSeatTask || gotTable,
+    `帶位任務 ${sawSeatTask ? '有' : '無'} / 第一位候位客 ${gotTable ? '已入座' : '還在等'}（其餘 ${g3.queue.length} 組）`);
 }
 
 /* ── 9. 事件系統 ───────────────────────────────────────────── */
@@ -279,10 +310,8 @@ say('=== [9] 事件 ===');
 
 /* ── 10. 設定與存讀檔 ─────────────────────────────────────── */
 say('');
-say('=== [10] 設定・存讀檔 ===');
+stage('sec10'); say('=== [10] 設定・存讀檔 ===');
 {
-  const { serializeGame, deserializeGame, saveToSlot, loadFromSlot, slotInfo, deleteSlot, listSlots, storageAvailable } = await import('../src/sim/save.js');
-  const { setBusinessHours, setSetting } = await import('../src/sim/game.js');
   check('localStorage 可用', storageAvailable());
 
   // 營業時間
@@ -329,9 +358,245 @@ say('=== [10] 設定・存讀檔 ===');
   const as = saveToSlot(g7, 'auto');
   check('自動存檔槽可用', as.ok === true, 'auto');
   deleteSlot('auto');
+
+  /* ── 主題 / 制服 / 顧客多樣化 ── */
+  check('全部 28 地點都有 theme', LOCATIONS.every((l) => l.theme && l.theme.wall && l.theme.musicScale),
+    `${LOCATIONS.filter((l) => l.theme).length}/28`);
+  const uniqStyles = new Set(LOCATIONS.map((l) => l.theme?.style));
+  check('主題風格不只一種', uniqStyles.size >= 4, [...uniqStyles].join('/'));
+  const uniqMusic = new Set(LOCATIONS.map((l) => l.theme?.musicScale));
+  check('音樂調性不只一種', uniqMusic.size >= 3, [...uniqMusic].join('/'));
+
+  const uniChef = Object.values(UNIFORMS).filter((u) => u.role === 'chef');
+  const uniWaiter = Object.values(UNIFORMS).filter((u) => u.role === 'waiter');
+  check('廚師制服 >= 3 套', uniChef.length >= 3, `${uniChef.length}`);
+  check('服務生制服 >= 3 套', uniWaiter.length >= 3, `${uniWaiter.length}`);
+  const g8 = createGame({ locationId: 'tokyo_shibuya', seed: 11 });
+  const chef8 = g8.staff.find((s) => s.role === 'chef');
+  const rUni = setStaffUniform(g8, chef8.id, 'chef_japanese');
+  check('可以更換廚師制服', rUni.ok === true && g8.staff.find((s) => s.id === chef8.id).uniformId === 'chef_japanese');
+
+  // 顧客寵物（樣本數要夠大才穩定）
+  let petsSeen = 0, familyEtc = 0;
+  const gPet = createGame({ locationId: 'tokyo_shibuya', seed: 42 });
+  for (let i = 0; i < 2000; i++) {
+    const g = spawnGroup(gPet, locationById('tokyo_shibuya'));
+    if (g.kind === 'family' || g.kind === 'couple' || g.kind === 'elder') {
+      familyEtc++;
+      if (g.pet) petsSeen++;
+    }
+  }
+  check('顧客會帶寵物（家庭/情侶/銀髮約 13%）', petsSeen > 0,
+    `家庭/情侶/銀髮 ${familyEtc} 組中 ${petsSeen} 組有寵物（${familyEtc ? (petsSeen / familyEtc * 100).toFixed(1) : 0}%）`);
+}
+
+/* ── 11. 熱門菜單報表 ─────────────────────────────────────── */
+say('');
+say('=== [11] 熱門菜單報表 ===');
+{
+  const g9 = createGame({ locationId: 'osaka_dotonbori', seed: 7 });
+  for (let i = 0; i < 1200 && g9.phase === 'open'; i++) tick(g9, 1);
+  const report = topMenuReport(g9);
+  check('報表有品項資料', report.items.length > 0, `${report.items.length} 道`);
+  check('報表排序由高到低', report.items.every((it, i) => i === 0 || report.items[i - 1].count >= it.count));
+  check('報表含金額與占比', report.items[0].revenue > 0 && report.items[0].pct > 0,
+    `top: ${report.items[0].name} ×${report.items[0].count} ¥${report.items[0].revenue}`);
+}
+
+/* ── 12. 座位朝向（椅子不能亂轉）──────────────────────────── */
+say('');
+say('=== [12] 座位・椅子の向き ===');
+{
+  const gSeat = createGame({ locationId: 'tokyo_shibuya', seed: 3 });
+  let bad = 0, checked = 0, worst = 1;
+  for (const t of allTables(gSeat.plan)) {
+    for (const sp of t.seatPos) {
+      // 角色正面 = +Z，rotation.y = ry → 面向 (sin ry, cos ry)
+      const fx = Math.sin(sp.ry), fz = Math.cos(sp.ry);
+      const dx = t.x - sp.x, dz = t.z - sp.z;
+      const d = Math.hypot(dx, dz) || 1;
+      const dot = (fx * dx + fz * dz) / d;
+      checked++;
+      worst = Math.min(worst, dot);
+      if (dot < 0.94) bad++;
+    }
+  }
+  check('每個座位都面向桌心（椅子不再側擺）', bad === 0, `${checked} 個座位・最差 cos=${worst.toFixed(3)}`);
+  const t0 = allTables(gSeat.plan)[0];
+  const angles = t0.seatPos.map((s) => +s.ry.toFixed(3));
+  check('四個座位朝向互不相同', new Set(angles).size === angles.length, angles.join(','));
+}
+
+/* ── 13. 客人從街上來、回街上去 ───────────────────────────── */
+say('');
+stage('sec13'); say('=== [13] 街道の出入り・並び ===');
+{
+  const gSt = createGame({ locationId: 'tokyo_shibuya', seed: 1234 });
+  const street = gSt.plan.street;
+  check('平面圖有街道兩端', !!street && Math.abs(street.ax) > 8 && Math.abs(street.bx) > 8,
+    `x ${street?.ax} / ${street?.bx}`);
+
+  const gspawn = spawnGroup(gSt, locationById('tokyo_shibuya'));
+  check('新客人從街道出現', Math.abs(gspawn.walk.x) > 8, `x=${gspawn.walk.x.toFixed(1)} z=${gspawn.walk.z.toFixed(1)}`);
+  check('客人有離店出口方向', !!gspawn.exit && Math.abs(gspawn.exit.x) > 8, `exit x=${gspawn.exit.x}`);
+
+  let maxLeaveX = 0, sawOutside = false, releasedInside = false, goneOnStreet = 0, goneInside = 0;
+  let guardS = 0;
+  while (gSt.phase !== 'settle' && guardS++ < 2000) {
+    tick(gSt, 1);
+    for (const g of gSt.groups) {
+      if (g.state === 'leaving' || g.state === 'angryLeave') {
+        maxLeaveX = Math.max(maxLeaveX, Math.abs(g.walk.x));
+        if (g.walk.z > gSt.plan.depth / 2) sawOutside = true;
+        // 「還回去」只能發生在門口（z 已經接近外牆），不能還在店裡深處就放掉桌子
+        if (g.released && g.walk.z < gSt.plan.depth / 2 - 1.5) releasedInside = true;
+      }
+      if (g.state === 'gone') { if (Math.abs(g.walk.x) > 6) goneOnStreet++; else goneInside++; }
+    }
+  }
+  check('離店客人會走到人行道上', sawOutside, `最遠 |x|=${maxLeaveX.toFixed(1)}`);
+  check('離店客人沿著街道走遠才消失', goneOnStreet > 0 || goneInside === 0,
+    `街上消失 ${goneOnStreet} / 店內消失 ${goneInside}`);
+  check('還沒走出店門就先把桌子還回去', !releasedInside);
+
+  // 候位隊伍
+  const gQ = createGame({ locationId: 'tokyo_shibuya', seed: 5 });
+  for (const t of allTables(gQ.plan)) { t.occupied = true; t.groupId = 'x'; }
+  let guardQ = 0;
+  while (gQ.queue.length < 3 && guardQ++ < 900) tick(gQ, 1);
+  for (let i = 0; i < 40; i++) tick(gQ, 1);
+  const waiting = gQ.groups.filter((g) => g.state === 'queue');
+  const onSidewalk = waiting.length > 0 && waiting.every((g) => g.walk.z > gQ.plan.depth / 2);
+  const xs = waiting.map((g) => g.walk.x).sort((a, b) => a - b);
+  const spaced = xs.every((x, i) => i === 0 || Math.abs(x - xs[i - 1]) > 0.5);
+  check('候位隊伍在店外的人行道上', onSidewalk, waiting.map((g) => `${g.walk.x.toFixed(1)},${g.walk.z.toFixed(1)}`).join(' '));
+  check('候位客人彼此有間距', spaced, xs.map((x) => x.toFixed(1)).join(' / '));
+  const q0 = waiting[0];
+  if (q0) {
+    const fx = Math.sin(q0.walk.dir), fz = Math.cos(q0.walk.dir);
+    const dx = gQ.plan.entrance.x - q0.walk.x, dz = gQ.plan.entrance.z - q0.walk.z;
+    const d = Math.hypot(dx, dz) || 1;
+    check('候位客人面向店門', (fx * dx + fz * dz) / d > 0.8, `cos=${((fx * dx + fz * dz) / d).toFixed(2)}`);
+  }
+}
+
+/* ── 14. 樓層：客人與員工站在正確的樓層 ───────────────────── */
+say('');
+say('=== [14] フロア（客人・員工）===');
+{
+  const gF = createGame({ locationId: 'tokyo_shibuya', seed: 8 });
+  const gOne = createGame({ locationId: 'tokyo_shibuya', seed: 9 });
+  const toTwo = setFloorCount(gOne, 2);
+  check('擴建 2F 收 ¥800,000', toTwo.ok === true && toTwo.cost === 800000, `¥${toTwo.cost}`);
+  const toThree = setFloorCount(gOne, 3);
+  check('再擴建 3F 收 ¥2,400,000', toThree.ok === true && toThree.cost === 2400000, `¥${toThree.cost}`);
+  const up = setFloorCount(gF, 3);
+  check('可以擴建到 3 層', up.ok === true && gF.plan.floorCount === 3, `¥${up.cost} / ${gF.plan.floorCount} 層`);
+  check('一次加兩層要付兩層的錢', up.cost === 800000 + 2400000, `¥${up.cost}`);
+  check('不能減少樓層', setFloorCount(gF, 1).ok === false);
+  let guardF = 0, seenUpper = 0, staffUpper = 0, offFloor = 0;
+  while (gF.phase !== 'settle' && guardF++ < 3000) {
+    tick(gF, 1);
+    for (const g of gF.groups) {
+      if ((g.floor || 0) > 0) seenUpper++;
+      if ((g.floor || 0) >= gF.plan.floorCount) offFloor++;
+    }
+    for (const s of gF.staff) if ((s.floor || 0) > 0) staffUpper++;
+  }
+  check('客人會上二、三樓用餐', seenUpper > 0, `${seenUpper} 次（含移動中）`);
+  check('服務生會上樓送菜／收桌', staffUpper > 0, `${staffUpper} 次`);
+  check('樓層編號不會超出樓數', offFloor === 0, `${offFloor}`);
+}
+
+/* ── 15. 調理場（看廚師做菜）──────────────────────────────── */
+say('');
+say('=== [15] 調理場 ===');
+{
+  const gK = createGame({ locationId: 'osaka_dotonbori', seed: 404 });
+  const k = gK.plan.kitchen, stv = gK.plan.stove;
+  check('爐台在調理場範圍內',
+    stv.x > k.x - k.w / 2 && stv.x < k.x + k.w / 2 && Math.abs(stv.z - k.z) < k.d,
+    `stove ${stv.x},${stv.z} / kitchen ${k.x},${k.z}`);
+
+  let sawCooking = false, maxProgress = 0, sawCookPose = false, cookTargetOk = true;
+  const cooks = [];
+  let guardK = 0;
+  while (gK.phase !== 'settle' && guardK++ < 1200) {
+    tick(gK, 1);
+    const rep = kitchenReport(gK);
+    for (const c of rep.chefs) {
+      if (c.working) {
+        sawCooking = true;
+        maxProgress = Math.max(maxProgress, c.progress);
+        if (c.dishes.length) cooks.push(c.dishes[0].name);
+      }
+    }
+    for (const t of gK.tasks) if (t.type === 'cook' && Math.abs(t.tz - gK.plan.stove.z) > 1.5) cookTargetOk = false;
+    for (const s of gK.staff) if (s.pose === 'cook') sawCookPose = true;
+  }
+  check('料理人會進入「調理中」狀態', sawCooking, `最大進度 ${(maxProgress * 100).toFixed(0)}%`);
+  check('調理進度會往上跑', maxProgress > 0.05, `${(maxProgress * 100).toFixed(0)}%`);
+  check('調理中的菜色有名字', cooks.length > 0, [...new Set(cooks)].slice(0, 4).join('、'));
+  check('廚師站在爐前（不是在爐子裡面）', cookTargetOk);
+  check('廚師使用 cook 姿勢', sawCookPose);
+  check('cook 姿勢在 POSES 內', Chars.POSES.includes('cook'), Chars.POSES.join(','));
+  const repK = kitchenReport(gK);
+  check('廚房報表有出餐口欄位', Array.isArray(repK.pass), `${repK.pass.length} 筆`);
+  check('廚房報表統計欄位完整', typeof repK.counts.cooking === 'number' && typeof repK.counts.ready === 'number',
+    JSON.stringify(repK.counts));
+}
+
+/* ── 16. 番付（排行榜）────────────────────────────────────── */
+say('');
+say('=== [16] 番付（この店 / 全地点）===');
+{
+  const gR = createGame({ locationId: 'tokyo_shibuya', seed: 606 });
+  let guardR = 0;
+  while (gR.phase !== 'settle' && guardR++ < 2000) tick(gR, 1);
+  const repR = settleDay(gR);
+  const R = rankings(gR);
+  check('番付有店內菜色資料', R.local.dishes.length > 0, `${R.local.dishes.length} 道菜`);
+  check('店內菜色排行由高到低', R.local.dishes.every((d, i) => i === 0 || R.local.dishes[i - 1].count >= d.count));
+  check('料理人排行存在', R.local.chefs.length > 0, R.local.chefs.map((c) => `${c.name} ${c.cooked}品`).join('、'));
+  check('料理人有實際調理數', R.local.chefs.some((c) => c.cooked > 0), R.local.chefs.map((c) => c.cooked).join(','));
+  check('ホール排行存在', R.local.waiters.length > 0, R.local.waiters.map((w) => `${w.name} ${money(w.revenue)}`).join('、'));
+  check('客層排行有資料', R.local.kinds.length > 0, R.local.kinds.map((k) => k.name + '×' + k.groups).join('、'));
+  check('時間帯別有資料', R.local.hours.length > 1, R.local.hours.map((h) => h.hour + '時').join(','));
+  check('店史紀錄有寫入', R.local.record.days === 1 && R.local.record.bestRevenue === Math.round(repR.revenue),
+    `${R.local.record.days} 日 / 最高 ${money(R.local.record.bestRevenue)}（結算 ${money(repR.revenue)}）`);
+
+  check('全地點排行 28 筆', R.global.length === 28, `${R.global.length}`);
+  check('名次 1..28 不重複', new Set(R.global.map((g) => g.rank)).size === 28 && R.global[0].rank === 1);
+  check('全地點排行由高到低', R.global.every((g, i) => i === 0 || R.global[i - 1].score >= g.score));
+  check('自店在表上被標記', R.global.filter((g) => g.isHere).length === 1, R.global.find((g) => g.isHere)?.name || '無');
+  check('自店名次在範圍內', R.summary.myRank >= 1 && R.summary.myRank <= 28,
+    `第 ${R.summary.myRank} 位 / 贏過 ${R.summary.beaten} 個地點`);
+  check('營業額換算的名次也在範圍內', R.summary.revenueRank >= 1 && R.summary.revenueRank <= 28,
+    `売上順位 第 ${R.summary.revenueRank} 位（自己最佳 ${money(R.summary.myScore)}）`);
+  check('每個地點都有平均日商', R.global.every((g) => g.potential > 0),
+    `${money(R.global[0].potential)} 〜 ${money(R.global[27].potential)}`);
+  check('全地點排行涵蓋自店與其他地點', new Set(R.global.map((g) => g.id)).size === 28);
+
+  // 換地點後名次會跟著換
+  const Rother = rankings(Object.assign(createGame({ locationId: 'kyoto_gion', seed: 11 })));
+  check('換立地後自店標記跟著移動', Rother.global.find((g) => g.isHere)?.id === 'kyoto_gion',
+    Rother.global.find((g) => g.isHere)?.name || '無');
+
+  // 排行榜要能撐過存讀檔
+  const round = deserializeGame(serializeGame(gR));
+  const R2 = rankings(round);
+  check('存讀檔後排行榜一致', R2.local.dishes.length === R.local.dishes.length && R2.global.length === 28,
+    `菜色 ${R2.local.dishes.length} / 地點 ${R2.global.length}`);
+  check('舊存檔缺 ledger 也能補', (() => {
+    const raw = serializeGame(gR);
+    delete raw.ledger;
+    const st = deserializeGame(raw);
+    return Array.isArray(rankings(st).global) && rankings(st).global.length === 28;
+  })());
 }
 
 say('');
+stage('summary');
 say(fails === 0 ? '<span class="pass">SCENE TEST: ALL PASSED</span>' : `<span class="fail">SCENE TEST: ${fails} FAILED</span>`);
 out.innerHTML = L.join('\n');
 document.title = fails === 0 ? 'SCENE-OK' : 'SCENE-FAIL-' + fails;

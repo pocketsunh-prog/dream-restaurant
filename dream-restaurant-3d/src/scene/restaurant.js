@@ -5,6 +5,9 @@
 import * as THREE from 'three';
 import * as Props from './props.js';
 import * as Chars from './characters.js';
+import { uniformById } from '../data/uniforms.js';
+import { dishById } from '../data/dishes.js';
+import { allTables } from '../sim/game.js';
 
 /* ------------------------------------------------------------ 工具 */
 
@@ -125,12 +128,24 @@ function tintGroup(obj, mul, warm = 0) {
 /* ------------------------------------------------------------ 類別 */
 
 export class RestaurantView {
-  constructor(scene, plan) {
+  constructor(scene, plan, opts = {}) {
     this.scene = scene;
     this.plan = plan;
+    this.location = opts.location || null;
+    this.theme = this.location?.theme || null;
+    const th = this.theme || {};
+    this._wallColor = th.wall || '#e6dccb';
+    this._wallAccent = th.wallAccent || '#c0b098';
+    this._floorColor = th.floor || '#8c6a44';
+    this._floorAlt = this._shade(this._floorColor, -16);
+    this._accent = th.accent || '#c0392b';
+    this._light = th.light || '#fff4e2';
+    this._style = th.style || 'modern';
     this.root = new THREE.Group();
     this.root.name = 'restaurant';
     scene.add(this.root);
+
+    this.FH = plan?.floorHeight || 3.4;   // 每層樓高（人物要站在自己那一層）
 
     this.groupMeshes = new Map();   // groupId -> [meshes]
     this.staffMeshes = new Map();   // staffId -> mesh（buildStaff 會重建）
@@ -138,12 +153,50 @@ export class RestaurantView {
     this.tableProps = [];
     this._tmp = new THREE.Vector3();
     this._clock = 0;
+    this.cookFx = null;             // 爐火／蒸氣
+    this.cookLabels = [];           // 調理中的浮動標籤
 
     this.buildRoom();
     this.buildFurniture();
     this.buildDecor();
     this.buildOutside();
     this.buildStaff();
+    this.buildStairs();
+  }
+
+  /* ── 樓梯（連通各樓層）────────────────────────────────────────── */
+
+  buildStairs() {
+    const p = this.plan;
+    if (!p || p.floorCount <= 1) return;
+    const grp = new THREE.Group();
+    grp.name = 'stairs';
+    const stairMat = new THREE.MeshStandardMaterial({ color: this._shade(this._wallAccent, 10), roughness: 0.8 });
+    const sx = p.stairs.x, sz = p.stairs.z;
+    const step = 0.32, w = 1.0, depth = 1.4;
+    const stepsPerFloor = Math.ceil(p.floorHeight / 0.16);
+    for (let f = 0; f < p.floorCount - 1; f++) {
+      const yBase = f * p.floorHeight;
+      // 往上的樓梯段（從 (sx, sz) 往上走到 (sx+depth, sz)）
+      for (let i = 0; i < stepsPerFloor; i++) {
+        const t = i / stepsPerFloor;
+        const y = yBase + t * p.floorHeight;
+        const x = sx + t * depth;
+        const tread = new THREE.Mesh(new THREE.BoxGeometry(w, 0.06, step * 1.2), stairMat);
+        tread.position.set(x, y + 0.03, sz);
+        tread.castShadow = true; tread.receiveShadow = true;
+        grp.add(tread);
+        const riser = new THREE.Mesh(new THREE.BoxGeometry(w, 0.16, 0.04), stairMat);
+        riser.position.set(x, y + 0.08, sz + step * 0.6);
+        grp.add(riser);
+      }
+      // 平台
+      const landing = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.08, 1.0), stairMat);
+      landing.position.set(sx + depth * 0.5, yBase + p.floorHeight, sz);
+      landing.castShadow = true; landing.receiveShadow = true;
+      grp.add(landing);
+    }
+    this.root.add(grp);
   }
 
   /* ── 房間本體 ───────────────────────────────────────────────── */
@@ -151,40 +204,284 @@ export class RestaurantView {
   buildRoom() {
     const p = this.plan;
     const W = p.width, D = p.depth, H = 2.85;
+    const FH = p.floorHeight || 3.4;
+    const floors = p.floorCount || 1;
 
-    // 地板：只鋪房間本體＋一圈緣側（外面的街道由 buildOutside 處理）
-    const floor = makePropSafe('woodFloor', { w: W + 0.9, h: D + 0.9 }, { x: W + 0.9, y: 0.1, z: D + 0.9 });
-    floor.position.set(0, 0, 0);
-    tintGroup(floor, new THREE.Color(0.70, 0.60, 0.50), 1);
-    this.root.add(shadowize(floor));
-    this.floorY = 0.1;
-
-    // 榻榻米區（抬高一階）
-    const tat = p.tatami;
-    const tatamiGroup = new THREE.Group();
-    const cols = Math.floor(tat.w / 0.9);
-    const rows = Math.floor(tat.d / 1.8);
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) {
-        const mat = makePropSafe('tatami', { w: 0.88, h: 1.78 }, { x: 0.88, y: 0.06, z: 1.78 });
-        mat.position.set(
-          tat.x - tat.w / 2 + 0.45 + i * 0.9,
-          this.floorY + 0.06,
-          tat.z - tat.d / 2 + 0.9 + j * 1.8
-        );
-        mat.rotation.y = ((i + j) % 2) ? Math.PI / 2 : 0;
-        tatamiGroup.add(shadowize(mat));
-      }
+    // 為每一樓層建立一個子群組（偏移在 Y）
+    this.floorGroups = [];
+    for (let f = 0; f < floors; f++) {
+      const fg = new THREE.Group();
+      fg.name = 'floor' + f;
+      fg.position.y = f * FH;
+      this.root.add(fg);
+      this.floorGroups.push(fg);
     }
-    this.tatamiY = this.floorY + 0.12;
-    tintGroup(tatamiGroup, new THREE.Color(0.88, 0.86, 0.74), 0.6);
-    this.root.add(tatamiGroup);
 
-    /* 牆與天花板：朝「房間內側」的單面平面。
-       從店外或上方看會直接看穿 → 娃娃屋視角；從店內看則是完整牆面。*/
-    this.buildShell(W, D, H);
+    for (let f = 0; f < floors; f++) {
+      const fg = this.floorGroups[f];
+      const isGround = f === 0;
 
-    // 柱子與樑
+      // 地板（每層都有）
+      const floor = makePropSafe('woodFloor', { w: W + 0.9, h: D + 0.9 }, { x: W + 0.9, y: 0.1, z: D + 0.9 });
+      floor.position.set(0, 0, 0);
+      const floorCol = new THREE.Color(this._floorColor);
+      floor.traverse((o) => { if (o.isMesh && o.material) { o.material = o.material.clone(); o.material.color.copy(floorCol); } });
+      fg.add(shadowize(floor));
+
+      // 榻榻米區（僅一樓）
+      if (isGround) {
+        const tat = p.tatami;
+        const tatamiGroup = new THREE.Group();
+        const cols = Math.floor(tat.w / 0.9);
+        const rows = Math.floor(tat.d / 1.8);
+        for (let i = 0; i < cols; i++) {
+          for (let j = 0; j < rows; j++) {
+            const mat = makePropSafe('tatami', { w: 0.88, h: 1.78 }, { x: 0.88, y: 0.06, z: 1.78 });
+            mat.position.set(tat.x - tat.w / 2 + 0.45 + i * 0.9, 0.06, tat.z - tat.d / 2 + 0.9 + j * 1.8);
+            mat.rotation.y = ((i + j) % 2) ? Math.PI / 2 : 0;
+            tatamiGroup.add(shadowize(mat));
+          }
+        }
+        this.tatamiY = 0.12;
+        this._tatamiGroup = tatamiGroup;
+        fg.add(tatamiGroup);
+      }
+
+      // 牆與天花板（每層都有）
+      this.buildShell(W, D, H, fg, f);
+
+      // 柱子與樑（每層都有）
+      this.buildPillarsBeams(W, D, H, fg, f, isGround);
+
+      // 障子、暖簾、看板、霓虹、緣側（僅一樓）
+      if (isGround) {
+        const shojiXs = [-W / 2 + 0.6, -W / 2 + 1.75, W / 2 - 1.75, W / 2 - 0.6];
+        for (const x of shojiXs) {
+          const s = makePropSafe('shoji', { w: 1.1, h: 1.95, lit: true }, { x: 1.1, y: 1.95, z: 0.08 });
+          s.position.set(x, 0, -D / 2 + 0.14);
+          fg.add(shadowize(s));
+          this.lampPointers.push({ obj: s, kind: 'shoji' });
+        }
+        const e = this.plan.entrance;
+        const noren = makePropSafe('noren', { w: 1.9, h: 0.62, text: '食堂', color: '#1d3b5c' }, { x: 1.9, y: 0.62, z: 0.06 });
+        noren.position.set(e.x, 1.86, D / 2 - 0.02);
+        noren.rotation.y = Math.PI;
+        fg.add(shadowize(noren));
+        const sign = makePropSafe('signboard', { w: 1.7, h: 0.5, text: '夢幻食堂' }, { x: 1.7, y: 0.5, z: 0.1 });
+        sign.position.set(e.x, 2.62, D / 2 + 0.12);
+        sign.rotation.y = Math.PI;
+        fg.add(shadowize(sign));
+        const neon = makePropSafe('neonSign', { w: 0.7, h: 2.0, text: '居酒屋' }, { x: 0.7, y: 2.0, z: 0.12 });
+        neon.position.set(W / 2 - 0.16, 1.5, 1.2);
+        neon.rotation.y = -Math.PI / 2;
+        fg.add(shadowize(neon));
+        this.lampPointers.push({ obj: neon, kind: 'neon' });
+        // 緣側
+        const tat = this.plan.tatami;
+        const eng = makePropSafe('engawa', { len: 4.2, w: 0.7 }, { x: 4.2, y: 0.18, z: 0.7 });
+        eng.position.set(tat.x, 0.08, tat.z - tat.d / 2 - 0.35);
+        fg.add(shadowize(eng));
+
+        // 一樓的「店內設施」：吧台、調理場（厨房）、出餐口、洗手間
+        this._buildGroundFixtures(fg);
+      }
+
+      // 吊燈、行燈（每層）
+        this.buildLightingFixtures(fg, f, isGround);
+
+      // 桌子＋椅子＋餐具（各樓層）
+      this._buildTablesForFloor(fg, p.floorPlans[f]?.tables || [], f);
+    }
+
+    this.floorY = 0.1;
+  }
+
+  /* ── 一樓設施：吧台、調理場（厨房）、出餐口、洗手間 ─────────────
+     調理場做成「開放式厨房」：客人與玩家都看得到廚師站在爐前做菜。 */
+  _buildGroundFixtures(fg) {
+    const p = this.plan;
+    const K = p.kitchen || { x: 3.6, z: -4.0, w: 5.6, d: 1.9 };
+
+    // 吧台（沿西牆，長邊朝南北）
+    const bar = makePropSafe('counter', { len: 3.4, h: 1.05, d: 0.6 }, { x: 0.6, y: 1.05, z: 3.4 });
+    bar.position.set(p.counter.x, 0, p.counter.z);
+    bar.rotation.y = Math.PI / 2;
+    fg.add(shadowize(bar));
+    aoBlob(fg, p.counter.x, 0.011, p.counter.z, 0.9, 2.0, 0.9);
+    for (let i = 0; i < 4; i++) {
+      const stool = makePropSafe('chair', { seatH: 0.62 }, { x: 0.4, y: 0.75, z: 0.4 });
+      stool.position.set(p.counter.x + 0.72, 0, p.counter.z - 1.2 + i * 0.8);
+      stool.rotation.y = -Math.PI / 2;
+      stool.scale.setScalar(0.92);
+      fg.add(shadowize(stool));
+    }
+
+    // 廚房工作檯沿北牆：洗い場 → 作業台 → 冷蔵庫
+    const zWall = -p.depth / 2 + 0.62;
+    const sink = makePropSafe('sink', { w: 1.1, h: 0.9, d: 0.62 }, { x: 1.1, y: 0.9, z: 0.62 });
+    sink.position.set(K.x - K.w / 2 + 0.75, 0, zWall);
+    fg.add(shadowize(sink));
+    const kc = makePropSafe('kitchenCounter', { len: 2.0, h: 0.9, d: 0.65 }, { x: 2.0, y: 0.9, z: 0.65 });
+    kc.position.set(K.x - 0.5, 0, zWall);
+    fg.add(shadowize(kc));
+    const fridge = makePropSafe('fridge', { w: 0.9, h: 1.8, d: 0.7 }, { x: 0.9, y: 1.8, z: 0.7 });
+    fridge.position.set(K.x + 1.5, 0, zWall + 0.02);
+    fg.add(shadowize(fridge));
+    const shelf = makePropSafe('shelf', { w: 2.0, h: 0.95, d: 0.3, bottles: 6 }, { x: 2.0, y: 0.95, z: 0.3 });
+    shelf.position.set(K.x - 0.6, 1.5, -p.depth / 2 + 0.26);
+    fg.add(shadowize(shelf));
+
+    // 爐台（廚師的工作位置）＋爐火／蒸氣（syncCooking 會依實際狀況開關）
+    const stove = makePropSafe('stove', { w: 1.5, h: 0.86, d: 0.8 }, { x: 1.5, y: 0.86, z: 0.8 });
+    stove.position.set(p.stove.x, 0, p.stove.z);
+    stove.rotation.y = Math.PI;   // 面向南邊（廚師站的那一側）
+    fg.add(shadowize(stove));
+    aoBlob(fg, p.stove.x, 0.011, p.stove.z + 0.3, 1.0, 0.7, 0.85);
+
+    this.cookFx = new THREE.Group();
+    this.cookFx.name = 'cookFx';
+    const flameMat = new THREE.MeshBasicMaterial({
+      color: 0xff8a2b, transparent: true, opacity: 0.0, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const panMat = new THREE.MeshStandardMaterial({ color: 0x24262b, roughness: 0.42, metalness: 0.55 });
+    const steamMat = new THREE.MeshBasicMaterial({
+      color: 0xf6f4ef, transparent: true, opacity: 0.0, depthWrite: false
+    });
+    this.burners = [];
+    for (let i = 0; i < 2; i++) {
+      const bx = p.stove.x - 0.36 + i * 0.72;
+      const bz = p.stove.z + 0.12;
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.3, 10, 1, true), flameMat.clone());
+      flame.position.set(bx, 0.9, bz);
+      flame.rotation.x = Math.PI;
+      this.cookFx.add(flame);
+      const pan = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.16, 0.09, 14), panMat);
+      pan.position.set(bx, 0.95, bz);
+      pan.castShadow = true;
+      this.cookFx.add(pan);
+      const steam = [];
+      for (let s = 0; s < 5; s++) {
+        const puff = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), steamMat.clone());
+        puff.position.set(bx + (s - 2) * 0.05, 1.06, bz);
+        puff.scale.setScalar(0.6 + s * 0.06);
+        this.cookFx.add(puff);
+        steam.push(puff);
+      }
+      // 爐火的光暈（開火時整間厨房會亮起來）
+      const glow = new THREE.PointLight(0xff9b3d, 0, 3.2, 2);
+      glow.position.set(bx, 1.1, bz);
+      this.cookFx.add(glow);
+      this.burners.push({ flame, steam, glow, bx, bz, phase: i * 1.7 });
+    }
+    fg.add(this.cookFx);
+
+    // 出餐口（カウンター）：菜會放在這裡等服務生來端
+    const pass = makePropSafe('counter', { len: 1.9, h: 0.94, d: 0.55 }, { x: 1.9, y: 0.94, z: 0.55 });
+    pass.position.set(p.pass.x, 0, p.pass.z);
+    fg.add(shadowize(pass));
+    aoBlob(fg, p.pass.x, 0.011, p.pass.z, 1.2, 0.6, 0.85);
+    const passLamp = new THREE.PointLight(0xffe6c0, 6, 4.5, 2);
+    passLamp.position.set(p.pass.x, 2.3, p.pass.z);
+    fg.add(passLamp);
+    this.passLight = passLamp;
+
+    // 廚房口的暖簾（寫「調理場」），讓厨房一眼看得出來
+    const kNor = makePropSafe('noren', { w: 1.6, h: 0.5, text: '調理場', color: '#2b2b30' }, { x: 1.6, y: 0.5, z: 0.06 });
+    kNor.position.set(p.stove.x, 2.35, p.stove.z + 0.55);
+    fg.add(shadowize(kNor));
+
+    // 洗手間（西側角落）：門簾＋洗手台＋看板
+    const r = p.restroom;
+    const wcDoor = makePropSafe('noren', { w: 1.1, h: 0.55, text: 'お手洗い', color: '#2f4858' }, { x: 1.1, y: 0.55, z: 0.06 });
+    wcDoor.position.set(r.x, 1.9, -p.depth / 2 + 0.16);
+    fg.add(shadowize(wcDoor));
+    const wcSink = makePropSafe('sink', { w: 0.8, h: 0.85, d: 0.5 }, { x: 0.8, y: 0.85, z: 0.5 });
+    wcSink.position.set(r.x + 0.95, 0, -p.depth / 2 + 0.5);
+    fg.add(shadowize(wcSink));
+    const wcSign = makePropSafe('signboard', { w: 0.7, h: 0.34, text: 'WC' }, { x: 0.7, y: 0.34, z: 0.08 });
+    wcSign.position.set(r.x, 2.6, -p.depth / 2 + 0.14);
+    fg.add(shadowize(wcSign));
+    this.restroomSpot = { x: r.x, z: r.z };
+
+    // 調理中の浮動標籤（誰在煮什麼、煮到幾成）
+    this.cookLabels = [];
+    for (let i = 0; i < 4; i++) {
+      const cv = document.createElement('canvas');
+      cv.width = 256; cv.height = 96;
+      const tex = new THREE.CanvasTexture(cv);
+      if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+      const sp = new THREE.Sprite(mat);
+      sp.scale.set(1.5, 0.56, 1);
+      sp.visible = false;
+      sp.renderOrder = 20;
+      sp.userData = { cv, tex, key: '' };
+      this.root.add(sp);
+      this.cookLabels.push(sp);
+    }
+  }
+
+  /* ── 桌子＋椅子＋餐具（各樓層）────────────────────────────────── */
+
+  _buildTablesForFloor(fg, tables, floorIdx) {
+    for (const t of tables) {
+      const baseY = (floorIdx === 0 && t.style === 'chabudai') ? this.tatamiY : 0;
+      if (t.style === 'chabudai' && floorIdx === 0) {
+        const table = makePropSafe('chabudai', { w: 1.25, d: 0.8, h: 0.34 }, { x: 1.25, y: 0.34, z: 0.8 });
+        table.position.set(t.x, baseY, t.z);
+        fg.add(shadowize(table));
+        for (let i = 0; i < t.seats; i++) {
+          const sp = t.seatPos[i];
+          const za = makePropSafe('zabuton', { w: 0.56, d: 0.56 }, { x: 0.56, y: 0.09, z: 0.56 });
+          za.position.set(sp.x, baseY, sp.z);
+          za.rotation.y = sp.ry;
+          fg.add(shadowize(za));
+        }
+        const set = makePropSafe('tableSetting', { plates: t.seats }, { x: 0.7, y: 0.06, z: 0.7 });
+        set.position.set(t.x, baseY + 0.34, t.z);
+        fg.add(shadowize(set));
+      } else {
+        const table = makePropSafe('table', { w: 1.15, d: 0.78, h: 0.72 }, { x: 1.15, y: 0.72, z: 0.78 });
+        table.position.set(t.x, baseY, t.z);
+        fg.add(shadowize(table));
+        aoBlob(fg, t.x, baseY + 0.012, t.z, 0.95, 0.72, 0.7);
+        for (let i = 0; i < t.seats; i++) {
+          const sp = t.seatPos[i];
+          const ch = makePropSafe('chair', {}, { x: 0.46, y: 0.9, z: 0.46 });
+          ch.position.set(sp.x, baseY, sp.z);
+          // 椅背在 -Z、椅面朝 +Z：坐的人面向桌心，所以椅子要轉 180°
+          // （以前直接沿用客人的面向，結果每張椅子都側著桌子，看起來亂七八糟）
+          ch.rotation.y = sp.ry + Math.PI;
+          fg.add(shadowize(ch));
+          // 座墊：整排椅子的顏色一致，視覺上就整齊
+          const cushion = new THREE.Mesh(
+            new THREE.BoxGeometry(0.37, 0.04, 0.36),
+            this._cushionMaterial(floorIdx)
+          );
+          cushion.position.set(sp.x, baseY + 0.465, sp.z);
+          cushion.rotation.y = sp.ry + Math.PI;
+          cushion.castShadow = true;
+          cushion.receiveShadow = true;
+          fg.add(cushion);
+        }
+        const set = makePropSafe('tableSetting', { plates: t.seats }, { x: 0.7, y: 0.06, z: 0.7 });
+        set.position.set(t.x, baseY + 0.72, t.z);
+        fg.add(shadowize(set));
+      }
+      this.tableProps.push({ table: t, y: baseY });
+    }
+  }
+
+  _cushionMaterial(floorIdx) {
+    this._cushionMats = this._cushionMats || {};
+    const key = 'f' + floorIdx;
+    if (this._cushionMats[key]) return this._cushionMats[key];
+    const col = new THREE.Color(this._accent).lerp(new THREE.Color('#2b3a55'), 0.55);
+    this._cushionMats[key] = new THREE.MeshStandardMaterial({ color: col, roughness: 0.92, metalness: 0 });
+    return this._cushionMats[key];
+  }
+
+  buildPillarsBeams(W, D, H, fg, f, isGround) {
     const pillarAt = [
       [-W / 2 + 0.5, -D / 2 + 0.5], [W / 2 - 0.5, -D / 2 + 0.5],
       [-W / 2 + 0.5, D / 2 - 0.5], [W / 2 - 0.5, D / 2 - 0.5],
@@ -192,69 +489,78 @@ export class RestaurantView {
     ];
     for (const [x, z] of pillarAt) {
       const pil = makePropSafe('pillar', { h: H }, { x: 0.18, y: H, z: 0.18 });
-      place(pil, x, this.floorY, z);
-      this.root.add(shadowize(pil));
+      pil.position.set(x, 0, z);
+      fg.add(shadowize(pil));
     }
     for (const z of [-D / 2 + 1.2, D / 2 - 1.2]) {
       const beam = makePropSafe('beam', { len: W }, { x: W, y: 0.16, z: 0.18 });
-      place(beam, 0, this.floorY + H - 0.2, z);
-      this.root.add(shadowize(beam));
+      // 樑沿著 X 橫跨整個房間（makeBeam 本來就是長軸在 X，不可以再轉 90°，
+      // 不然 13.2 m 的樑會沿著只有 9.6 m 的進深方向穿出牆外）
+      beam.position.set(0, H - 0.2, z);
+      fg.add(shadowize(beam));
     }
-    // 屋樑（橫向），讓天花板有結構感
-    for (const x of [-4.4, -1.4, 1.6, 4.6]) {
-      const beam = makePropSafe('beam', { len: D }, { x: D, y: 0.14, z: 0.16 });
-      place(beam, x, this.floorY + H - 0.16, 0, Math.PI / 2);
-      this.root.add(shadowize(beam));
+    void f; void isGround;
+  }
+
+  _buildRailing(fg, W, D) {
+    const railMat = new THREE.MeshStandardMaterial({ color: this._shade(this._wallAccent, 18), roughness: 0.6, metalness: 0.3 });
+    const h = 0.9, post = 0.04;
+    const addRailing = (x1, z1, x2, z2, horizontal) => {
+      const len = horizontal ? Math.abs(x2 - x1) : Math.abs(z2 - z1);
+      const segs = Math.max(2, Math.round(len / 1.2));
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const px = horizontal ? x1 + (x2 - x1) * t : x1;
+        const pz = horizontal ? z1 : z1 + (z2 - z1) * t;
+        const p = new THREE.Mesh(new THREE.BoxGeometry(post, h, post), railMat);
+        p.position.set(px, h / 2, pz);
+        p.castShadow = true;
+        fg.add(p);
+      }
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(horizontal ? len : post, 0.04, horizontal ? post : len), railMat);
+      bar.position.set(horizontal ? (x1 + x2) / 2 : x1, h * 0.7, horizontal ? z1 : (z1 + z2) / 2);
+      fg.add(bar);
+    };
+    addRailing(-W / 2 + 0.1, -D / 2 + 0.1, W / 2 - 0.1, -D / 2 + 0.1, true);
+    addRailing(W / 2 - 0.1, -D / 2 + 0.1, W / 2 - 0.1, D / 2 - 0.1, false);
+    addRailing(-W / 2 + 0.1, D / 2 - 0.1, W / 2 - 0.1, D / 2 - 0.1, true);
+  }
+
+  _buildFloorLighting(fg, f, isGround) {
+    void f; void isGround;
+    const lampXs = [-3.4, 0.8, 3.4];
+    for (let i = 0; i < lampXs.length; i++) {
+      const x = lampXs[i];
+      const z = i % 2 ? 0.6 : -2.4;
+      const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 }));
+      cord.position.set(x, 2.6, z);
+      fg.add(cord);
+      const chochin = makePropSafe('chochin', { r: 0.2, h: 0.36, text: i % 2 ? '酒' : '食' }, { x: 0.4, y: 0.36, z: 0.4 });
+      chochin.position.set(x, 2.1, z);
+      fg.add(shadowize(chochin));
+      this.lampPointers.push({ obj: chochin, kind: 'lantern' });
     }
-
-    // 障子（拉門）＋ 暖簾（入口）
-    const shojiXs = [-W / 2 + 0.6, -W / 2 + 1.75, W / 2 - 1.75, W / 2 - 0.6];
-    for (const x of shojiXs) {
-      const s = makePropSafe('shoji', { w: 1.1, h: 1.95, lit: true }, { x: 1.1, y: 1.95, z: 0.08 });
-      place(s, x, this.floorY, -D / 2 + 0.14, 0);
-      this.root.add(shadowize(s));
-      this.lampPointers.push({ obj: s, kind: 'shoji' });
-    }
-    const e = p.entrance;
-    const noren = makePropSafe('noren', { w: 1.9, h: 0.62, text: '食堂', color: '#1d3b5c' }, { x: 1.9, y: 0.62, z: 0.06 });
-    place(noren, e.x, this.floorY + 1.86, D / 2 - 0.02, Math.PI);
-    this.root.add(shadowize(noren));
-
-    // 看板（門外上方）
-    const sign = makePropSafe('signboard', { w: 1.7, h: 0.5, text: '夢幻食堂' }, { x: 1.7, y: 0.5, z: 0.1 });
-    place(sign, e.x, this.floorY + 2.62, D / 2 + 0.12, Math.PI);
-    this.root.add(shadowize(sign));
-
-    // 縱向霓虹（掛在東牆內側）
-    const neon = makePropSafe('neonSign', { w: 0.7, h: 2.0, text: '居酒屋' }, { x: 0.7, y: 2.0, z: 0.12 });
-    place(neon, W / 2 - 0.16, this.floorY + 1.5, 1.2, -Math.PI / 2);
-    this.root.add(shadowize(neon));
-    this.lampPointers.push({ obj: neon, kind: 'neon' });
-
-    // 緣側（榻榻米區外緣木台）
-    const eng = makePropSafe('engawa', { len: 4.2, w: 0.7 }, { x: 4.2, y: 0.18, z: 0.7 });
-    place(eng, tat.x, this.floorY + 0.08, tat.z - tat.d / 2 - 0.35, 0);
-    this.root.add(shadowize(eng));
+  }
+  buildLightingFixtures(fg, f, isGround) {
+    this._buildFloorLighting(fg, f, isGround);
   }
 
   /* 牆面／天花板（單面朝內）＋ 牆裙、樑下壓條 */
-  buildShell(W, D, H) {
-    const shell = new THREE.Group();
-    shell.name = 'shell';
-
+  buildShell(W, D, H, fg) {
     const plaster = this._plasterMaterial();
     const wood = this._woodMaterial();
 
     const wallPlane = (w, h, x, y, z, ry) => {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), plaster);
-      m.position.set(x, this.floorY + y, z);
+      m.position.set(x, y, z);
       m.rotation.y = ry;
       m.receiveShadow = true;
       return m;
     };
     const wainscot = (w, x, y, z, ry) => {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(w, 1.05), wood);
-      m.position.set(x, this.floorY + y, z);
+      m.position.set(x, y, z);
       m.rotation.y = ry;
       m.receiveShadow = true;
       return m;
@@ -262,51 +568,50 @@ export class RestaurantView {
 
     const zN = -D / 2 + 0.01, zS = D / 2 - 0.01;
     const xW = -W / 2 + 0.01, xE = W / 2 - 0.01;
+    const e = this.plan.entrance;
 
-    // 北牆（法線 +Z，朝店內）
-    shell.add(wallPlane(W, H, 0, H / 2, zN, 0));
-    shell.add(wainscot(W, 0, 0.525, zN + 0.012, 0));
-    // 西牆（法線 +X）
-    shell.add(wallPlane(D, H, xW, H / 2, 0, Math.PI / 2));
-    shell.add(wainscot(D, xW + 0.012, 0.525, 0, Math.PI / 2));
-    // 東牆（法線 -X）
-    shell.add(wallPlane(D, H, xE, H / 2, 0, -Math.PI / 2));
-    shell.add(wainscot(D, xE - 0.012, 0.525, 0, -Math.PI / 2));
-    // 南牆兩段（法線 -Z）
-    const doorW = 1.9, e = this.plan.entrance;
+    fg.add(wallPlane(W, H, 0, H / 2, zN, 0));
+    fg.add(wainscot(W, 0, 0.525, zN + 0.012, 0));
+    fg.add(wallPlane(D, H, xW, H / 2, 0, Math.PI / 2));
+    fg.add(wainscot(D, xW + 0.012, 0.525, 0, Math.PI / 2));
+    fg.add(wallPlane(D, H, xE, H / 2, 0, -Math.PI / 2));
+    fg.add(wainscot(D, xE - 0.012, 0.525, 0, -Math.PI / 2));
+    const doorW = 1.9;
     const segW = (W - doorW) / 2;
     for (const sx of [e.x - doorW / 2 - segW / 2, e.x + doorW / 2 + segW / 2]) {
-      shell.add(wallPlane(segW, H, sx, H / 2, zS, Math.PI));
-      shell.add(wainscot(segW, sx, 0.525, zS - 0.012, Math.PI));
+      fg.add(wallPlane(segW, H, sx, H / 2, zS, Math.PI));
+      fg.add(wainscot(segW, sx, 0.525, zS - 0.012, Math.PI));
     }
-    // 門楣內側
     const lintel = new THREE.Mesh(new THREE.PlaneGeometry(doorW, H - 2.2), plaster);
-    lintel.position.set(e.x, this.floorY + 2.2 + (H - 2.2) / 2, zS);
+    lintel.position.set(e.x, 2.2 + (H - 2.2) / 2, zS);
     lintel.rotation.y = Math.PI;
     lintel.receiveShadow = true;
-    shell.add(lintel);
+    fg.add(lintel);
 
-    // 天花板（法線 -Y，從下方看得到、從上方看穿）
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W, D), this._ceilingMaterial());
-    ceil.position.set(0, this.floorY + H, 0);
+    ceil.position.set(0, H, 0);
     ceil.rotation.x = Math.PI / 2;
     ceil.receiveShadow = true;
-    shell.add(ceil);
+    fg.add(ceil);
 
-    // 屋頂遮蔽：只投影、不顯示（colorWrite = false）。
-    // 沒有這片，太陽會直接照進「沒有屋頂」的娃娃屋，室內會死白、沒有層次。
     const roofBlocker = new THREE.Mesh(
       new THREE.PlaneGeometry(W + 0.5, D + 0.5),
       new THREE.MeshBasicMaterial({ colorWrite: false })
     );
-    roofBlocker.position.set(0, this.floorY + H + 0.06, 0);
+    roofBlocker.position.set(0, H + 0.06, 0);
     roofBlocker.rotation.x = Math.PI / 2;
     roofBlocker.castShadow = true;
     roofBlocker.receiveShadow = false;
-    shell.add(roofBlocker);
+    fg.add(roofBlocker);
+  }
 
-    this.root.add(shell);
-    this.shell = shell;
+  _shade(hex, amt) {
+    const c = hex.replace('#', '');
+    let r = parseInt(c.slice(0, 2), 16) + amt;
+    let g = parseInt(c.slice(2, 4), 16) + amt;
+    let b = parseInt(c.slice(4, 6), 16) + amt;
+    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+    return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
   }
 
   _plasterMaterial() {
@@ -314,7 +619,7 @@ export class RestaurantView {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 256;
     const c = cv.getContext('2d');
-    c.fillStyle = '#e6dccb';
+    c.fillStyle = this._wallColor;
     c.fillRect(0, 0, 256, 256);
     // 土壁の細かい斑
     for (let i = 0; i < 5200; i++) {
@@ -346,7 +651,7 @@ export class RestaurantView {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 256;
     const c = cv.getContext('2d');
-    c.fillStyle = '#4b3524';
+    c.fillStyle = this._wallAccent;
     c.fillRect(0, 0, 256, 256);
     // 板目
     for (let i = 0; i < 26; i++) {
@@ -372,7 +677,7 @@ export class RestaurantView {
     const cv = document.createElement('canvas');
     cv.width = 256; cv.height = 256;
     const c = cv.getContext('2d');
-    c.fillStyle = '#3a2a1c';
+    c.fillStyle = this._shade(this._wallColor, -22);
     c.fillRect(0, 0, 256, 256);
     for (let i = 0; i < 16; i++) {
       c.fillStyle = i % 2 ? '#4a3625' : '#412f20';
@@ -391,174 +696,13 @@ export class RestaurantView {
     return this._ceilMat;
   }
 
-  /* ── 傢俱（依 game.js 的平面配置）────────────────────────────── */
+  /* ── 傢俱（已整合至多樓層 buildRoom）────────────────────────── */
 
-  buildFurniture() {
-    const p = this.plan;
+  buildFurniture() { /* 已整合至 buildRoom */ }
 
-    // 吧台
-    const counter = makePropSafe('counter', { len: p.counter.len, h: 1.05, d: 0.62 }, { x: 0.62, y: 1.05, z: p.counter.len });
-    place(counter, p.counter.x, this.floorY, p.counter.z, Math.PI / 2);
-    this.root.add(shadowize(counter));
-    aoBlob(this.root, p.counter.x, this.floorY + 0.012, p.counter.z, 0.55, p.counter.len / 2 + 0.35);
+  /* ── 裝潢（已整合至多樓層 buildRoom）────────────────────────── */
 
-    // 廚房：不鏽鋼工作台、爐灶、水槽、冰箱、層架
-    const k = p.kitchen;
-    const kc = makePropSafe('kitchenCounter', { len: k.w * 0.55, h: 0.9, d: 0.65 }, { x: k.w * 0.55, y: 0.9, z: 0.65 });
-    place(kc, k.x - k.w / 2 + 1.6, this.floorY, k.z + k.d / 2 - 0.4);
-    this.root.add(shadowize(kc));
-
-    const stove = makePropSafe('stove', { w: 1.4, d: 0.7, h: 0.92 }, { x: 1.4, y: 0.92, z: 0.7 });
-    place(stove, k.x + k.w / 2 - 1.1, this.floorY, k.z + k.d / 2 - 0.4);
-    this.root.add(shadowize(stove));
-
-    const sink = makePropSafe('sink', { w: 0.9, d: 0.6, h: 0.9 }, { x: 0.9, y: 0.9, z: 0.6 });
-    place(sink, k.x - k.w / 2 + 0.6, this.floorY, k.z + k.d / 2 - 0.4);
-    this.root.add(shadowize(sink));
-
-    const fridge = makePropSafe('fridge', { w: 0.72, h: 1.92, d: 0.72 }, { x: 0.72, y: 1.92, z: 0.72 });
-    place(fridge, k.x + k.w / 2 - 0.5, this.floorY, k.z - k.d / 2 + 0.5);
-    this.root.add(shadowize(fridge));
-
-    const shelf = makePropSafe('shelf', { w: 1.7, h: 1.75, d: 0.36, bottles: 9 }, { x: 1.7, y: 1.75, z: 0.36 });
-    place(shelf, k.x - k.w / 2 + 1.0, this.floorY, k.z - k.d / 2 + 0.35);
-    this.root.add(shadowize(shelf));
-    // 廚房設備接地陰影
-    aoBlob(this.root, k.x - k.w / 2 + 1.6, this.floorY + 0.012, k.z + k.d / 2 - 0.4, 0.75, 0.45);
-    aoBlob(this.root, k.x + k.w / 2 - 1.1, this.floorY + 0.012, k.z + k.d / 2 - 0.4, 0.78, 0.45);
-    aoBlob(this.root, k.x - k.w / 2 + 0.6, this.floorY + 0.012, k.z + k.d / 2 - 0.4, 0.55, 0.42);
-    aoBlob(this.root, k.x + k.w / 2 - 0.5, this.floorY + 0.012, k.z - k.d / 2 + 0.5, 0.5, 0.45);
-    aoBlob(this.root, k.x - k.w / 2 + 1.0, this.floorY + 0.012, k.z - k.d / 2 + 0.35, 0.9, 0.4);
-
-    // 出餐口平台
-    const passTable = new THREE.Mesh(
-      new THREE.BoxGeometry(1.8, 0.06, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0x9aa3ab, metalness: 0.85, roughness: 0.3 })
-    );
-    passTable.position.set(p.pass.x, this.floorY + 0.9, p.pass.z);
-    passTable.castShadow = true; passTable.receiveShadow = true;
-    this.root.add(passTable);
-
-    // 桌子＋椅子＋餐具
-    for (const t of p.tables) {
-      const y = t.style === 'chabudai' ? this.tatamiY : this.floorY;
-      if (t.style === 'chabudai') {
-        const table = makePropSafe('chabudai', { w: 1.25, d: 0.8, h: 0.34 }, { x: 1.25, y: 0.34, z: 0.8 });
-        place(table, t.x, y, t.z, (Math.random() - 0.5) * 0.06);
-        this.root.add(shadowize(table));
-        aoBlob(this.root, t.x, y + 0.012, t.z, 0.92, 0.66);
-        for (let i = 0; i < t.seats; i++) {
-          const sp = t.seatPos[i];
-          const za = makePropSafe('zabuton', { w: 0.56, d: 0.56 }, { x: 0.56, y: 0.09, z: 0.56 });
-          place(za, sp.x, y, sp.z, sp.ry);
-          this.root.add(shadowize(za));
-          aoBlob(this.root, sp.x, y + 0.012, sp.z, 0.36);
-        }
-        const set = makePropSafe('tableSetting', { plates: t.seats }, { x: 0.7, y: 0.06, z: 0.7 });
-        place(set, t.x, y + 0.34, t.z);
-        this.root.add(shadowize(set));
-      } else {
-        const table = makePropSafe('table', { w: 1.15, d: 0.78, h: 0.72 }, { x: 1.15, y: 0.72, z: 0.78 });
-        place(table, t.x, y, t.z, (Math.random() - 0.5) * 0.06);
-        this.root.add(shadowize(table));
-        aoBlob(this.root, t.x, y + 0.012, t.z, 0.9, 0.72);
-        for (let i = 0; i < t.seats; i++) {
-          const sp = t.seatPos[i];
-          const ch = makePropSafe('chair', {}, { x: 0.46, y: 0.9, z: 0.46 });
-          place(ch, sp.x, y, sp.z, sp.ry);
-          this.root.add(shadowize(ch));
-          aoBlob(this.root, sp.x, y + 0.012, sp.z, 0.4);
-        }
-        const set = makePropSafe('tableSetting', { plates: t.seats }, { x: 0.7, y: 0.06, z: 0.7 });
-        place(set, t.x, y + 0.72, t.z);
-        this.root.add(shadowize(set));
-      }
-      this.tableProps.push({ table: t, y });
-    }
-
-    // 座敷區的矮桌（榻榻米已在 buildRoom 鋪好）
-    void this.tatamiY;
-  }
-
-  /* ── 裝潢 ───────────────────────────────────────────────────── */
-
-  buildDecor() {
-    const p = this.plan;
-    const W = p.width, D = p.depth;
-
-    // 吊掛燈籠（沿天花板橫樑）
-    const lanternXs = [-4.6, 0.8, 3.4, 5.6];
-    for (let i = 0; i < lanternXs.length; i++) {
-      const x = lanternXs[i];
-      const z = i % 2 ? 0.6 : -2.4;
-      const cord = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.012, 0.012, 0.5, 6),
-        new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 })
-      );
-      cord.position.set(x, this.floorY + 2.85 - 0.25, z);
-      this.root.add(cord);
-
-      const chochin = makePropSafe('chochin', { r: 0.2, h: 0.36, text: i % 2 ? '酒' : '食' }, { x: 0.4, y: 0.36, z: 0.4 });
-      place(chochin, x, this.floorY + 2.85 - 0.72, z);
-      this.root.add(shadowize(chochin));
-      this.lampPointers.push({ obj: chochin, kind: 'lantern' });
-    }
-
-    // 行燈（地板燈）
-    for (const [x, z] of [[-6.0, 3.6], [6.1, -0.6]]) {
-      const a = makePropSafe('andon', { h: 0.85 }, { x: 0.34, y: 0.85, z: 0.34 });
-      place(a, x, this.floorY, z);
-      this.root.add(shadowize(a));
-      this.lampPointers.push({ obj: a, kind: 'andon' });
-    }
-
-    // 掛軸（北牆）
-    for (const x of [-3.4, -0.6]) {
-      const k = makePropSafe('kakemono', { w: 0.55, h: 1.7 }, { x: 0.55, y: 1.7, z: 0.04 });
-      place(k, x, this.floorY + 1.65, -D / 2 + 0.09, 0);
-      this.root.add(shadowize(k));
-    }
-
-    // 盆栽 / 插花 / 竹 / 招財貓 / 酒樽
-    const decors = [
-      ['bonsai', -6.05, -3.9, 0],
-      ['bonsai', 6.05, 3.9, 0],
-      ['ikebana', -6.05, 1.2, 0],
-      ['bamboo', 6.15, -3.6, 0],
-      ['manekiNeko', -5.5, -0.3, Math.PI * 0.35],
-      ['sakeBarrel', -6.0, -2.2, 0],
-      ['sakeBarrel', -6.0, -1.5, 0],
-      ['plantPot', 6.05, 1.9, 0],
-      ['plantPot', -2.2, 4.25, 0]
-    ];
-    for (const [id, x, z, ry] of decors) {
-      const size = id === 'bamboo' ? { x: 0.6, y: 2.2, z: 0.6 }
-        : id === 'sakeBarrel' ? { x: 0.64, y: 0.5, z: 0.64 }
-        : id === 'plantPot' ? { x: 0.44, y: 0.7, z: 0.44 }
-        : { x: 0.5, y: 0.8, z: 0.5 };
-      const d = makePropSafe(id, {}, size);
-      place(d, x, this.floorY, z, ry);
-      this.root.add(shadowize(d));
-      aoBlob(this.root, x, this.floorY + 0.012, z, Math.max(0.3, size.x * 0.78));
-    }
-
-    // レジ（收銀台）在吧台端
-    const reg = new THREE.Mesh(
-      new THREE.BoxGeometry(0.42, 0.3, 0.34),
-      new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.42, metalness: 0.12 })
-    );
-    reg.position.set(p.counter.x + 0.1, this.floorY + 1.05 + 0.15, p.counter.z + p.counter.len / 2 - 0.3);
-    reg.castShadow = true; reg.receiveShadow = true;
-    this.root.add(reg);
-
-    // 招牌暖簾旁的紅燈籠（門口）
-    const doorLantern = makePropSafe('chochin', { r: 0.17, h: 0.3, text: '営業中' }, { x: 0.34, y: 0.3, z: 0.34 });
-    place(doorLantern, p.entrance.x - 1.15, this.floorY + 1.55, D / 2 + 0.2);
-    this.root.add(shadowize(doorLantern));
-    this.lampPointers.push({ obj: doorLantern, kind: 'lantern' });
-
-    void W;
-  }
+  buildDecor() { /* 已整合至 buildRoom */ }
 
   /* ── 店外（街道、對面建築、自動販賣機、腳踏車）────────────────── */
 
@@ -654,6 +798,125 @@ export class RestaurantView {
     porch.position.set(p.entrance.x, 2.4, D / 2 + 0.6);
     this.root.add(porch);
     this.porchLight = porch;
+
+    // 候位動線：門口沿著人行道排隊（客人真的會站在這裡排）
+    this.buildQueueLane();
+    // 街上的東西：街燈、斑馬線、巴士站、行人穿越標誌
+    this.buildStreetProps();
+
+    // 街道的兩端（客人從這裡走過來、也從這裡走回去）
+    const st = p.street || { ax: -12.4, az: D / 2 + 1.6, bx: 12.4, bz: D / 2 + 1.6 };
+    for (const [x, z] of [[st.ax, st.az], [st.bx, st.bz]]) {
+      const mark = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.4, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.14, depthWrite: false })
+      );
+      mark.rotation.x = -Math.PI / 2;
+      mark.position.set(x, 0.012, z);
+      this.root.add(mark);
+    }
+  }
+
+  /** 候位繩（支柱＋繩子）：把排隊的隊伍框在人行道上 */
+  buildQueueLane() {
+    const q = this.plan.queue || { x: 2.6, z: this.plan.depth / 2 + 2.3, step: 1.15 };
+    const grp = new THREE.Group();
+    grp.name = 'queueLane';
+    const postMat = new THREE.MeshStandardMaterial({ color: 0xc9ae74, metalness: 0.6, roughness: 0.34 });
+    const baseMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, metalness: 0.3, roughness: 0.7 });
+    const ropeMat = new THREE.MeshStandardMaterial({ color: 0x8c2f2f, roughness: 0.85 });
+    const len = q.step * 4;
+    const z = q.z - 0.85;
+    for (let i = 0; i <= 4; i++) {
+      const x = q.x - 0.6 + (len / 4) * i;
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.04, 14), baseMat);
+      base.position.set(x, 0.02, z);
+      base.receiveShadow = true;
+      grp.add(base);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.92, 10), postMat);
+      post.position.set(x, 0.46, z);
+      post.castShadow = true;
+      grp.add(post);
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), postMat);
+      knob.position.set(x, 0.94, z);
+      grp.add(knob);
+      if (i > 0) {
+        const px = q.x - 0.6 + (len / 4) * (i - 1);
+        const seg = (x - px) / 8;
+        for (let s = 0; s < 8; s++) {
+          const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, Math.hypot(seg, 0.001) * 1.05, 6), ropeMat);
+          rope.position.set(px + seg * (s + 0.5), 0.78 - Math.sin((s + 0.5) / 8 * Math.PI) * 0.1, z);
+          rope.rotation.z = Math.PI / 2;
+          grp.add(rope);
+        }
+      }
+    }
+    // 「行列」看板
+    const sign = makePropSafe('signboard', { w: 0.9, h: 0.4, text: '行列' }, { x: 0.9, y: 0.4, z: 0.08 });
+    sign.position.set(q.x - 0.6, 1.15, z - 0.12);
+    grp.add(shadowize(sign));
+    this.root.add(grp);
+    this.queueLane = grp;
+    aoBlob(grp, q.x + len / 2 - 0.6, 0.005, z, len / 2 + 0.4, 0.4, 0.5);
+  }
+
+  /** 街道感：街燈、斑馬線、巴士站牌、自動販賣機旁的長椅 */
+  buildStreetProps() {
+    const D = this.plan.depth;
+    const grp = new THREE.Group();
+    grp.name = 'streetProps';
+    const metal = new THREE.MeshStandardMaterial({ color: 0x63666c, metalness: 0.55, roughness: 0.5 });
+    const lampMat = new THREE.MeshStandardMaterial({ color: 0xf5e9cf, emissive: 0xffe6b0, emissiveIntensity: 0.35, roughness: 0.4 });
+
+    for (const x of [-9.5, 9.5]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 4.6, 10), metal);
+      pole.position.set(x, 2.3, D / 2 + 3.0);
+      pole.castShadow = true;
+      grp.add(pole);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.08), metal);
+      arm.position.set(x + (x < 0 ? 0.42 : -0.42), 4.5, D / 2 + 3.0);
+      grp.add(arm);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.34), lampMat);
+      head.position.set(x + (x < 0 ? 0.8 : -0.8), 4.42, D / 2 + 3.0);
+      grp.add(head);
+      const pl = new THREE.PointLight(0xffd9a0, 0, 9, 2);
+      pl.position.set(x + (x < 0 ? 0.8 : -0.8), 4.2, D / 2 + 3.0);
+      grp.add(pl);
+      this.lampPointers.push({ obj: head, kind: 'streetlamp' });
+      this.lampPointers.push({ obj: pl, kind: 'streetlampPoint' });
+    }
+
+    // 斑馬線（在店門正前方）
+    const stripe = new THREE.MeshStandardMaterial({ color: 0xe4e0d4, roughness: 0.85 });
+    for (let i = -3; i <= 3; i++) {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.02, 7.2), stripe);
+      s.position.set(i * 1.15, 0.0, D / 2 + 7.2);
+      grp.add(s);
+    }
+
+    // 巴士站牌
+    const stop = new THREE.Group();
+    const sp = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 8), metal);
+    sp.position.y = 1.3; sp.castShadow = true;
+    stop.add(sp);
+    const board = makePropSafe('signboard', { w: 0.7, h: 0.42, text: 'バス' }, { x: 0.7, y: 0.42, z: 0.07 });
+    board.position.set(0, 2.2, 0.05);
+    stop.add(shadowize(board));
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.08, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0x7a5a3a, roughness: 0.8 }));
+    bench.position.set(0.9, 0.44, 0); bench.castShadow = true; bench.receiveShadow = true;
+    stop.add(bench);
+    for (const bx of [0.25, 1.55]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.44, 0.34), metal);
+      leg.position.set(bx, 0.22, 0);
+      stop.add(leg);
+    }
+    place(stop, 10.6, 0.02, D / 2 + 2.0, -Math.PI * 0.06);
+    grp.add(stop);
+    aoBlob(grp, 11.5, 0.005, D / 2 + 2.0, 1.3, 0.5, 0.5);
+
+    this.root.add(grp);
+    this.streetProps = grp;
   }
 
   /* ── 員工（依 state.staff 動態建立／移除）───────────────────── */
@@ -685,11 +948,16 @@ export class RestaurantView {
       let mesh = this.staffMeshes.get(s.id);
       if (!mesh) {
         const kind = s.role === 'chef' ? 'chef' : 'waiter';
+        // 用制服顏色注入人物外觀
+        const uniform = uniformById(s.uniformId);
+        const opts = Chars.uniformToOpts(uniform);
         try {
           mesh = Chars.makeCharacter({
             kind,
-            seed: s.appearance?.seed ?? 1234,
-            height: s.appearance?.height ?? 1.68
+            seed: (s.appearance?.seed ?? 1234) + s.hiredDay * 31,
+            height: s.appearance?.height ?? 1.68,
+            gender: s.gender === 'f' ? 'female' : 'male',
+            ...opts
           });
         } catch { mesh = null; }
         if (!mesh || !mesh.isObject3D) {
@@ -703,10 +971,13 @@ export class RestaurantView {
         this.staffGroup.add(mesh);
         this.staffMeshes.set(s.id, mesh);
       }
-      mesh.position.set(s.x ?? 0, this.floorY, s.z ?? 0);
+      mesh.position.set(s.x ?? 0, (s.floor || 0) * this.FH + this.floorY, s.z ?? 0);
       mesh.rotation.y = s.dir ?? 0;
       const pose = s.pose || 'stand';
-      const p = pose === 'walk' ? 'walk' : (s.carry > 0 && pose !== 'walk') ? 'carry' : (pose === 'wait' ? 'wait' : 'stand');
+      const p = pose === 'walk' ? 'walk'
+        : pose === 'cook' ? 'cook'
+          : (s.carry > 0 && pose !== 'walk') ? 'carry'
+            : (pose === 'wait' ? 'wait' : 'stand');
       try { Chars.setPose(mesh, p, this._clock + (s.appearance?.seed ?? 0) % 7); } catch { /* ignore */ }
     }
     for (const [id, mesh] of this.staffMeshes) {
@@ -750,7 +1021,7 @@ export class RestaurantView {
       const c = this.dirtyMarks.children.pop();
       c.geometry?.dispose?.();
     }
-    for (const t of state.plan.tables) {
+    for (const t of allTables(state.plan)) {
       if (!(t.dirty > 0)) continue;
       const y = t.style === 'chabudai' ? this.tatamiY : this.floorY;
       for (let i = 0; i < 3; i++) {
@@ -774,7 +1045,7 @@ export class RestaurantView {
       seen.add(g.id);
       let rec = this.groupMeshes.get(g.id);
       if (!rec) {
-        rec = { meshes: [], kinds: [] };
+        rec = { meshes: [], pets: [] };
         for (let i = 0; i < g.size; i++) {
           const seed = g.members[i]?.seed ?? (i * 977 + 13);
           let m = null;
@@ -790,19 +1061,37 @@ export class RestaurantView {
           this.root.add(m);
           rec.meshes.push(m);
         }
+        // 這組客人有寵物（約 12% 的組有一隻）
+        if (g.pet) {
+          try {
+            const pet = Chars.makePet(g.pet, g.petSeed || 1);
+            this.root.add(pet);
+            rec.pets.push(pet);
+          } catch { /* ignore */ }
+        }
         this.groupMeshes.set(g.id, rec);
       }
-      // 位置與姿勢
+      // 位置與姿勢（客人站在自己用餐的那一層）
       const pose = g.pose || 'stand';
+      const gy = (g.floor || 0) * this.FH;
       for (let i = 0; i < rec.meshes.length; i++) {
         const m = rec.meshes[i];
         const mem = g.members[i];
         if (!mem) { m.visible = false; continue; }
         m.visible = true;
-        const y = (mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && this._onTatami(g, mem) ? this.tatamiY : this.floorY;
+        const y = gy + ((mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && this._onTatami(g, mem) ? this.tatamiY : this.floorY);
         m.position.set(mem.x, y, mem.z);
         m.rotation.y = mem.ry || 0;
         try { Chars.setPose(m, pose === 'eat' ? 'eat' : pose, this._clock + i * 0.3); } catch { /* 姿勢失敗就維持 */ }
+      }
+      // 寵物跟著這組移動（掛在領頭的成員旁邊）
+      if (rec.pets.length && g.members[0]) {
+        const lead = g.members[0];
+        for (const pet of rec.pets) {
+          pet.position.set(lead.x + 0.55, gy + this.floorY, lead.z + 0.35);
+          pet.rotation.y = (lead.ry || 0) + Math.PI * 0.5;
+          pet.visible = g.state !== 'gone';
+        }
       }
     }
     // 清理已離店的組
@@ -812,6 +1101,7 @@ export class RestaurantView {
         this.root.remove(m);
         try { Chars.disposeCharacter?.(m); } catch { /* ignore */ }
       }
+      for (const p of (rec.pets || [])) this.root.remove(p);
       this.groupMeshes.delete(id);
     }
     void dt;
@@ -822,21 +1112,152 @@ export class RestaurantView {
     return mem.x > t.x - t.w / 2 && mem.x < t.x + t.w / 2 && mem.z > t.z - t.d / 2 && mem.z < t.z + t.d / 2;
   }
 
+  /* ── 調理場的動態：爐火、蒸氣、調理中の標籤 ───────────────────── */
+
+  /** 誰在煮什麼 → 寫進 label 的 canvas（內容沒變就不重畫） */
+  _paintCookLabel(sprite, chef, idx) {
+    const ud = sprite.userData;
+    const first = chef.dishes[0];
+    const key = `${chef.name}|${chef.phase}|${Math.round(chef.progress * 20)}|${(chef.dishes || []).map((d) => d.id).join(',')}`;
+    if (ud.key === key) return;
+    ud.key = key;
+    const c = ud.cv.getContext('2d');
+    const W = ud.cv.width, H = ud.cv.height;
+    c.clearRect(0, 0, W, H);
+    // 圓角底板
+    const r = 16;
+    c.fillStyle = 'rgba(18,16,14,0.82)';
+    c.beginPath();
+    c.moveTo(r, 2); c.lineTo(W - r, 2); c.quadraticCurveTo(W - 2, 2, W - 2, 2 + r);
+    c.lineTo(W - 2, H - r - 8); c.quadraticCurveTo(W - 2, H - 8, W - r - 2, H - 8);
+    c.lineTo(r, H - 8); c.quadraticCurveTo(2, H - 8, 2, H - r - 8); c.lineTo(2, 2 + r);
+    c.quadraticCurveTo(2, 2, r, 2); c.closePath();
+    c.fill();
+    c.strokeStyle = 'rgba(255,196,120,0.85)';
+    c.lineWidth = 2; c.stroke();
+    // 標題：料理人的名字
+    c.fillStyle = '#ffd79a';
+    c.font = 'bold 22px system-ui, sans-serif';
+    c.fillText(`🍳 ${chef.name}`, 12, 30);
+    // 菜名（沒有就寫等待中）
+    c.fillStyle = '#f4efe6';
+    c.font = 'bold 24px system-ui, sans-serif';
+    const txt = first ? `${first.name}` : (chef.phase === 'walk' ? '爐へ移動中…' : '待機中');
+    c.fillText(txt.length > 11 ? txt.slice(0, 11) + '…' : txt, 12, 60);
+    if (first?.nameZh) {
+      c.fillStyle = '#bdb4a4';
+      c.font = '18px system-ui, sans-serif';
+      c.fillText(first.nameZh, 160, 60);
+    }
+    // 進度條
+    const bw = W - 24, bx = 12, by = H - 22;
+    c.fillStyle = 'rgba(255,255,255,0.18)';
+    c.fillRect(bx, by, bw, 9);
+    const pct = Math.max(0, Math.min(1, chef.progress));
+    const g2 = c.createLinearGradient(bx, 0, bx + bw, 0);
+    g2.addColorStop(0, '#ffb347'); g2.addColorStop(1, '#ffe08a');
+    c.fillStyle = g2;
+    c.fillRect(bx, by, bw * pct, 9);
+    if (chef.dishes.length > 1) {
+      c.fillStyle = '#e8d9bf';
+      c.font = 'bold 17px system-ui, sans-serif';
+      c.fillText(`他にも ${chef.dishes.length - 1} 品`, W - 108, 30);
+    }
+    ud.tex.needsUpdate = true;
+    void idx;
+  }
+
+  /** 依 state 更新爐火／蒸氣／調理標籤；順便讓出餐口的燈亮一點 */
+  syncCooking(state) {
+    if (!this.cookFx) return;
+    const chefs = (state.staff || []).filter((s) => s.role === 'chef' && s.pose === 'cook');
+    const active = chefs.length;
+    this._cookActive = active;
+    const t = this._clock;
+
+    for (let i = 0; i < this.burners.length; i++) {
+      const b = this.burners[i];
+      const on = i < active;                      // 一台爐子對一位廚師
+      const flick = 0.72 + 0.28 * Math.sin(t * 9 + b.phase) + 0.12 * Math.sin(t * 23 + b.phase * 2);
+      const target = on ? Math.max(0, flick) : 0;
+      b.flame.material.opacity += (Math.min(1, target) - b.flame.material.opacity) * Math.min(1, 0.2);
+      b.flame.scale.set(on ? 0.9 + 0.25 * flick : 0.01, on ? 0.85 + 0.5 * flick : 0.01, on ? 0.9 + 0.25 * flick : 0.01);
+      b.glow.intensity += ((on ? 5.5 * flick : 0) - b.glow.intensity) * Math.min(1, 0.2);
+      for (let s = 0; s < b.steam.length; s++) {
+        const puff = b.steam[s];
+        const speed = 0.34 + s * 0.05;
+        const u = ((t * speed + s * 0.21 + b.phase * 0.1) % 1);
+        puff.position.y = 1.02 + u * 0.95;
+        puff.position.x = b.bx + Math.sin(u * 6 + s) * 0.1;
+        puff.position.z = b.bz + Math.cos(u * 5 + s) * 0.07;
+        const sc = (0.5 + u * 0.9) * (on ? 1 : 0.2);
+        puff.scale.setScalar(sc);
+        puff.material.opacity = on ? 0.26 * (1 - u) * (0.6 + 0.4 * Math.sin(t * 3 + s)) : 0;
+      }
+    }
+
+    // 出餐口的燈：有菜在等就亮一點
+    if (this.passLight) {
+      const ready = (state.pass || []).length;
+      this.passLight.intensity += ((ready ? 9 + Math.min(3, ready) : 5) - this.passLight.intensity) * 0.08;
+    }
+
+    // 每位正在料理的廚師頭上飄一個標籤
+    const info = chefs.map((s) => {
+      const task = s.taskId ? (state.tasks || []).find((k) => k.id === s.taskId) : null;
+      const isCook = !!task && task.type === 'cook';
+      const total = isCook ? (task.work || 0) : 0;
+      return {
+        name: s.name,
+        floor: s.floor || 0,
+        x: s.x ?? 0,
+        z: s.z ?? 0,
+        phase: isCook ? task.phase : 'idle',
+        dishes: isCook ? (task.dishIds || []).map((id) => {
+          const d = this._dishName(id);
+          return d;
+        }) : [],
+        progress: isCook && total > 0 ? Math.max(0, Math.min(1, 1 - Math.max(0, task.workLeft) / total)) : 0
+      };
+    });
+    for (let i = 0; i < this.cookLabels.length; i++) {
+      const sp = this.cookLabels[i];
+      const chef = info[i];
+      if (!chef) { sp.visible = false; continue; }
+      sp.visible = true;
+      sp.position.set(chef.x, (chef.floor || 0) * this.FH + this.floorY + 2.15, chef.z);
+      this._paintCookLabel(sp, chef, i);
+    }
+  }
+
+  /** dishId → 菜名（標籤用；找不到就退回 id） */
+  _dishName(id) {
+    const d = dishById(id);
+    return { id, name: d?.name || id, nameZh: d?.nameZh || '' };
+  }
+
   /* ── 每幀更新 ───────────────────────────────────────────────── */
 
   update(dt, state) {
     this._clock += dt;
+    if (state.menu) this._menuRef = state.menu;
     this.syncGroups(state, dt);
     this.syncStaff(state);
     this.syncPass(state);
     this.syncDirtyTables(state);
+    this.syncCooking(state);
 
     // 夜晚：燈籠與店外光
     const night = state.__night ?? false;
     const glow = night ? 1 : 0;
     if (this.porchLight) this.porchLight.intensity = glow * 9;
     for (const p of this.lampPointers) {
-      const emissiveBoost = p.kind === 'shoji' || p.kind === 'andon' || p.kind === 'lantern' || p.kind === 'vending' || p.kind === 'window';
+      if (p.kind === 'streetlampPoint' && p.obj.isPointLight) {
+        p.obj.intensity += (glow * 7 - p.obj.intensity) * 0.08;
+        continue;
+      }
+      const emissiveBoost = p.kind === 'shoji' || p.kind === 'andon' || p.kind === 'lantern'
+        || p.kind === 'vending' || p.kind === 'window' || p.kind === 'streetlamp' || p.kind === 'neon';
       if (!emissiveBoost) continue;
       p.obj.traverse((o) => {
         if (o.isMesh && o.material && 'emissiveIntensity' in o.material) {

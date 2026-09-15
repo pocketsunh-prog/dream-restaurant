@@ -7,10 +7,12 @@ import { OrbitCam } from './scene/controls.js';
 import { RestaurantView } from './scene/restaurant.js';
 import {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
-  clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting
+  clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting,
+  allTables, TASK_KINDS, ROLE_LABEL
 } from './sim/game.js';
 import { Hud, seatsOf } from './ui/hud.js';
 import { locationById } from './data/locations.js';
+import { dishById } from './data/dishes.js';
 import { AudioEngine, LOCALE_SCALE, SFX_NAMES } from './audio/audio.js';
 import { saveToSlot, loadFromSlot, autoSave } from './sim/save.js';
 
@@ -54,28 +56,72 @@ let game = createGame({
 });
 
 step('店内を建築中');
-const restaurant = new RestaurantView(scene, game.plan);
+const restaurant = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
 
 /* ------------------------------------------------------------ 攝影機 */
 
 const cam = new OrbitCam(camera, canvas);
 const CENTER = new THREE.Vector3(0, 1.0, 0);
 
+// floor: 0 = 全館, 1/2/3 = 指定樓層（目標 Y 會對應樓層高度）
 const SHOTS = [
-  { name: '全景',   az: 0.66, pol: 0.96, dist: 16.4, target: new THREE.Vector3(-0.1, 0.8, 0.0) },
-  { name: '吧台',   az: -1.95, pol: 1.24, dist: 6.4, target: new THREE.Vector3(-5.2, 1.0, -0.3) },
-  { name: '客席',   az: 0.18, pol: 1.02, dist: 8.4, target: new THREE.Vector3(-1.6, 0.8, 0.2) },
-  { name: '厨房',   az: 2.55, pol: 1.06, dist: 7.0, target: new THREE.Vector3(3.6, 1.0, -3.2) },
-  { name: '座敷',   az: -0.55, pol: 0.98, dist: 7.6, target: new THREE.Vector3(4.4, 0.7, 2.4) }
+  { name: '全館',   az: 0.66, pol: 0.92, dist: 22, target: new THREE.Vector3(-0.1, 5, 0.0), floor: 0 },
+  { name: '1F 全景', az: 0.66, pol: 0.96, dist: 16.4, target: new THREE.Vector3(-0.1, 0.8, 0.0), floor: 1 },
+  { name: '1F 客席', az: 0.18, pol: 1.02, dist: 8.4, target: new THREE.Vector3(-1.6, 0.8, 0.2), floor: 1 },
+  { name: '1F 厨房', az: 2.55, pol: 1.06, dist: 7.0, target: new THREE.Vector3(3.6, 1.0, -3.2), floor: 1 },
+  { name: '2F 客席', az: 0.18, pol: 1.0, dist: 9.0, target: new THREE.Vector3(-1.6, 4.2, 0.2), floor: 2 },
+  { name: '3F 客席', az: 0.18, pol: 1.0, dist: 9.0, target: new THREE.Vector3(-1.6, 7.6, 0.2), floor: 3 },
+  // 爐前（料理人の手元）：實際位置由 focusCook() 依廚師所在位置更新
+  { name: '爐前（調理）', az: 2.35, pol: 1.16, dist: 4.6, target: new THREE.Vector3(3.4, 1.2, -2.7), floor: 1 }
 ];
 let shotIdx = 0;
+let viewingFloor = 0;   // 0 = 看全館
 cam.jumpTo(SHOTS[0]);
 
+/** 目前鏡頭跟著哪位員工（null = 自由視角） */
+let followingStaff = null;
+
 function gotoShot(i) {
+  followingStaff = null;
   shotIdx = ((i % SHOTS.length) + SHOTS.length) % SHOTS.length;
   const s = SHOTS[shotIdx];
   cam.flyTo(s);
   hud?.toast(`カメラ：${s.name}`);
+}
+
+/** 員工所在的世界座標（含樓層高度） */
+function staffWorld(s) {
+  const fh = game.plan?.floorHeight || 3.4;
+  return new THREE.Vector3(s.x ?? 0, (s.floor || 0) * fh + 1.15, s.z ?? 0);
+}
+
+/** 把鏡頭拉近某位員工，並持續跟著他（看料理人做菜用） */
+function focusStaff(id, dist = 4.6, immediate = false) {
+  const s = (game.staff || []).find((x) => x.id === id);
+  if (!s) return false;
+  followingStaff = s.id;
+  shotIdx = SHOTS.length - 1;
+  const shot = { target: staffWorld(s), pol: 1.16, dist };
+  if (immediate) cam.jumpTo(shot); else cam.flyTo(shot);
+  return true;
+}
+
+/**
+ * 「調理を見る」：鏡頭跟著一位料理人（沒指定就找正在煮菜的那位）。
+ * 廚師頭上會有標籤顯示菜名與進度，爐火與蒸氣也會跟著開。
+ */
+function focusCook(staffId, immediate = false) {
+  const chefs = (game.staff || []).filter((s) => s.role === 'chef');
+  if (!chefs.length) { hud?.toast('料理人がいません（従業員 → 招募）', 'bad'); return false; }
+  const target = (staffId && chefs.find((s) => s.id === staffId))
+    || chefs.find((s) => s.pose === 'cook')
+    || chefs.find((s) => s.taskId)
+    || chefs[0];
+  focusStaff(target.id, 4.6, immediate);
+  const task = target.taskId ? (game.tasks || []).find((t) => t.id === target.taskId) : null;
+  const dish = task?.dishIds?.[0] ? dishById(task.dishIds[0]) : null;
+  hud?.toast(dish ? `${target.name}：${dish.name} を調理中` : `${target.name} の様子を見ています`);
+  return true;
 }
 
 /* ------------------------------------------------------------ HUD */
@@ -100,6 +146,30 @@ const hud = new Hud(game, {
     if (patch.fov) { camera.fov = patch.fov; camera.updateProjectionMatrix(); game.settings.fov = patch.fov; }
     if (patch.autoRotate !== undefined) game.settings.autoRotate = patch.autoRotate;
   },
+  onFloor: (n) => {
+    const res = setFloorCount(game, n);
+    if (res.ok) {
+      const fresh = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
+      Object.assign(restaurant, {
+        root: fresh.root, groupMeshes: fresh.groupMeshes, staffMeshes: fresh.staffMeshes,
+        staffGroup: fresh.staffGroup, passDishes: fresh.passDishes, dirtyMarks: fresh.dirtyMarks,
+        lampPointers: fresh.lampPointers, tableProps: fresh.tableProps, porchLight: fresh.porchLight,
+        floorY: fresh.floorY, tatamiY: fresh.tatamiY, shell: fresh.shell, floorGroups: fresh.floorGroups,
+        _clock: 0, _passShown: -1, _dirtyShown: ''
+      });
+      hud.renderShop && hud.renderShop();
+    }
+    return res;
+  },
+  onUniform: (staffId, uniformId) => {
+    const res = setStaffUniform(game, staffId, uniformId);
+    if (res.ok) {
+      // 重建該員工的 3D 模型（制服顏色不同）
+      const sm = restaurant.staffMeshes.get(staffId);
+      if (sm) { restaurant.staffGroup.remove(sm); restaurant.staffMeshes.delete(staffId); }
+    }
+    return res;
+  },
   onSave: (slot) => saveToSlot(game, slot),
   onLoad: (slot) => {
     const r = loadFromSlot(slot);
@@ -108,6 +178,7 @@ const hud = new Hud(game, {
     return { ok: true };
   },
   onCycleCamera: () => gotoShot(shotIdx + 1),
+  onFocusCook: (staffId) => focusCook(staffId),
   onNextDay: () => {
     startNextDay(game);
     restaurant.plan = game.plan;
@@ -128,7 +199,7 @@ const hud = new Hud(game, {
 /** 搬到新地點：重建場景中的餐廳（保留光影與天空） */
 function rebuildPlan() {
   restaurant.dispose();
-  const next = new RestaurantView(scene, game.plan);
+  const next = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
   // 讓新的 view 取代舊的（用屬性交換避免重新賦值 const）
   Object.assign(restaurant, {
     root: next.root,
@@ -154,11 +225,14 @@ function rebuildPlan() {
 
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
-  if (k >= '1' && k <= '5') { gotoShot(Number(k) - 1); return; }
+  if (k >= '1' && k <= '7') { gotoShot(Number(k) - 1); return; }
   if (k === ' ') { e.preventDefault(); const v = game.paused ? 1 : 0; game.speed = v; game.paused = v === 0; hud.update(); return; }
   if (k === 'l') hud.toggle('panel-locations');
   else if (k === 's') hud.toggle('panel-staff');
   else if (k === 'm') hud.toggle('panel-menu');
+  else if (k === 'r') { hud.toggle('panel-report'); hud.renderReport(); }
+  else if (k === 't') { hud.toggle('panel-rank'); hud.renderRank(); }
+  else if (k === 'k') focusCook();
   else if (k === 'o') hud.toggle('panel-settings');
   else if (k === 'h') hud.toggle('panel-help');
   else if (k === 'c') gotoShot(shotIdx + 1);
@@ -167,7 +241,7 @@ addEventListener('keydown', (e) => {
     if (!audio.ctx) armAudio();
     else { const on = audio.toggle(); hud.toast(on ? '音を出します' : '音を止めました'); }
   }
-  else if (k === 'escape') hud.closeAll();
+  else if (k === 'escape') { followingStaff = null; hud.closeAll(); }
 });
 let forceNight = false;
 
@@ -258,6 +332,55 @@ function bindAudioUi() {
 }
 bindAudioUi();
 
+/* ── 點擊揀選：客人看訂單，員工看他在做什麼 ─────────────────────── */
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const meshToGroup = new Map();
+
+canvas.addEventListener('click', (e) => {
+  if (!game) return;
+  ndc.x = (e.clientX / innerWidth) * 2 - 1;
+  ndc.y = -(e.clientY / innerHeight) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+
+  // 先看有沒有點到員工（廚師／服務生），再找客人
+  const staffMeshes = [];
+  for (const [sid, m] of restaurant.staffMeshes) { staffMeshes.push(m); meshToGroup.set(m, 'staff:' + sid); }
+  const staffHit = raycaster.intersectObjects(staffMeshes, true);
+  if (staffHit.length) {
+    let obj = staffHit[0].object;
+    while (obj && !obj.userData?.kind) obj = obj.parent;
+    const sid = obj ? [...restaurant.staffMeshes.entries()].find(([, m]) => m === obj)?.[0] : null;
+    const st = sid ? (game.staff || []).find((s) => s.id === sid) : null;
+    if (st) {
+      focusStaff(st.id, st.role === 'chef' ? 4.4 : 5.2);
+      const task = st.taskId ? (game.tasks || []).find((t) => t.id === st.taskId) : null;
+      const dish = task?.dishIds?.[0] ? dishById(task.dishIds[0]) : null;
+      const taskJp = task ? (TASK_KINDS[task.type]?.jp || task.type) : '待機中';
+      hud.toast(`${st.name}（${ROLE_LABEL[st.role] || st.role}）：${taskJp}${dish ? '・' + dish.name : ''}`);
+      return;
+    }
+  }
+
+  if (!game.groups.length) return;
+  const meshes = [];
+  for (const [gid, rec] of restaurant.groupMeshes) {
+    for (const m of (rec.meshes || [])) { meshes.push(m); meshToGroup.set(m, gid); }
+  }
+  const hits = raycaster.intersectObjects(meshes, true);
+  if (hits.length) {
+    let obj = hits[0].object;
+    let gid = meshToGroup.get(obj);
+    while (gid === undefined && obj) { obj = obj.parent; gid = meshToGroup.get(obj); }
+    const g = gid ? game.groups.find((x) => x.id === gid) : null;
+    if (g) { hud.toggle('panel-customer'); hud.renderCustomerDetail(g); }
+  }
+});
+
+// 玩家一動鏡頭就放開跟拍
+canvas.addEventListener('pointerdown', () => { followingStaff = null; });
+canvas.addEventListener('wheel', () => { followingStaff = null; }, { passive: true });
+
 /* 事件 → 音效對照（模擬層只丟事件，這裡決定要播什麼） */
 const EVENT_SFX = {
   door: 'door', seat: 'seat', order: 'order', serve: 'serve',
@@ -306,7 +429,7 @@ function adoptState(next) {
   game = next;
   hud.game = next;
   restaurant.dispose();
-  const fresh = new RestaurantView(scene, game.plan);
+  const fresh = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
   Object.assign(restaurant, {
     root: fresh.root,
     groupMeshes: fresh.groupMeshes,
@@ -381,7 +504,7 @@ function frame(now) {
     audioTimer = 0;
     const loc = locationById(game.locationId);
     const crowd = game.groups.length + game.queue.length * 0.6;
-    const busyTables = game.plan.tables.filter((t) => t.occupied).length;
+    const busyTables = allTables(game.plan).filter((t) => t.occupied).length;
     audio.setAmbience({
       crowd,
       kitchen: Math.min(3, busyTables * 0.5),
@@ -396,6 +519,12 @@ function frame(now) {
   }
 
   if (game.settings?.autoRotate) cam.orbit(-14 * dtRaw, 0);
+  // 跟拍員工（看料理人做菜）：鏡頭目標持續貼著他
+  if (followingStaff) {
+    const s = (game.staff || []).find((x) => x.id === followingStaff);
+    if (s) cam.flyTo({ target: staffWorld(s) });
+    else followingStaff = null;
+  }
   restaurant.update(dtRaw, game);
   cam.update(dtRaw);
   hud.update();
@@ -464,7 +593,7 @@ window.DREAM3D = {
       groups: game.groups.length,
       queued: game.queue.length,
       seats: seatsOf(game),
-      tables: game.plan.tables.length,
+      tables: allTables(game.plan).length,
       phase: game.phase,
       weather: game.weather,
       hour: Math.round((game.minute / 60) * 10) / 10,
@@ -502,6 +631,8 @@ window.DREAM3D = {
   applyGraphics,
   setStars(n) { setStars(game, n); hud.renderMenu(); return this.info; },
   openPanel(id) { hud.toggle(id); },
+  focusCook(staffId, immediate = false) { return focusCook(staffId, immediate); },
+  focusStaff(id, dist) { return focusStaff(id, dist, true); },
   locationName(id) { return locationById(id)?.name; }
 };
 
@@ -546,6 +677,108 @@ if (params.get('stab')) {
   } catch (e) { console.warn('stab failed', e); }
 }
 if (params.get('shot')) gotoShot(Number(params.get('shot')));
+// ?cam=az,pol,dist,tx,ty,tz → 直接指定機位（驗證用）
+if (params.get('cam')) {
+  const n = params.get('cam').split(',').map(Number);
+  if (n.length >= 3 && n.every((v) => Number.isFinite(v))) {
+    followingStaff = null;
+    cam.jumpTo({
+      az: n[0], pol: n[1], dist: n[2],
+      target: new THREE.Vector3(n[3] ?? 0, n[4] ?? 1, n[5] ?? 0)
+    });
+  }
+}
+// ?probe=x,z,r → 列出 (x,z) 半徑 r 內的所有 mesh（找不到怪東西時用的除錯工具）
+if (params.get('probe')) {
+  const [px, pz, pr = 2] = params.get('probe').split(',').map(Number);
+  const box = new THREE.Box3();
+  const rows = [];
+  scene.updateMatrixWorld(true);
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    box.setFromObject(o);
+    const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
+    if (Math.hypot(cx - px, cz - pz) > pr) return;
+    const size = box.getSize(new THREE.Vector3());
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    rows.push(`${o.name || o.type} mat=${m?.name || ''} col=#${m?.color ? m.color.getHexString() : '----'}`
+      + ` pos=${cx.toFixed(2)},${((box.min.y + box.max.y) / 2).toFixed(2)},${cz.toFixed(2)}`
+      + ` size=${size.x.toFixed(2)}x${size.y.toFixed(2)}x${size.z.toFixed(2)}`
+      + ` parent=${o.parent?.name || ''}`);
+  });
+  rows.sort();
+  const pre = document.createElement('pre');
+  pre.id = 'probe';
+  pre.style.cssText = 'position:fixed;left:6px;top:6px;z-index:999;background:#000d;color:#9f9;font:11px monospace;padding:8px;max-width:96vw;max-height:90vh;overflow:auto;white-space:pre-wrap';
+  pre.textContent = `${rows.length} meshes near ${px},${pz}\n` + rows.join('\n');
+  document.body.appendChild(pre);
+}
+// ?cook=1 → 開場先快轉一段時間，再把鏡頭對到正在做菜的料理人（驗證用；立即到位方便截圖）
+if (params.get('cook') === '1') {
+  const mins = Number(params.get('ff') || 180);
+  if (!ff) window.DREAM3D.fastForward(mins);
+  window.DREAM3D.focusCook(null, true);
+}
+// ?uitest=1 → 把所有面板渲染一遍並把結果寫進 <pre id="uitest">（無頭驗證用）
+if (params.get('uitest') === '1') {
+  const rep = [];
+  const host = (id) => document.getElementById(id);
+  const probe = (name, fn) => {
+    try {
+      fn();
+      rep.push(`OK   ${name}`);
+    } catch (err) {
+      rep.push(`FAIL ${name} :: ${err?.message || err}`);
+    }
+  };
+  const textOf = (id) => (host(id)?.textContent || '');
+  probe('panel-rank(local)', () => { hud.toggle('panel-rank'); hud._rankTab = 'local'; hud.renderRank(); });
+  probe('panel-rank(global)', () => { hud._rankTab = 'global'; hud.renderRank(); });
+  probe('panel-report', () => { hud.toggle('panel-report'); hud.renderReport(); });
+  probe('panel-staff(roster)', () => { hud._staffTab = 'roster'; hud.toggle('panel-staff'); hud.renderStaff(); });
+  probe('panel-staff(hire)', () => { hud._staffTab = 'hire'; hud.renderStaff(); });
+  probe('panel-staff(shop)', () => { hud._staffTab = 'shop'; hud.renderStaff(); });
+  probe('panel-settings', () => { hud.toggle('panel-settings'); hud.renderSettings(); });
+  probe('panel-locations', () => { hud.toggle('panel-locations'); hud.renderLocations(); });
+  probe('panel-menu', () => { hud.toggle('panel-menu'); hud.renderMenu(); });
+  probe('panel-customer', () => {
+    const g = (game.groups || [])[0];
+    if (!g) throw new Error('沒有客人（先用 ?ff= 快轉）');
+    hud.toggle('panel-customer'); hud.renderCustomerDetail(g);
+  });
+  hud.toggle('panel-rank'); hud._rankTab = 'global'; hud.renderRank();
+  const rankText = textOf('rank-body');
+  rep.push(`CHECK rank 全地点 rows=${(rankText.match(/自店/g) || []).length} hasPotential=${/平均日商/.test(rankText)}`);
+  hud._rankTab = 'local'; hud.renderRank();
+  const localText = textOf('rank-body');
+  rep.push(`CHECK rank この店 hasRecord=${/店史/.test(localText)} hasDishes=${/料理ランキング/.test(localText)} hasStaff=${/料理人ランキング/.test(localText) && /ホールランキング/.test(localText)}`);
+  hud.toggle('panel-report'); hud.renderReport();
+  const repText = textOf('report-body');
+  rep.push(`CHECK report hasKitchen=${/調理場/.test(repText)} hasPass=${/出餐口/.test(repText)} hasTop=${/今日点単ランキング/.test(repText)}`);
+  if (host('customer-detail')?.innerHTML) rep.push('CHECK customer detail rendered');
+  // 場景與模擬是否一致（客人／員工有沒有真的畫出來）：先手動跑一幀讓場景建出人物
+  restaurant.update(0.016, game);
+  let visibleGuests = 0, meshCount = 0;
+  for (const [, rec] of restaurant.groupMeshes) {
+    for (const m of rec.meshes) { meshCount++; if (m.visible) visibleGuests++; }
+  }
+  const seated = (game.groups || []).filter((g) => g.state === 'eating' || g.state === 'waitServe' || g.state === 'waitCook' || g.state === 'ordering').length;
+  rep.push(`CHECK scene groups=${restaurant.groupMeshes.size}/${(game.groups || []).length} meshes=${meshCount} visibleGuests=${visibleGuests} seatedGroups=${seated}`);
+  rep.push(`CHECK scene staffMeshes=${restaurant.staffMeshes.size}/${(game.staff || []).length} poseSet=${(game.staff || []).map((s) => s.pose).join('/')}`);
+  const sample = (game.groups || []).slice(0, 3).map((g) => {
+    const rec = restaurant.groupMeshes.get(g.id);
+    const m = rec?.meshes?.[0];
+    return `${g.id}:${g.state}:f${g.floor}:${g.pose}:mesh=${m ? m.position.toArray().map((v) => v.toFixed(1)).join(',') : 'none'}`;
+  });
+  rep.push('CHECK sample ' + (sample.join(' | ') || 'none'));
+  hud.closeAll();
+  const pre = document.createElement('pre');
+  pre.id = 'uitest';
+  pre.style.cssText = 'position:fixed;left:6px;top:6px;z-index:999;background:#000c;color:#9f9;font:11px monospace;padding:8px;max-width:96vw;white-space:pre-wrap';
+  pre.textContent = rep.join('\n');
+  document.body.appendChild(pre);
+  document.title = rep.some((r) => r.startsWith('FAIL')) ? 'UITEST-FAIL' : 'UITEST-OK';
+}
 // ?audio=1 → 啟動時就直接開啟音訊（測試用；正常情況要等使用者手勢）
 if (params.get('audio') === '1') {
   armAudio().then(() => {

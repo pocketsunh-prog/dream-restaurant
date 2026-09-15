@@ -7,9 +7,11 @@ import {
   money, clockText, WEATHER_JP, CUSTOMER_KINDS,
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, STAFF_LIMIT,
   EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
-  activeEventInfo, TASK_KINDS
+  activeEventInfo, TASK_KINDS, allTables,
+  topMenuReport, kitchenReport, rankings
 } from '../sim/game.js';
 import { listSlots, deleteSlot, savedAtText, storageAvailable } from '../sim/save.js';
+import { uniformsForRole, uniformById } from '../data/uniforms.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -40,6 +42,16 @@ export class Hud {
     $('btn-help')?.addEventListener('click', () => this.toggle('panel-help'));
     $('btn-camera')?.addEventListener('click', () => this.hooks.onCycleCamera?.());
     $('btn-settings')?.addEventListener('click', () => this.toggle('panel-settings'));
+    $('btn-report')?.addEventListener('click', () => { this.toggle('panel-report'); this.renderReport(); });
+    $('btn-rank')?.addEventListener('click', () => { this.toggle('panel-rank'); this.renderRank(); });
+    $('btn-cook')?.addEventListener('click', () => this.hooks.onFocusCook?.());
+    // 番付の分頁
+    document.querySelectorAll('#rank-tabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this._rankTab = b.dataset.rtab;
+        this.renderRank();
+      });
+    });
     document.querySelectorAll('#settings-tabs button').forEach((b) => {
       b.addEventListener('click', () => {
         this._settingsTab = b.dataset.stab;
@@ -89,6 +101,8 @@ export class Hud {
       if (id === 'panel-menu') this.renderMenu();
       if (id === 'panel-staff') this.renderStaff();
       if (id === 'panel-settings') this.renderSettings();
+      if (id === 'panel-report') this.renderReport();
+      if (id === 'panel-rank') this.renderRank();
     }
   }
 
@@ -238,6 +252,254 @@ export class Hud {
     }));
   }
 
+  /* ── 熱門菜單報表 ＋ 調理場の状況 ───────────────────────────── */
+
+  renderReport() {
+    const host = $('report-body');
+    if (!host) return;
+    const st = this.game;
+    const r = topMenuReport(st);
+    const k = kitchenReport(st);
+    const rank = ['🥇', '🥈', '🏅', '4.', '5.', '6.', '7.', '8.'];
+
+    let html = `<div class="section-title">調理場　（料理人 ${k.counts.chefs} 人・調理中 ${k.counts.cooking}・出餐口 ${k.counts.ready}）</div>`;
+    if (!k.chefs.length) html += `<div class="empty">料理人がいません。「従業員 → 招募」で料理人を雇ってください。</div>`;
+    for (const c of k.chefs) {
+      const dishes = c.dishes.length
+        ? c.dishes.map((d) => `<b>${esc(d.name)}</b><i>${esc(d.nameZh)}</i>`).join('、')
+        : '—';
+      const pct = Math.round(c.progress * 100);
+      const stateJp = c.working ? '調理中' : c.phase === 'walk' ? '爐へ移動中' : '待機中';
+      html += `
+      <div class="card">
+        <div class="card-head"><b>🍳 ${esc(c.name)}</b><span class="role">${stateJp}</span>
+          <button class="mini" data-cook="${esc(c.id)}">この料理を見る</button></div>
+        <div class="card-sub"><span>料理 <b>${dishes}</b></span><span>腕前 <b>${c.skill}</b></span><span>疲労 <b>${c.fatigue}</b></span></div>
+        <div class="report-row" style="margin-top:4px">
+          <span class="r-bar"><b style="width:${c.working ? pct : 0}%"></b></span>
+          <span class="r-pct">${c.working ? pct + '%' : '—'}</span>
+        </div>
+      </div>`;
+    }
+    html += `<div class="section-title">出餐口（配膳待ち）</div>`;
+    if (!k.pass.length) html += `<div class="empty">出餐口は空です。</div>`;
+    else html += k.pass.map((p) => `
+      <div class="report-row">
+        <span class="r-name"><b>${p.dishes.map((d) => esc(d.name)).join('、') || '—'}</b>
+          <i>${p.dishes.map((d) => esc(d.nameZh)).join('、')}</i></span>
+        <span class="r-num">${p.floor + 1}F</span>
+        <span class="r-pct">${p.taken ? '配膳中' : '待ち ' + p.waitMin + '分'}</span>
+      </div>`).join('');
+
+    html += `<div class="section-title">今日点単ランキング　（計 ${r.totalCount} 点 / 売上 ¥${r.totalRevenue.toLocaleString('en-US')}）</div>`;
+    if (!r.items.length) html += `<div class="empty">まだ注文がありません。</div>`;
+    r.items.forEach((it, i) => {
+      const w = r.totalCount ? Math.round(it.pct) : 0;
+      html += `
+      <div class="report-row">
+        <span class="r-rank">${rank[i] || (i + 1) + '.'}</span>
+        <span class="r-name"><b>${esc(it.name)}</b><i>${esc(it.nameZh)}</i></span>
+        <span class="r-num">×${it.count}</span>
+        <span class="r-bar"><b style="width:${w}%"></b></span>
+        <span class="r-pct">${it.pct}%</span>
+        <span class="r-rev">${money(it.revenue)}</span>
+      </div>`;
+    });
+    // 顧客客層統計
+    const kc = st.today?.kindCount || {};
+    const totalK = Object.values(kc).reduce((a, b) => a + b, 0) || 1;
+    html += `<div class="section-title">客層別</div>`;
+    html += Object.entries(kc).sort((a, b) => b[1] - a[1]).map(([k2, n]) =>
+      `<div class="report-row"><span class="r-name">${esc((CUSTOMER_KINDS[k2] || {}).jp || k2)}</span><span class="r-num">×${n}</span>
+        <span class="r-bar"><b style="width:${Math.round(n / totalK * 100)}%"></b></span><span class="r-pct">${(n / totalK * 100).toFixed(0)}%</span></div>`
+    ).join('');
+    host.innerHTML = html;
+    host.querySelectorAll('[data-cook]').forEach((b) => {
+      b.addEventListener('click', () => this.hooks.onFocusCook?.(b.dataset.cook));
+    });
+  }
+
+  /* ── 番付（排行榜：店內 / 全地點）───────────────────────────── */
+
+  renderRank() {
+    const host = $('rank-body');
+    if (!host) return;
+    const st = this.game;
+    const R = rankings(st);
+    const tab = this._rankTab || 'local';
+    document.querySelectorAll('#rank-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.rtab === tab));
+    const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.');
+    const L = R.local;
+    let html = '';
+
+    if (tab === 'local') {
+      // 本店在全部地點中的位置
+      const s = R.summary;
+      html += `<div class="rank-banner">
+        <div class="rb-main"><b>${esc(R.locationName)}</b><span>${esc(R.locationNameZh)}</span></div>
+        <div class="rb-score"><em>全 ${s.totalLocations} 地点中</em><b>${s.myRank} 位</b></div>
+        <div class="rb-sub">売上順位の目安 <b>${s.revenueRank} 位</b>　本日の売上 <b>${money(s.todayRevenue)}</b>　自己ベスト <b>${money(L.record.bestRevenue)}</b>（${L.record.bestDay || '—'} 日目）
+          　この地点の平均日商 <b>${money(s.potentialHere)}</b>　<b>${s.beaten}</b> 地点を上回った</div>
+      </div>`;
+
+      html += `<div class="section-title">店史（この店の記録）</div>
+      <div class="card"><div class="card-sub">
+        <span>営業日数 <b>${L.record.days}</b></span>
+        <span>累計売上 <b>${money(L.record.totalRevenue)}</b></span>
+        <span>最高日商 <b>${money(L.record.bestRevenue)}</b></span>
+        <span>最多来客 <b>${L.record.bestGuests} 人</b></span>
+        <span>最高利益 <b>${money(L.record.bestNet)}</b></span>
+      </div></div>`;
+
+      html += `<div class="section-title">料理ランキング（全期間）</div>`;
+      if (!L.dishes.length) html += `<div class="empty">まだデータがありません。</div>`;
+      L.dishes.slice(0, 12).forEach((d, i) => {
+        html += `<div class="report-row">
+          <span class="r-rank">${medal(i)}</span>
+          <span class="r-name"><b>${esc(d.name)}</b><i>${esc(d.nameZh)}</i></span>
+          <span class="r-num">×${d.count}</span>
+          <span class="r-bar"><b style="width:${Math.min(100, d.pct)}%"></b></span>
+          <span class="r-pct">${d.pct}%</span>
+          <span class="r-rev">${money(d.revenue)}</span>
+        </div>`;
+      });
+
+      html += `<div class="section-title">料理人ランキング（調理した品数）</div>`;
+      if (!L.chefs.length) html += `<div class="empty">料理人がいません。</div>`;
+      L.chefs.forEach((s2) => {
+        html += `<div class="report-row">
+          <span class="r-rank">${medal(s2.rank - 1)}</span>
+          <span class="r-name"><b>${esc(s2.name)}</b><i>${esc(s2.roleJp)}・腕前 ${s2.skill}</i></span>
+          <span class="r-num">${s2.cooked} 品</span>
+          <span class="r-bar"><b style="width:${Math.min(100, s2.cooked / Math.max(1, L.chefs[0].cooked) * 100)}%"></b></span>
+          <span class="r-pct">${s2.tasks} 件</span>
+        </div>`;
+      });
+
+      html += `<div class="section-title">ホールランキング（担当した売上）</div>`;
+      if (!L.waiters.length) html += `<div class="empty">ホールがいません。</div>`;
+      L.waiters.forEach((s2) => {
+        html += `<div class="report-row">
+          <span class="r-rank">${medal(s2.rank - 1)}</span>
+          <span class="r-name"><b>${esc(s2.name)}</b><i>案内 ${s2.seated}・配膳 ${s2.delivered}・会計 ${s2.payments}・清掃 ${s2.cleaned}</i></span>
+          <span class="r-num">${s2.tasks} 件</span>
+          <span class="r-bar"><b style="width:${Math.min(100, s2.revenue / Math.max(1, L.waiters[0].revenue) * 100)}%"></b></span>
+          <span class="r-rev">${money(s2.revenue)}</span>
+        </div>`;
+      });
+
+      html += `<div class="section-title">客層ランキング</div>`;
+      L.kinds.forEach((k2) => {
+        html += `<div class="report-row">
+          <span class="r-rank">${medal(k2.rank - 1)}</span>
+          <span class="r-name"><b>${esc(k2.name)}</b><i>${esc(k2.nameZh)}</i></span>
+          <span class="r-num">${k2.groups} 組 / ${k2.guests} 人</span>
+          <span class="r-bar"><b style="width:${k2.pct}%"></b></span>
+          <span class="r-pct">${k2.pct}%</span>
+          <span class="r-rev">${money(k2.revenue)}</span>
+        </div>`;
+      });
+
+      html += `<div class="section-title">時間帯別（売上）</div>`;
+      if (!L.hours.length) html += `<div class="empty">まだデータがありません。</div>`;
+      const maxRev = Math.max(1, ...L.hours.map((h) => h.revenue));
+      for (const h of L.hours) {
+        html += `<div class="report-row">
+          <span class="r-rank">${String(h.hour).padStart(2, '0')}時</span>
+          <span class="r-name"><i>${h.groups} 組 / ${h.guests} 人</i></span>
+          <span class="r-bar"><b style="width:${Math.round(h.revenue / maxRev * 100)}%"></b></span>
+          <span class="r-rev">${money(h.revenue)}</span>
+        </div>`;
+      }
+      if (L.bestHour) html += `<p class="muted">一番稼ぐ時間帯：<b>${L.bestHour.hour} 時</b>（${money(L.bestHour.revenue)}）</p>`;
+    } else {
+      // 全地點排行
+      const s = R.summary;
+      html += `<div class="rank-banner">
+        <div class="rb-main"><b>全地点ランキング</b><span>平均日商ベース・${R.global.length} 地点</span></div>
+        <div class="rb-score"><em>自店の順位</em><b>${s.myRank} 位</b></div>
+        <div class="rb-sub">売上順位の目安 <b>${s.revenueRank} 位</b>（自己ベストと本日の高い方 <b>${money(s.myScore)}</b>）
+          　— 現在の立地：<b>${esc(R.locationName)}</b>
+          ${s.beaten === 0 ? '<br>まだどの地点の平均日商にも届いていない（営業日を重ねて客数を伸ばそう）' : `　<b>${s.beaten}</b> 地点の平均を上回った`}</div>
+      </div>
+      <div class="section-title">地点別（平均日商）</div>`;
+      for (const g of R.global) {
+        const mine = g.myBest > 0;
+        html += `<div class="report-row${g.isHere ? ' me' : ''}">
+          <span class="r-rank">${medal(g.rank - 1)}</span>
+          <span class="r-name"><b>${esc(g.name)}</b><i>${esc(g.region)}・${esc(g.city)}　★${g.stars}　人通り ${g.trafficBase}/時　家賃 ${money(g.rentPerDay)}/日</i></span>
+          <span class="r-num">${g.isHere ? '自店' : ''}</span>
+          <span class="r-rev">${money(g.potential)}</span>
+          <span class="r-pct">${mine ? '自己ベスト ' + money(g.myBest) : ''}</span>
+        </div>`;
+        if (g.isHere) {
+          html += `<div class="rank-marker">▲ いま営業しているのはここ（${g.rank} 位 / ${R.global.length} 地点）</div>`;
+        }
+      }
+    }
+    host.innerHTML = html;
+  }
+
+  /* ── 顧客詳情 ───────────────────────────────────────────────── */
+
+  renderCustomerDetail(group) {
+    const host = $('customer-detail');
+    if (!host || !group) return;
+    const st = this.game;
+    const def = CUSTOMER_KINDS[group.kind] || {};
+    const stateLabel = {
+      entering: '来店中', queue: '行列で待機中', wait席: '席案内待ち', to席: '席へ移動中',
+      ordering: '注文中', waitCook: '調理待ち', waitServe: '配膳待ち', eating: '食事中',
+      waitPay: '会計待ち', leaving: '退店中', angryLeave: '怒って帰った', gone: '帰りました'
+    };
+    const stMap = { entering: '来店中', waitSeat: '席案内待ち', toSeat: '席へ移動中', ordering: '注文中', waitCook: '調理待ち', waitServe: '配膳待ち', eating: '食事中', waitPay: '会計待ち', leaving: '退店中', angryLeave: '怒って帰った' };
+    const stateText = stMap[group.state] || group.state;
+    const patienceLeft = Math.max(0, Math.round(group.patience - group.wait));
+    const orderedNames = (group.orders || []).map(id => {
+      const d = dishById(id);
+      return d ? `${d.name}（${d.nameZh}）${money(d.price)}` : id;
+    });
+
+    let html = `
+      <div class="section-title">${esc(def.jp || group.kind)}　${group.size} 名様</div>
+      <div class="card">
+        <div class="card-head"><b>状態</b><span class="role">${esc(stateText)}</span></div>
+        <div class="card-sub">
+          <span>組 <b>#${group.id.replace('g','')}</b></span>
+          <span>客単価 <b>×${group.spend.toFixed(2)}</b></span>
+          <span>気分 <b>${group.mood > 0 ? '😊' : group.mood < -2 ? '😠' : '😐'} ${group.mood.toFixed(1)}</b></span>
+          <span>待ち <b>${Math.round(group.wait)} 分</b></span>
+        </div>
+      </div>`;
+
+    html += `<div class="section-title">注文　${orderedNames.length} 点</div>`;
+    if (!orderedNames.length) html += `<div class="empty">まだ注文していません。</div>`;
+    else html += orderedNames.map(n => `<div class="menu-row" style="cursor:default"><span class="nm"><b>${esc(n)}</b></span></div>`).join('');
+
+    // 調理の進み具合：この注文を今誰が作っているか
+    const cookTask = (st.tasks || []).find((t) => t.type === 'cook' && t.groupId === group.id);
+    const passItem = (st.pass || []).find((p) => p.groupId === group.id);
+    if (cookTask || passItem) {
+      const chef = cookTask?.claimedBy ? (st.staff || []).find((s) => s.id === cookTask.claimedBy) : null;
+      const total = Math.max(0.001, cookTask?.work || 1);
+      const pct = cookTask ? Math.round(Math.max(0, Math.min(1, 1 - Math.max(0, cookTask.workLeft) / total)) * 100) : 100;
+      const phaseJp = passItem ? '出餐口にできあがり（配膳待ち）'
+        : cookTask.phase === 'walk' ? '料理人が爐へ移動中'
+          : `${chef?.name || '料理人'}が調理中`;
+      html += `<div class="section-title">調理の状況</div>
+        <div class="card">
+          <div class="card-head"><b>${esc(phaseJp)}</b><span class="role">${pct}%</span></div>
+          <div class="report-row"><span class="r-bar"><b style="width:${pct}%"></b></span></div>
+        </div>`;
+    }
+
+    if (group.pet) {
+      const petJp = { dog: '犬', cat: '猫', rabbit: 'うさぎ', bird: '鳥' };
+      html += `<div class="section-title">ペット</div><div class="card"><div class="card-head"><b>${esc(petJp[group.pet] || group.pet)}</b></div></div>`;
+    }
+    host.innerHTML = html;
+  }
+
   /* ── 員工面板 ───────────────────────────────────────────────── */
 
   renderStaff() {
@@ -290,6 +552,14 @@ export class Hud {
         </div>
         <div class="traits">${(s.traits || []).map((x) => `<span>${esc(x)}</span>`).join('')}</div>
         <div class="card-desc">${esc(s.desc)}</div>
+        <div class="uniform-row"><span class="tagline">制服</span>
+          <select class="uni-select" data-uni="${esc(s.id)}">
+            ${uniformsForRole(s.role).map((uid) => {
+              const u = uniformById(uid);
+              return `<option value="${uid}" ${uid === s.uniformId ? 'selected' : ''}>${u ? esc(u.label) : uid}</option>`;
+            }).join('')}
+          </select>
+        </div>
         <div class="card-actions">
           <button class="fire" data-fire="${esc(s.id)}">解雇（資遣費 ${money(s.wage * 4)}）</button>
         </div>
@@ -302,6 +572,14 @@ export class Hud {
         const res = fireStaff(this.game, b.dataset.fire);
         if (res.ok) this.toast(`解雇しました（資遣費 ${money(res.severance)}）`, 'bad');
         else this.toast(res.error, 'bad');
+        this.renderStaff();
+      });
+    });
+    host.querySelectorAll('.uni-select').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const res = this.hooks.onUniform?.(sel.dataset.uni, sel.value);
+        if (res && res.ok) this.toast('制服を変更しました', 'good');
+        else if (res && res.error) this.toast(res.error, 'bad');
         this.renderStaff();
       });
     });
@@ -360,6 +638,25 @@ export class Hud {
     if (!host) return;
     const st = this.game;
     const owned = st.equipment || [];
+
+    // 擴建樓層
+    const fc = st.plan?.floorCount || 1;
+    if (fc < 3) {
+      const cost = fc === 1 ? 800000 : 2400000;
+      const label = fc === 1 ? '増築 2F' : '増築 3F';
+      let html = `<div class="section-title">拡張</div>`;
+      html += `<div class="card"><div class="card-head"><b>${label}</b><span class="role">${money(cost)}</span></div>
+        <div class="card-desc">現在 ${fc} 階。増築すると各階に新しい客席が追加されます。</div>
+        <div class="card-actions"><button class="buy" data-floor="${fc + 1}">${label}（${money(cost)}）</button></div></div>`;
+      host.innerHTML = html + host.innerHTML;
+      host.querySelectorAll('[data-floor]').forEach((b) => b.addEventListener('click', () => {
+        const res = this.hooks.onFloor?.(Number(b.dataset.floor));
+        if (res && res.ok) this.toast(`${res.floorCount} 階に増築しました（${money(res.cost)}）`, 'good');
+        else if (res && res.error) this.toast(res.error, 'bad');
+        this.renderShop();
+      }));
+    }
+
     let html = `<div class="section-title">設備（事件の被害を半分に）</div>`;
     for (const [id, def] of Object.entries(EQUIPMENT_CATALOG)) {
       const has = owned.includes(id);
@@ -586,7 +883,7 @@ export class Hud {
 
 export function seatsOf(st) {
   let n = 0;
-  for (const t of st.plan.tables) n += t.seats;
+  for (const t of allTables(st.plan)) n += t.seats;
   return n;
 }
 
