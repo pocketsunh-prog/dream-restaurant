@@ -1343,22 +1343,26 @@ function paintFloorTile(c, o) {
   const seam = pal.seams[v % 4];
   const brush = shade(base, 'white', 0.14); // 淡色刷痕
   const grainDark = shade(base, 'black', 0.16);
-  g.dia(cx, 0, W - 2, H - 2, base);
-  // 木板接縫（依變體換方向：橫向 / 縱向 / 斜向拼法）— 改成 2px 實線
-  const grain = v % 4;
-  const us = grain === 0 ? [0.45] : grain === 1 ? [0.28, 0.62] : grain === 2 ? [0.2, 0.5, 0.8] : [0.35];
-  for (let i = 0; i < us.length; i++) {
-    const t = us[i];
-    if (grain === 3) g.thick(cx - g.u(9) + g.u(4) * i, g.u(2) + g.u(3) * i, cx + g.u(9) - g.u(4) * i, H - g.u(3) - g.u(3) * i, seam);
-    else g.thick(cx - TILE_W / 2 * t, THH * t, W - TILE_W / 2 * t, THH + THH * t, seam);
-  }
-  // 木紋：2px 實色板條 + 2px 淡色刷痕（全部粗筆觸，不留 1px 細線把色塊切碎）
-  g.thick(cx - g.u(7), g.u(2), cx - g.u(7), g.u(6), grainDark);
-  g.thick(cx + g.u(6), g.u(8), cx + g.u(6), g.u(12), grainDark);
-  g.thick(cx - g.u(4), g.u(4), cx - g.u(4), g.u(7), brush);
-  // 磨損與刮痕（固定變體，不隨時間變）：實色短痕
-  if (v >= 4) {
-    g.thick(cx - g.u(5), g.u(9), cx + g.u(1), g.u(6), brush);
+  // noBase：地板已經由 floor.js 貼上和柄（pattern）→ 這一格只補接縫／髒污／明暗
+  const noBase = !!o.noBase;
+  if (!noBase) {
+    g.dia(cx, 0, W - 2, H - 2, base);
+    // 木板接縫（依變體換方向：橫向 / 縱向 / 斜向拼法）— 改成 2px 實線
+    const grain = v % 4;
+    const us = grain === 0 ? [0.45] : grain === 1 ? [0.28, 0.62] : grain === 2 ? [0.2, 0.5, 0.8] : [0.35];
+    for (let i = 0; i < us.length; i++) {
+      const t = us[i];
+      if (grain === 3) g.thick(cx - g.u(9) + g.u(4) * i, g.u(2) + g.u(3) * i, cx + g.u(9) - g.u(4) * i, H - g.u(3) - g.u(3) * i, seam);
+      else g.thick(cx - TILE_W / 2 * t, THH * t, W - TILE_W / 2 * t, THH + THH * t, seam);
+    }
+    // 木紋：2px 實色板條 + 2px 淡色刷痕（全部粗筆觸，不留 1px 細線把色塊切碎）
+    g.thick(cx - g.u(7), g.u(2), cx - g.u(7), g.u(6), grainDark);
+    g.thick(cx + g.u(6), g.u(8), cx + g.u(6), g.u(12), grainDark);
+    g.thick(cx - g.u(4), g.u(4), cx - g.u(4), g.u(7), brush);
+    // 磨損與刮痕（固定變體，不隨時間變）：實色短痕
+    if (v >= 4) {
+      g.thick(cx - g.u(5), g.u(9), cx + g.u(1), g.u(6), brush);
+    }
   }
   // 收邊／踢腳帶（房間最外圈地板，比室內深一階）：實色 2px 帶
   if (o.edge) {
@@ -1533,21 +1537,25 @@ function paintWallBody(g, h, opts) {
   const right = opts.right || P.wallLo;
   const yMid = THH;
   const yBot = TILE_H;
+  // noBase：壁も floor.js が和柄（pattern）を貼る → 側面の平塗りと磚縫は描かない
+  const noBase = !!opts.noBase;
   // 側面：扎實純色平塗（左面 = 基色、右面 = 基色 −18%），完全不用網點
-  g.poly([[WALL_XL, yMid], [cx, yBot], [cx, yBot + h], [WALL_XL, yMid + h]], left);
-  g.poly([[cx, yBot], [WALL_XR, yMid], [WALL_XR, yMid + h], [cx, yBot + h]], right);
-  // 磚縫：1px 實色暗線（基色 −25%），沿等角方向切兩段
-  const seamCol = P.wallSeam || shade(left, 'black', 0.25);
-  const seamA = [WALL_XL, yMid + Math.round(h * 0.42)];
-  const seamB = [cx, yBot + Math.round(h * 0.42)];
-  const seamC = [WALL_XR, yMid + Math.round(h * 0.42)];
-  g.thick(seamA[0], seamA[1], seamB[0], seamB[1], seamCol);
-  g.thick(seamB[0], seamB[1], seamC[0], seamC[1], seamCol);
-  const seamD = [WALL_XL, yMid + Math.round(h * 0.78)];
-  const seamE = [cx, yBot + Math.round(h * 0.78)];
-  const seamF = [WALL_XR, yMid + Math.round(h * 0.78)];
-  if (seamD[1] < yMid + h - 3) g.thick(seamD[0], seamD[1], seamE[0], seamE[1], seamCol);
-  if (seamE[1] < yBot + h - 3) g.thick(seamE[0], seamE[1], seamF[0], seamF[1], seamCol);
+  if (!noBase) {
+    g.poly([[WALL_XL, yMid], [cx, yBot], [cx, yBot + h], [WALL_XL, yMid + h]], left);
+    g.poly([[cx, yBot], [WALL_XR, yMid], [WALL_XR, yMid + h], [cx, yBot + h]], right);
+    // 磚縫：1px 實色暗線（基色 −25%），沿等角方向切兩段
+    const seamCol = P.wallSeam || shade(left, 'black', 0.25);
+    const seamA = [WALL_XL, yMid + Math.round(h * 0.42)];
+    const seamB = [cx, yBot + Math.round(h * 0.42)];
+    const seamC = [WALL_XR, yMid + Math.round(h * 0.42)];
+    g.thick(seamA[0], seamA[1], seamB[0], seamB[1], seamCol);
+    g.thick(seamB[0], seamB[1], seamC[0], seamC[1], seamCol);
+    const seamD = [WALL_XL, yMid + Math.round(h * 0.78)];
+    const seamE = [cx, yBot + Math.round(h * 0.78)];
+    const seamF = [WALL_XR, yMid + Math.round(h * 0.78)];
+    if (seamD[1] < yMid + h - 3) g.thick(seamD[0], seamD[1], seamE[0], seamE[1], seamCol);
+    if (seamE[1] < yBot + h - 3) g.thick(seamE[0], seamE[1], seamF[0], seamF[1], seamCol);
+  }
   // 踢腳／護牆板（跟著地板色走）
   const wain = Math.min(g.u(7), Math.max(g.u(3), Math.round(h * 0.34)));
   g.poly([[WALL_XL, yMid + h - wain], [cx, yBot + h - wain], [cx, yBot + h], [WALL_XL, yMid + h]], P.trim);
@@ -1615,7 +1623,7 @@ function paintWall(c, o) {
   const g = mkPainter(c, WALL_CW, false);
   paintWallBody(g, o.h, {
     window: o.window, face: o.face, tod: o.tod, glow: o.glow, frost: o.frost, frame: o.frame,
-    top: o.top, left: o.left, right: o.right, pal: o.pal, seed: o.seed,
+    top: o.top, left: o.left, right: o.right, pal: o.pal, seed: o.seed, noBase: o.noBase,
   });
 }
 
@@ -1711,11 +1719,12 @@ export function drawTile(ctx, tile, sx, sy, opts = {}) {
   if (!isWallLike) {
     const dirtB = Math.max(0, Math.min(3, o.dirt | 0));
     const edge = o.edge ? 1 : 0;
-    const key = `t|${kind}|${variant}|${frame}|${kind === 'floor' ? pk : 'def'}|d${kind === 'floor' || kind === 'restroom' ? dirtB : 0}|e${kind === 'floor' ? edge : 0}`;
+    const nb = o.noBase && kind === 'floor' ? 1 : 0;
+    const key = `t|${kind}|${variant}|${frame}|${kind === 'floor' ? pk : 'def'}|d${kind === 'floor' || kind === 'restroom' ? dirtB : 0}|e${kind === 'floor' ? edge : 0}|nb${nb}`;
     const paint = (c) => {
       if (kind === 'kitchen') paintKitchenTile(c, { variant });
       else if (kind === 'restroom') paintRestroomTile(c, { variant, dirt: dirtB });
-      else paintFloorTile(c, { variant, pal, dirt: dirtB, edge });
+      else paintFloorTile(c, { variant, pal, dirt: dirtB, edge, noBase: !!nb });
     };
     const cv = cachedSprite(key, TILE_W, TILE_H, paint);
     const dx = Math.round(sx - TILE_W / 2);
@@ -1736,9 +1745,9 @@ export function drawTile(ctx, tile, sx, sy, opts = {}) {
   const kframe = kind === 'wall' ? (o.window ? (frame & 3) : 0) : (frame & 1);
   // 牆面刷痕用 seed 決定（每 4–6 格一道），因此 seed 也要進快取鍵
   const seed = kind === 'wall' ? (((o.seed | 0) % 6) + 6) % 6 : 0;
-  const key = `w|${kind}|${h}|${variant}|${face}|${o.window ? 1 : 0}|${o.tod || 'night'}|${kframe}|${o.frost ? 1 : 0}|${pk}|s${seed}`;
+  const key = `w|${kind}|${h}|${variant}|${face}|${o.window ? 1 : 0}|${o.tod || 'night'}|${kframe}|${o.frost ? 1 : 0}|${pk}|s${seed}|nb${o.noBase && kind === 'wall' ? 1 : 0}`;
   const paint = (c) => {
-    if (kind === 'wall') paintWall(c, { h, variant, face, window: o.window, tod: o.tod, glow: o.glow, pal, frost: o.frost, frame: o.frame, seed });
+    if (kind === 'wall') paintWall(c, { h, variant, face, window: o.window, tod: o.tod, glow: o.glow, pal, frost: o.frost, frame: o.frame, seed, noBase: o.noBase });
     else if (kind === 'door') paintDoor(c, { h, variant, frame, pal });
     else paintPass(c, { h, variant, frame, pal });
   };

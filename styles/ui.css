@@ -371,3 +371,22 @@ table.tbl td.mid, table.tbl th.mid { text-align: center; }
 #boot .menu-btns { display: flex; flex-direction: column; gap: 8px; width: 240px; }
 #boot .menu-btns .btn { padding: 7px; }
 #boot .credit { color: #6f7d8f; font-size: 11px; margin-top: 10px; line-height: 1.7; }
+
+/* ── 和柄素材（床材・壁紙）の swatch 一覧 ─────────────────────────── */
+.mat-label {
+  font-size: 12px; color: var(--ink-soft); margin: 2px 0 3px; font-weight: 700;
+}
+.mat-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  gap: 4px; padding: 4px; max-height: 190px; overflow-y: auto;
+  background: rgba(0,0,0,.10); border: 1px solid var(--bevel-mid); border-radius: 4px;
+}
+.mat-swatch {
+  padding: 0; width: 100%; aspect-ratio: 1 / 1; overflow: hidden; cursor: pointer;
+  border: 2px solid var(--bevel-dark); border-radius: 3px; background: #14110d;
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+}
+.mat-swatch:hover { border-color: var(--gold); }
+.mat-swatch.on { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(181,135,31,.55) inset; }
+.mat-swatch.plain { font-size: 11px; color: var(--face); background: #6f6a5c; }
+.mat-swatch canvas { display: block; width: 100%; height: 100%; }

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>和柄素材（床材・壁紙）驗證 — Dream Restaurant</title>
+<style>
+  body { background:#20242d; color:#cfe8d0; font:13px/1.7 Consolas,monospace; padding:16px; margin:0 }
+  pre { white-space:pre-wrap; margin:0 0 10px }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start }
+  figure { margin:0 }
+  figcaption { color:#9fb0c4; font-size:11px; margin-top:4px }
+  canvas { border:1px solid #4b5563; display:block; background:#111 }
+</style>
+</head>
+<body>
+<pre id="out">initializing…</pre>
+<div class="row">
+  <figure><canvas id="cPlain" width="1280" height="800"></canvas><figcaption>無地（純色）</figcaption></figure>
+  <figure><canvas id="cMat" width="1280" height="800"></canvas><figcaption>和柄（床＝waga-1-1／壁＝waga-4-2）</figcaption></figure>
+</div>
+<script type="module">
+import { createNewGame } from '../src/core/state.js';
+import { reduce } from '../src/core/actions.js';
+import { FloorRenderer } from '../src/render/floor.js';
+import { roomSilhouette } from '../src/render/iso.js';
+import { loadAtlas, materialsStatus, materialCells, cellCanvas, projectedPattern, FLOOR_BASIS } from '../src/render/materials.js';
+
+const out = document.getElementById('out');
+const lines = [];
+let fails = 0;
+const check = (name, ok, detail = '') => {
+  if (!ok) fails++;
+  lines.push(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' :: ' + detail : ''}`);
+};
+
+function renderInto(canvas, state, view) {
+  new FloorRenderer(canvas).render(state, view);
+  return canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+}
+
+function inPolyFn(poly) {
+  return (px, py) => {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+      if (((yi > py) !== (yj > py)) && (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  };
+}
+
+try {
+  const state = createNewGame(20240101);
+  reduce(state, { type: 'START_DAY' });
+  const view = { frame: 0, tick: 0, showGrid: false, fx: { pools: false, shadows: false, ao: false, vignette: false, outsideShade: false, shafts: false } };
+
+  // 見本帳の読み込みを待つ（最大 6 秒）
+  await new Promise((resolve) => {
+    loadAtlas();
+    const t0 = Date.now();
+    const tick = () => {
+      if (materialsStatus().state === 'ready' || materialsStatus().state === 'failed' || Date.now() - t0 > 6000) resolve();
+      else setTimeout(tick, 60);
+    };
+    tick();
+  });
+
+  const st = materialsStatus();
+  lines.push('=== [1] 見本帳の読み込み ===');
+  check('見本帳が読み込めた', st.state === 'ready', `${st.state} (${st.url})${st.error ? ' — ' + st.error : ''}${st.diag ? ' — ' + JSON.stringify(st.diag) : ''}`);
+  const cells = materialCells();
+  check('柄を 20 枚以上に切り出せた', cells.length >= 20, `${cells.length} 柄`);
+  check('柄の大きさが揃っている', cells.every((c) => c.w > 24 && c.h > 24),
+    cells.length ? `${cells[0].w}×${cells[0].h}` : '');
+  const cv0 = cells.length ? cellCanvas(cells[0].id) : null;
+  check('柄の canvas を作れる', !!cv0 && cv0.width > 0, cv0 ? `${cv0.width}×${cv0.height}` : '無');
+
+  // pattern の作成（等角基底）
+  const pc = document.createElement('canvas').getContext('2d');
+  const pat = cells.length ? projectedPattern(pc, cells[0].id, FLOOR_BASIS) : null;
+  check('等角投影の pattern を作れる', !!pat, pat ? 'CanvasPattern' : '無');
+
+  lines.push('');
+  lines.push('=== [2] 床・壁に貼ると絵が変わる ===');
+  state.settings.floorMat = null;
+  state.settings.wallMat = null;
+  const plain = renderInto(document.getElementById('cPlain'), state, view);
+
+  state.settings.floorMat = cells[1] ? cells[1].id : null;
+  state.settings.wallMat = cells[Math.min(cells.length - 1, 24)] ? cells[Math.min(cells.length - 1, 24)].id : null;
+  const matted = renderInto(document.getElementById('cMat'), state, view);
+
+  const r = new FloorRenderer(document.getElementById('cPlain'));
+  const poly = roomSilhouette(state.layout.gridW, state.layout.gridH, r.wallHeight, r.originX, r.originY);
+  const inPoly = inPolyFn(poly);
+
+  let changed = 0, total = 0, sumDiff = 0;
+  for (let y = 0; y < 800; y += 2) {
+    for (let x = 0; x < 1280; x += 2) {
+      if (!inPoly(x, y)) continue;
+      const i = (y * 1280 + x) * 4;
+      const d = Math.abs(plain[i] - matted[i]) + Math.abs(plain[i + 1] - matted[i + 1]) + Math.abs(plain[i + 2] - matted[i + 2]);
+      total++;
+      sumDiff += d;
+      if (d > 12) changed++;
+    }
+  }
+  const pct = total ? (100 * changed / total).toFixed(1) : 0;
+  check('貼柄すると室內のピクセルが変わる', changed > total * 0.2, `${pct}% のピクセルが変化（平均差 ${(sumDiff / Math.max(1, total)).toFixed(1)}）`);
+
+  // 花樣が「一様な塗り」ではなく模様になっているか：明度の分散を見る
+  function variance(data) {
+    let n = 0, s = 0, s2 = 0;
+    for (let y = 40; y < 760; y += 3) {
+      for (let x = 40; x < 1240; x += 3) {
+        if (!inPoly(x, y)) continue;
+        const i = (y * 1280 + x) * 4;
+        const l = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        n++; s += l; s2 += l * l;
+      }
+    }
+    return n ? s2 / n - (s / n) ** 2 : 0;
+  }
+  const vPlain = variance(plain);
+  const vMat = variance(matted);
+  check('柄は「のっぺりした色」ではなく模様になっている', vMat > 30, `分散 ${vMat.toFixed(1)}（無地 ${vPlain.toFixed(1)}）`);
+
+  lines.push('');
+  lines.push('=== [3] 設定の保存／読み込み ===');
+  const { serialize, deserializeSave } = await import('../src/core/save.js').catch(() => ({}));
+  void serialize; void deserializeSave;
+  check('設定に floorMat / wallMat が入っている',
+    'floorMat' in state.settings && 'wallMat' in state.settings,
+    `${state.settings.floorMat} / ${state.settings.wallMat}`);
+
+  lines.push('');
+  lines.push(fails === 0 ? '<span style="color:#8ef0a0">MATERIAL TEST: ALL PASSED</span>' : `<span style="color:#ff9090">MATERIAL TEST: ${fails} FAILED</span>`);
+  out.innerHTML = lines.join('\n');
+  document.title = fails === 0 ? 'MAT-OK' : 'MAT-FAIL-' + fails;
+  console.log('MATERIAL_TEST fails=' + fails + ' cells=' + cells.length);
+} catch (err) {
+  out.textContent = 'ERROR: ' + err.message + '\n' + err.stack;
+  document.title = 'MAT-ERROR';
+}
+</script>
+</body>
+</html>

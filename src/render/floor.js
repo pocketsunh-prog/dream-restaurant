@@ -26,6 +26,9 @@ import {
   DEFAULT_FX, FX_KEYS, resolveFx, sameFx,
 } from './sprites.js';
 import { getDish } from '../data/dishes.js';
+import {
+  materialsOf, projectedPattern, FLOOR_BASIS, WALL_L_BASIS, WALL_R_BASIS,
+} from './materials.js';
 
 export {
   TILE_W, TILE_H, GRID_W, GRID_H, ORIGIN_X, ORIGIN_Y, LOGICAL_W, LOGICAL_H,
@@ -450,6 +453,10 @@ export class FloorRenderer {
     const weather = typeof V.weather === 'string' ? V.weather : weatherOf(S);
     const skyline = skylineOf(S, V);
     const pal = resolveTilePalette(S, V);
+    // 和柄の床材／壁紙（設定で選んだ柄。未設定なら null → これまで通り純色）
+    const mats = materialsOf(S.settings);
+    this._floorMat = mats.floor;
+    this._wallMat = mats.wall;
     const T = todTint(tod);
     // 光影開關：view.fx 缺鍵 → DEFAULT_FX（光池保留、陰影類全關）
     // （view.fx 沒給時退回 state.settings.fx，兩者都沒有就全用預設）
@@ -996,6 +1003,8 @@ export class FloorRenderer {
     const dirt = sim && isObj(sim.dirt) ? sim.dirt : null;
     const floorDirt = dirt ? Math.min(3, Math.floor(num(dirt.floor, 0) / 26)) : 0;
     const rrDirt = dirt ? Math.min(3, Math.floor(num(dirt.restroom, 0) / 26)) : 0;
+    // 和柄の床材：タイルを描く前に、床の菱形を連結してクリップし、柄を流し込む
+    const painted = this._floorMat ? this._paintFloorMaterial(ctx, tiles, gw, gh, this._floorMat) : false;
     for (let y = 0; y < gh; y++) {
       for (let x = 0; x < gw; x++) {
         const t = tiles[tileIndex(gw, x, y)];
@@ -1007,9 +1016,47 @@ export class FloorRenderer {
         const variant = (hashCode32(x * 73856093 ^ y * 19349663) >>> 3) & 7;
         const edge = this._touchesWall(x, y) ? 1 : 0;
         const d = t === 'restroom' ? rrDirt : floorDirt;
-        drawTile(ctx, art, p.px, p.py, { variant, frame, pal, dirt: d, edge });
+        // 柄を貼った床は「柄の上に接縫・汚れ・明暗だけ」を重ねる
+        const noBase = painted && (t === 'floor' || t === 'door');
+        drawTile(ctx, art, p.px, p.py, { variant, frame, pal, dirt: d, edge, noBase });
       }
     }
+  }
+
+  /**
+   * 床に和柄を貼る：床タイル（floor / door）の菱形を連結したパスにクリップし、
+   * pattern.setTransform で等角基底（世界 x → (21,10.5) / y → (-21,10.5)）に變形して一氣に塗る。
+   * タイルごとに切り貼りしないので、床一面で柄が連続する（継ぎ目が出ない）。
+   */
+  _paintFloorMaterial(ctx, tiles, gw, gh, matId) {
+    const pat = projectedPattern(ctx, matId, FLOOR_BASIS);
+    if (!pat) return false;
+    ctx.save();
+    ctx.beginPath();
+    let any = false;
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const t = tiles[tileIndex(gw, x, y)];
+        if (t !== 'floor' && t !== 'door') continue;
+        const p = this.tileToScreen(x, y);
+        const cx = Math.round(p.px);
+        const cy = Math.round(p.py);
+        ctx.moveTo(cx, cy - HALF_H);
+        ctx.lineTo(cx + HALF_W, cy);
+        ctx.lineTo(cx, cy + HALF_H);
+        ctx.lineTo(cx - HALF_W, cy);
+        ctx.closePath();
+        any = true;
+      }
+    }
+    if (!any) { ctx.restore(); return false; }
+    ctx.clip();
+    ctx.fillStyle = pat;
+    const cw = ctx.canvas && ctx.canvas.width ? ctx.canvas.width : 4096;
+    const ch = ctx.canvas && ctx.canvas.height ? ctx.canvas.height : 4096;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.restore();
+    return true;
   }
 
   /** 該格是否緊鄰牆（用來畫踢腳／收邊帶）。 */
@@ -1166,6 +1213,8 @@ export class FloorRenderer {
     const tiles = L.tiles;
     if (!tiles || !tiles.length) return;
     const frost = weather === 'cold';
+    // 和柄の壁紙：壁スプライトを描く前に、壁の面（平行四邊形）へ柄を流し込む
+    const painted = this._wallMat ? this._paintWallMaterial(ctx, tiles, gw, gh) : false;
     for (let y = 0; y < gh; y++) {
       for (let x = 0; x < gw; x++) {
         const t = tiles[tileIndex(gw, x, y)];
@@ -1187,9 +1236,64 @@ export class FloorRenderer {
           glow: tod === 'night' || tod === 'evening',
           // 垂直刷痕用（每 4–6 格一道；由座標決定，同格永遠一樣）
           seed: (x * 7 + y * 5) % 6,
+          noBase: painted && t === 'wall',
         });
       }
     }
+  }
+
+  /**
+   * 壁に和柄を貼る：壁タイルの左右の面（平行四邊形）をクリップして柄を流し込む。
+   * 左面（北側）は橫向き (21,10.5)、右面（西側）は (21,-10.5) の基底で、
+   * それぞれ別にクリップして塗る（同じ柄でも面の向きが違うため）。
+   */
+  _paintWallMaterial(ctx, tiles, gw, gh) {
+    const patL = projectedPattern(ctx, this._wallMat, WALL_L_BASIS);
+    const patR = projectedPattern(ctx, this._wallMat, WALL_R_BASIS);
+    if (!patL && !patR) return false;
+    const leftFaces = [];
+    const rightFaces = [];
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        if (tiles[tileIndex(gw, x, y)] !== 'wall') continue;
+        const near = x === gw - 1 || y === gh - 1;
+        if (near) continue;   // 南／東の低い壁は面を描かない（スプライトと合わせる）
+        const h = this.wallHeight;
+        const p = this.tileToScreen(x, y);
+        const px = Math.round(p.px);
+        const py = Math.round(p.py);
+        leftFaces.push([
+          [px - HALF_W, py - h], [px, py + HALF_H - h], [px, py + HALF_H], [px - HALF_W, py]
+        ]);
+        rightFaces.push([
+          [px, py + HALF_H - h], [px + HALF_W, py - h], [px + HALF_W, py], [px, py + HALF_H]
+        ]);
+      }
+    }
+    if (!leftFaces.length) return false;
+    this._paintWallFaces(ctx, leftFaces, patL);
+    this._paintWallFaces(ctx, rightFaces, patR);
+    return true;
+  }
+
+  /** 平行四邊形の集合をクリップして柄で塗る */
+  _paintWallFaces(ctx, quads, pat) {
+    if (!quads.length || !pat) return;
+    ctx.save();
+    ctx.beginPath();
+    for (const q of quads) {
+      ctx.moveTo(q[0][0], q[0][1]);
+      ctx.lineTo(q[1][0], q[1][1]);
+      ctx.lineTo(q[2][0], q[2][1]);
+      ctx.lineTo(q[3][0], q[3][1]);
+      ctx.closePath();
+    }
+    ctx.clip();
+    ctx.fillStyle = pat;
+    const cw = ctx.canvas && ctx.canvas.width ? ctx.canvas.width : 4096;
+    const ch = ctx.canvas && ctx.canvas.height ? ctx.canvas.height : 4096;
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.restore();
   }
 
   // ── 傢俱 + 人物（畫家演算法） ───────────────────────────────────────────

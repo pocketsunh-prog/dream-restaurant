@@ -39,6 +39,7 @@ src/data/index.js              ★ 彙總出口            （DATA 代理）
 src/render/palette.js          ★ 調色盤              （RENDER 代理）
 src/render/sprites.js          ★ 程序化像素圖        （RENDER 代理）
 src/render/floor.js            ★ 等角平面渲染器      （RENDER 代理）
+src/render/materials.js        ★ 和柄素材（床材・壁紙；CanvasPattern を等角投影して貼る）
 
 src/ui/widgets.js              共用 UI 元件（我）
 src/ui/windows.js              視窗管理員（我）

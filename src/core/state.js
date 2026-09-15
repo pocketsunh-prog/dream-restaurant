@@ -103,7 +103,10 @@ export function createNewGame(seed = newSeed(), opts = {}) {
       music: 'lazy',
       openDays: [true, true, true, true, true, true, true],
       wallColor: '#c9a26b',
-      floorColor: '#8c6a44'
+      floorColor: '#8c6a44',
+      // 和柄の床材／壁紙（assets/wagara-atlas.png の柄 id。null = 純色）
+      wallMat: null,
+      floorMat: null
     },
     menu: [],
     stock: {},

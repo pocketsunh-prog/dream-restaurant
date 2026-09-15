@@ -17,6 +17,7 @@ import {
   h, tabs, numberField, slider, select, checkbox, bar, statRow, section, hintbox, button,
   toast, money, pct
 } from '../widgets.js';
+import * as mats from '../../render/materials.js';
 
 /* --------------------------------------------------------------- 共用小工具 */
 
@@ -560,8 +561,81 @@ export function createSettingsPanel({ store, ui, win }) {   // eslint-disable-li
         h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, wallPreview, h('span', {}, '牆面'), wallInput),
         h('div', { class: 'row', style: { gap: '8px', alignItems: 'center' } }, floorPreview, h('span', {}, '地板'), floorInput),
         hintbox('選擇顏色後即時套用。牆面與地板會用扎實的純色繪製，不再使用網點抖動。')
-      ] }).el
+      ] }).el,
+      buildMaterialSection()
     );
+
+    /**
+     * 和柄（ちよがみ）の見本帳から床材／壁紙を選ぶ。
+     * assets/wagara-atlas.png を格子ごとに切り出した swatch を並べる。
+     * 柄は CanvasPattern として等角平面に投影されるので、床一面・壁一面で柄が連続する。
+     */
+    function buildMaterialSection() {
+      const wallHost = h('div', { class: 'mat-grid' });
+      const floorHost = h('div', { class: 'mat-grid' });
+      const note = h('div', { class: 'hintbox' }, '見本帳を読み込み中…');
+
+      function swatch(kind, id, cell) {
+        const btn = h('button', { class: 'mat-swatch' + (id ? '' : ' plain'), type: 'button', title: id ? 'この柄を貼る' : '無地（純色）' });
+        btn.dataset.matId = id || '';
+        if (cell && mats.atlasImage()) {
+          const cv = document.createElement('canvas');
+          cv.width = cell.w;
+          cv.height = cell.h;
+          try {
+            cv.getContext('2d').drawImage(mats.atlasImage(), cell.x, cell.y, cell.w, cell.h, 0, 0, cell.w, cell.h);
+          } catch { /* ignore */ }
+          cv.style.width = '100%';
+          cv.style.height = '100%';
+          cv.style.display = 'block';
+          btn.appendChild(cv);
+        } else {
+          btn.textContent = '無地';
+        }
+        btn.addEventListener('click', () => {
+          dispatch({ type: 'SET_SETTING', key: kind === 'wall' ? 'wallMat' : 'floorMat', value: id });
+          if (ui && ui.toast) ui.toast(id ? (kind === 'wall' ? '壁紙を貼りました' : '床材を貼りました') : '無地に戻しました');
+          paint();
+        });
+        return btn;
+      }
+
+      function paint() {
+        const st = liveState();
+        const wm = (st.settings && st.settings.wallMat) || null;
+        const fm = (st.settings && st.settings.floorMat) || null;
+        wallHost.textContent = '';
+        floorHost.textContent = '';
+        wallHost.appendChild(swatch('wall', null, null));
+        floorHost.appendChild(swatch('floor', null, null));
+        const cells = mats.materialCells();
+        for (const c of cells) {
+          wallHost.appendChild(swatch('wall', c.id, c));
+          floorHost.appendChild(swatch('floor', c.id, c));
+        }
+        for (const [host, cur] of [[wallHost, wm], [floorHost, fm]]) {
+          host.querySelectorAll('.mat-swatch').forEach((b) => {
+            b.classList.toggle('on', (b.dataset.matId || '') === (cur || ''));
+          });
+        }
+        note.textContent = cells.length
+          ? `和柄見本帳：${cells.length} 柄（クリックで床／壁に貼る。柄は面に沿って連続して流れます）`
+          : '和柄見本帳を読み込めませんでした（assets/wagara-atlas.png を確認してください）';
+      }
+
+      mats.onMaterialsReady(() => paint());
+      paint();
+      return section({
+        title: '和柄（床材・壁紙）',
+        children: [
+          h('div', { class: 'mat-label' }, '牆面'),
+          wallHost,
+          h('div', { class: 'mat-label' }, '地板'),
+          floorHost,
+          note
+        ]
+      }).el;
+    }
 
     function update(state) {
       const st = state || {};
