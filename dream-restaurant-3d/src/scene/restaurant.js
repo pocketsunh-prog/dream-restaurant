@@ -9,6 +9,8 @@ import { uniformById } from '../data/uniforms.js';
 import { dishById } from '../data/dishes.js';
 import { allTables, crowdInfo } from '../sim/game.js';
 import { sheetReady, makeSheetCharacter, setSheetFrame } from './actors.js';
+import { petAreaOf, petIsAway } from '../sim/pets.js';
+import { buildPetArea, SIDEWALK_Y } from './petarea.js';
 
 /* ------------------------------------------------------------ 工具 */
 
@@ -156,6 +158,10 @@ export class RestaurantView {
     this._clock = 0;
     this.cookFx = null;             // 爐火／蒸氣
     this.cookLabels = [];           // 調理中的浮動標籤
+    this.sidewalkY = SIDEWALK_Y;    // 店外（人行道）的地面高度；店內用 floorY
+    this.petArea = null;            // ペットスペース（ドッグラン）の矩形
+    this.petAreaGroup = null;       // その見た目（buildPetSpace で作る）
+    this.petAreaBall = null;        // 遊んでいるペットのそばを転がるボール
 
     this.buildRoom();
     this.buildFurniture();
@@ -859,6 +865,8 @@ export class RestaurantView {
     this.buildStreetProps();
     // 門口的「にぎわい看板」：即時顯示店內人數與候位名單
     this.buildNoticeBoard();
+    // ペットスペース（ドッグラン）：歩道の西側。ペット同伴のペットが遊びに行く場所
+    this.buildPetSpace();
 
     // 街道的兩端（客人從這裡走過來、也從這裡走回去）
     const st = p.street || { ax: -12.4, az: D / 2 + 1.6, bx: 12.4, bz: D / 2 + 1.6 };
@@ -1021,6 +1029,19 @@ export class RestaurantView {
       c.fillText(`ペット同伴席 ${info.petOkTables} 卓（店内 ${info.petInside} 組・本日 ${info.petToday} 組）`, 24, H - 16);
     }
     nb.texture.needsUpdate = true;
+  }
+
+  /* ── ペットスペース（ドッグラン）─────────────────────────────
+     歩道の西側（入口動線と候位レーンを避けた位置）に低い柵で囲った遊び場を作る。
+     矩形は模擬側（sim/pets.js の petAreaOf）が平面圖から決めるので、
+     ここは同じ値を受け取って建てるだけ＝畫面とシミュレーションがずれない。
+     ペットが遊びに行くかどうかは sim/pets.js の tickPets が決める。 */
+  buildPetSpace() {
+    this.petArea = petAreaOf({ plan: this.plan });
+    this.petAreaGroup = buildPetArea(this.root, this.petArea, { y: this.sidewalkY, ao: aoBlob });
+    this.petAreaBall = this.petAreaGroup.userData.ball || null;
+    if (this.petAreaBall) this.petAreaBall.visible = false;   // 遊んでいるペットがいる間だけ出す
+    return this.petAreaGroup;
   }
 
   /* ── 候位繩（支柱＋繩子）：把排隊的隊伍框在人行道上 */
@@ -1313,15 +1334,25 @@ export class RestaurantView {
         m.rotation.y = mem.ry || 0;
         try { Chars.setPose(m, pose === 'eat' ? 'eat' : pose, this._clock + i * 0.3); } catch { /* 姿勢失敗就維持 */ }
       }
-      // 寵物跟著這組移動；如果是寵物同伴席，就讓牠待在桌邊的墊子上
+      // 寵物跟著這組移動；ペット同伴席なら桌邊的墊子上，
+      // 遊びに行っている間（toPlay／play／back）だけはペットスペースの座標を使う
       if (rec.pets.length && g.members[0]) {
         const lead = g.members[0];
         const spot = (g.petTable && (g.state === 'ordering' || g.state === 'waitCook'
           || g.state === 'waitServe' || g.state === 'eating' || g.state === 'waitPay'))
           ? (this.petSpots || []).find((s) => s.tableId === g.tableId) : null;
+        const away = petIsAway(g);
+        // 店の外（歩道）かどうかは z で判定：奧行の半分より南は歩道
+        const outside = away && g.petZ > this.plan.depth / 2;
         for (let i = 0; i < rec.pets.length; i++) {
           const pet = rec.pets[i];
-          if (spot) {
+          if (away) {
+            const baseY = outside ? this.sidewalkY : gy + this.floorY;
+            // 遊んでいる間は小さく跳ねる（走り回って見えるように）
+            const hop = g.petState === 'play' ? Math.abs(Math.sin(this._clock * 6 + i * 1.3)) * 0.12 : 0;
+            pet.position.set(g.petX + (i - 0.5) * 0.3, baseY + hop, g.petZ);
+            pet.rotation.y = this._petYaw(pet, Number.isFinite(g.petDir) ? g.petDir : 0);
+          } else if (spot) {
             pet.position.set(spot.x + (i - 0.5) * 0.4, gy + this.floorY + spot.y + 0.01, spot.z);
             pet.rotation.y = Math.PI;                     // 面向桌子
           } else {
@@ -1354,6 +1385,40 @@ export class RestaurantView {
   _onTatami(g, mem) {
     const t = this.plan.tatami;
     return mem.x > t.x - t.w / 2 && mem.x < t.x + t.w / 2 && mem.z > t.z - t.d / 2 && mem.z < t.z + t.d / 2;
+  }
+
+  /** ペットの向き：進行方向へゆっくり回す（±π をまたぐ時に逆回りしない） */
+  _petYaw(pet, dir) {
+    let d = (dir - pet.rotation.y) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return pet.rotation.y + d * 0.25;
+  }
+
+  /**
+   * ペットスペースの動き：遊んでいるペットがいれば、そのそばでボールを転がす。
+   * 動きは時計（this._clock）だけから決まるので、同じフレームなら同じ絵になる。
+   */
+  syncPetArea(state) {
+    const ball = this.petAreaBall;
+    if (!ball) return;
+    let host = null;
+    for (const g of (state.groups || [])) {
+      if (g.pet && g.petState === 'play' && Number.isFinite(g.petX) && Number.isFinite(g.petZ)) { host = g; break; }
+    }
+    if (!host) { ball.visible = false; return; }     // 遊んでいるペットがいなければ隠す
+    const a = this.petArea;
+    const t = this._clock;
+    const r = a ? Math.min(a.w, a.d) * 0.3 : 0.4;
+    let x = host.petX - Math.cos(t * 1.6) * r;
+    let z = host.petZ + Math.sin(t * 1.6) * r;
+    if (a) {                                          // ボールが柵の外へ転がらないように挾む
+      x = Math.max(a.cx - a.w / 2 + 0.25, Math.min(a.cx + a.w / 2 - 0.25, x));
+      z = Math.max(a.cz - a.d / 2 + 0.25, Math.min(a.cz + a.d / 2 - 0.25, z));
+    }
+    ball.visible = true;
+    ball.position.set(x, this.sidewalkY + (ball.userData.radius || 0.11), z);
+    ball.rotation.z = -t * 3.2;
   }
 
   /**
@@ -1521,6 +1586,7 @@ export class RestaurantView {
     if (camera) this.camera = camera;
     if (state.menu) this._menuRef = state.menu;
     this.syncGroups(state, dt);
+    this.syncPetArea(state);
     this.syncStaff(state);
     this.syncPass(state);
     this.syncDirtyTables(state);

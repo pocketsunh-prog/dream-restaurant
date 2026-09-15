@@ -10,7 +10,7 @@ import {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
   clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting,
   allTables, TASK_KINDS, ROLE_LABEL, setRoleUniform, crowdInfo, setFloorCount, spawnGroup,
-  WEATHER_JP
+  WEATHER_JP, starReport
 } from './sim/game.js';
 import { claimMission, missionReport } from './sim/missions.js';
 import { Hud, seatsOf } from './ui/hud.js';
@@ -427,6 +427,12 @@ function handleSimEvent(ev) {
     hud.toast('常連の Cherish が來店（今日もおひとり様）', 'good');
     return;
   }
+  // 星級アップ（打烊結算で條件を満たしたとき）
+  if (ev.type === 'starup') {
+    audio.playSfx('starup', { gain: 1 });
+    hud.toast(`⭐ 星級が ★${ev.stars} に上がりました！`, 'good');
+    return;
+  }
   const name = EVENT_SFX[ev.type];
   if (!name) return;
   if (name === 'happy' || name === 'error') { audio.playSfx(name); return; }
@@ -477,6 +483,7 @@ function adoptState(next) {
 
 let last = performance.now();
 let acc = 0;
+let autoSaveSlot = -1;          // 直近にオートセーブした「3 時間ブロック」
 const MAX_STEP = 0.08;          // 單一畫面最多推進 0.08 秒（避免分頁切回暴衝）
 let framesLeft = STATIC_FRAMES > 0 ? STATIC_FRAMES : Infinity;
 
@@ -512,6 +519,17 @@ function frame(now) {
   // 事件 → 音效／提示（每幀清空）
   const evs = drainEvents(game);
   for (const ev of evs) handleSimEvent(ev);
+
+  // 定期オートセーブ：ゲーム內 3 時間ごと（＋打烊結算時は別途）
+  if (game.phase === 'open' || game.phase === 'closing') {
+    const slot = Math.floor(game.minute / 180);
+    if (autoSaveSlot < 0) autoSaveSlot = slot;
+    else if (slot > autoSaveSlot) {
+      autoSaveSlot = slot;
+      const r = autoSave(game);
+      if (r.ok) hud.toast('オートセーブしました（3 時間ごと）', 'good');
+    }
+  }
 
   // 環境音與音樂性格（依地點、時段、來客數）——每 0.5 秒更新一次即可
   audioTimer += dtRaw;
@@ -868,6 +886,23 @@ if (params.get('uitest') === '1') {
     game.weather = list[0];
   });
   rep.push(`CHECK weather=${game.weather} jp=${WEATHER_JP[game.weather]}`);
+  // 星級：條件リストと昇格（合成狀態で確認）
+  const SR = starReport(game);
+  rep.push(`CHECK star=${SR.stars} next=${SR.next} conditions=${SR.list.length} tips=${SR.tips.length} ready=${SR.ready}`);
+  probe('star: level up on settle', () => {
+    const g2 = createGame({ locationId: 'tokyo_shibuya', seed: 999 });
+    g2.servedTotal = 5000;
+    g2.fame = 95;
+    g2.day = 30;
+    g2.plan.floorCount = 3;
+    g2.missions.claimed = Object.fromEntries(['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10'].map((k) => [k, { day: 1 }]));
+    const before = g2.stars;
+    const rep2 = settleDay(g2);
+    if (!(g2.stars > before)) throw new Error(`昇格しなかった（${before} → ${g2.stars}）`);
+    if (rep2.starUp !== g2.stars) throw new Error('レポートに昇格が記録されていない');
+  });
+  const asr = autoSave(game);
+  rep.push(`CHECK autosave slot=${localStorage.getItem('dreamrestaurant3d.save.auto') ? 'yes' : 'no'} ok=${!!asr.ok}${asr.error ? ' err=' + asr.error : ''} starReport ok`);
   let visibleGuests = 0, meshCount = 0;
   for (const [, rec] of restaurant.groupMeshes) {
     for (const m of rec.meshes) { meshCount++; if (m.visible) visibleGuests++; }

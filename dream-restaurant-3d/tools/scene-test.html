@@ -909,6 +909,201 @@ say('=== [20] Cherish（billboard 客）===');
   check('Cherish は一人客', CUSTOMER_KINDS.cherish.party[0] === 1 && CUSTOMER_KINDS.cherish.party[1] === 1);
 }
 
+/* ── 21. ペットスペース（ドッグラン）────────────────────────── */
+say('');
+stage('sec21'); say('=== [21] ペットスペース ===');
+{
+  const pets = await import('../src/sim/pets.js');
+  const { petAreaOf, tickPets, petSummary, petAreaContains } = pets;
+
+  // 帶寵物的組を手で作る（結果が安定するように席・テーブル・座標を固定）
+  const mkPetGroup = (st, id) => {
+    const g = spawnGroup(st, locationById('tokyo_shibuya'));
+    g.id = id;
+    g.pet = 'dog';
+    g.petSeed = 4242;
+    g.state = 'eating';
+    g.floor = 0;
+    g.tableId = 't7';             // 一樓ペット同伴席
+    g.petTable = true;
+    g.orders = [];
+    g.eatLeft = 30;
+    for (const m of g.members) { m.seat = 0; m.x = -4.9; m.z = 3.6; m.ry = Math.PI; }
+    st.groups.push(g);
+    return g;
+  };
+
+  /* ── 矩形 ── */
+  const gA = createGame({ locationId: 'tokyo_shibuya', seed: 2024 });
+  const area = petAreaOf(gA);
+  check('ペットスペースの矩形がある',
+    Number.isFinite(area.x) && Number.isFinite(area.z) && area.w > 1 && area.d > 0.8
+    && Number.isFinite(area.cx) && Number.isFinite(area.cz),
+    `中心 (${area.cx}, ${area.cz}) 寸法 ${area.w}×${area.d}`);
+  const D0 = gA.plan.depth;
+  const sideZ = gA.plan.outside?.z ?? D0 / 2 + 1.7;
+  const paX0 = area.x - area.w / 2, paX1 = area.x + area.w / 2;
+  const paZ0 = area.z - area.d / 2, paZ1 = area.z + area.d / 2;
+  check('人行道（歩道 3.4 m）の中に収まっている',
+    paZ0 >= sideZ - 1.7 && paZ1 <= sideZ + 1.7 && paX0 >= -13 && paX1 <= 13,
+    `x ${paX0.toFixed(2)}..${paX1.toFixed(2)} / z ${paZ0.toFixed(2)}..${paZ1.toFixed(2)} / 歩道 z ${(sideZ - 1.7).toFixed(2)}..${(sideZ + 1.7).toFixed(2)}`);
+  const q = gA.plan.queue;
+  const qx0 = q.x - 0.6, qx1 = q.x - 0.6 + q.step * 4, qz0 = q.z - 1.0, qz1 = q.z + 0.2;
+  const hitQueue = !(paX1 < qx0 || paX0 > qx1 || paZ1 < qz0 || paZ0 > qz1);
+  check('候位レーン（行列の繩）と重ならない', !hitQueue,
+    `ペット x ${paX0.toFixed(2)}..${paX1.toFixed(2)} / 候位 x ${qx0.toFixed(2)}..${qx1.toFixed(2)} z ${qz0.toFixed(2)}..${qz1.toFixed(2)}`);
+  const entX = gA.plan.entrance.x;
+  check('入口の動線（x ±1.2）を塞いでいない', paX1 < entX - 1.2 || paX0 > entX + 1.2,
+    `ペット xMax ${paX1.toFixed(2)} < 入口 ${(entX - 1.2).toFixed(2)}`);
+  check('店の奧行の外（歩道側）にある', paZ0 > D0 / 2, `z ${paZ0.toFixed(2)} > ${(D0 / 2).toFixed(2)}`);
+
+  /* ── 行動：座っている組のペットは遊びに行く ── */
+  const gB = createGame({ locationId: 'tokyo_shibuya', seed: 909 });
+  const gP2 = mkPetGroup(gB, 'g_pet_play');
+  let reached = false, inArea = true, sawOutside = false, doorOk = true, everOutside = false, crossX = NaN;
+  for (let i = 0; i < 400 && !reached; i++) {
+    const prevZ = Number.isFinite(gP2.petZ) ? gP2.petZ : null;
+    tickPets(gB, 1);
+    if (gP2.petState === 'toPlay' && Number.isFinite(gP2.petZ)) {
+      if (gP2.petZ > D0 / 2) everOutside = true;
+      if (prevZ !== null && prevZ <= D0 / 2 && gP2.petZ > D0 / 2) {
+        sawOutside = true;
+        crossX = gP2.petX;
+        if (Math.abs(gP2.petX - entX) > 0.6) doorOk = false;   // 壁を突き抜けていないか
+      }
+    }
+    if (gP2.petState === 'play') {
+      reached = true;
+      inArea = petAreaContains(area, gP2.petX, gP2.petZ);
+    }
+  }
+  check('座っている組のペットが遊びに行く（petState=play）', reached,
+    `state=${gP2.petState} 位置 (${Number(gP2.petX).toFixed(2)}, ${Number(gP2.petZ).toFixed(2)})`);
+  check('遊んでいるペットはエリアの中にいる', inArea,
+    `(${Number(gP2.petX).toFixed(2)}, ${Number(gP2.petZ).toFixed(2)}) / 中心 (${area.cx}, ${area.cz})`);
+  check('ペットは扉を通って外へ出る（壁を突き抜けない）', sawOutside && doorOk && everOutside,
+    `扉 x=${entX} / x=${Number(crossX).toFixed(2)}`);
+  // 遊んでいる間ずっとエリアの中にいるか
+  let stray = 0, hopMoved = false;
+  let lastZ = gP2.petZ, lastX = gP2.petX;
+  for (let i = 0; i < 40 && gP2.petState === 'play'; i++) {
+    tickPets(gB, 1);
+    if (gP2.petState !== 'play') break;
+    if (!petAreaContains(area, gP2.petX, gP2.petZ)) stray++;
+    if (Math.hypot(gP2.petX - lastX, gP2.petZ - lastZ) > 0.05) hopMoved = true;
+    lastX = gP2.petX; lastZ = gP2.petZ;
+  }
+  check('遊んでいる間ずっと柵の中', stray === 0, `はみ出し ${stray} 回`);
+  check('跳ね回る（位置が動く）', hopMoved, `最終 (${Number(gP2.petX).toFixed(2)}, ${Number(gP2.petZ).toFixed(2)})`);
+
+  /* ── 定員（同時に遊べるのは 3 匹まで）── */
+  const gC = createGame({ locationId: 'tokyo_shibuya', seed: 5 });
+  const crowd = [];
+  for (let i = 0; i < 5; i++) crowd.push(mkPetGroup(gC, 'g_pet_cap' + i));
+  let maxPlaying = 0, crowdStray = 0;
+  for (let i = 0; i < 900; i++) {
+    tickPets(gC, 1);
+    let playing = 0;
+    for (const g of crowd) {
+      if (g.petState !== 'play') continue;
+      playing++;
+      if (!petAreaContains(area, g.petX, g.petZ)) crowdStray++;
+    }
+    if (playing > maxPlaying) maxPlaying = playing;
+  }
+  check('同時に遊ぶのは 3 匹まで（定員）', maxPlaying <= 3 && maxPlaying >= 1, `最大 ${maxPlaying} 匹 / 定員 ${pets.PET_CAPACITY}`);
+  check('5 匹いても柵の外へは出ない', crowdStray === 0, `はみ出し ${crowdStray} 回`);
+  const sumC = petSummary(gC);
+  check('petSummary が數値を返す',
+    [sumC.playing, sumC.walking, sumC.mat].every(Number.isFinite) && sumC.capacity === 3 && !!sumC.area,
+    `遊 ${sumC.playing} / 移動 ${sumC.walking} / マット ${sumC.mat} / 定員 ${sumC.capacity}`);
+  const sumEmpty = petSummary(createGame({ locationId: 'tokyo_shibuya', seed: 3 }));
+  check('ペットがいなければ 0（軽い）', sumEmpty.pets === 0 && sumEmpty.playing === 0 && sumEmpty.mat === 0);
+
+  /* ── 座っていない狀態になったら戻る ── */
+  const gD = createGame({ locationId: 'tokyo_shibuya', seed: 606 });
+  const gP4 = mkPetGroup(gD, 'g_pet_back');
+  for (let i = 0; i < 400 && gP4.petState !== 'play'; i++) tickPets(gD, 1);
+  const wasPlaying = gP4.petState === 'play';
+  const outX = gP4.petX, outZ = gP4.petZ;
+  gP4.state = 'leaving';                       // 退店し始めた
+  tickPets(gD, 1);
+  check('座っていない狀態になったら戻り始める', wasPlaying && gP4.petState === 'back',
+    `play → ${gP4.petState}（${Number(outX).toFixed(2)}, ${Number(outZ).toFixed(2)} から）`);
+  let backSteps = 0;
+  for (let i = 0; i < 200 && gP4.petState !== 'mat'; i++) { tickPets(gD, 1); backSteps++; }
+  check('ペットは席（マット）まで戻る', gP4.petState === 'mat' && gP4.petX == null,
+    `${backSteps} 分で state=${gP4.petState}`);
+
+  /* ── 場面（3D）── */
+  check('場面にペットスペースが建っている', !!view.petAreaGroup, view.petAreaGroup ? view.petAreaGroup.name : '無');
+  let paMeshes = 0;
+  if (view.petAreaGroup) view.petAreaGroup.traverse((o) => { if (o.isMesh) paMeshes++; });
+  check('柵・芝生・看板・おもちゃが揃っている', paMeshes > 8, `${paMeshes} mesh`);
+  check('場面とシミュレーションの矩形が一致',
+    !!view.petArea && view.petArea.cx === area.cx && view.petArea.cz === area.cz && view.petArea.w === area.w,
+    view.petArea ? `(${view.petArea.cx}, ${view.petArea.cz}) ${view.petArea.w}×${view.petArea.d}` : '無');
+  check('遊んでいるペットのボールを持っている', !!view.petAreaBall, view.petAreaBall ? 'ok' : '無');
+
+  const gS = createGame({ locationId: 'tokyo_shibuya', seed: 515 });
+  const gP5 = mkPetGroup(gS, 'g_pet_scene');
+  gP5.petState = 'play';
+  gP5.petX = area.cx + 0.35;
+  gP5.petZ = area.cz - 0.2;
+  gP5.petDir = 1.2;
+  gP5.petTimer = 5;
+  const camP = new THREE.PerspectiveCamera(46, 1.6, 0.1, 400);
+  camP.position.set(18, 14, 18);
+  camP.lookAt(0, 1, 0);
+  camP.updateMatrixWorld(true);
+  view.update(0.016, gS, camP);
+  const recP = view.groupMeshes.get(gP5.id);
+  const petMesh = recP && recP.pets && recP.pets[0];
+  check('遊んでいるペットが場面に出る', !!petMesh && petMesh.visible === true,
+    recP ? `${recP.pets.length} 匹` : '無');
+  if (petMesh) {
+    check('ペットはエリアの中に置かれる', petAreaContains(view.petArea, petMesh.position.x, petMesh.position.z),
+      `(${petMesh.position.x.toFixed(2)}, ${petMesh.position.z.toFixed(2)})`);
+    check('ペットは歩道の高さにいる', Math.abs(petMesh.position.y - view.sidewalkY) <= 0.16,
+      `y=${petMesh.position.y.toFixed(3)} / 歩道 ${view.sidewalkY}`);
+    const ys = new Set();
+    for (let i = 0; i < 8; i++) { view.update(0.09, gS, camP); ys.add(petMesh.position.y.toFixed(3)); }
+    check('遊んでいると跳ねる（y が動く）', ys.size >= 3, `${ys.size} 通り`);
+    const ball = view.petAreaBall;
+    check('遊んでいる間はボールが出る', !!ball && ball.visible === true, ball ? `y=${ball.position.y.toFixed(2)}` : '無');
+    check('ボールはペットのそばを転がる',
+      !!ball && Math.hypot(ball.position.x - petMesh.position.x, ball.position.z - petMesh.position.z) < 1.5,
+      ball ? `${Math.hypot(ball.position.x - petMesh.position.x, ball.position.z - petMesh.position.z).toFixed(2)} m` : '無');
+    // 遊びが終わったらボールは引っ込む
+    gP5.petState = 'back';
+    view.update(0.016, gS, camP);
+    check('遊びが終わるとボールは隠れる', !!ball && ball.visible === false);
+    // 席へ戻ったらマットの位置に戻る（従來の動きを壊していない）
+    gP5.petState = 'mat';
+    gP5.petX = null;
+    gP5.petZ = null;
+    view.update(0.016, gS, camP);
+    check('マットに戻ると席のそばに表示される',
+      Math.abs(petMesh.position.z - gP5.members[0].z) < 1.6 && petMesh.position.y < 0.4,
+      `(${petMesh.position.x.toFixed(2)}, ${petMesh.position.y.toFixed(2)}, ${petMesh.position.z.toFixed(2)})`);
+  }
+
+  // 統合：sim/game.js の tick() から呼ばれているか（この確認だけは tickPets を直接呼ばない）
+  const gE = createGame({ locationId: 'tokyo_shibuya', seed: 4242 });
+  let wired = null, wiredMin = 0, petSeen = 0;
+  for (let i = 0; i < 1400 && !wired; i++) {
+    if (gE.phase === 'settle') startNextDay(gE);        // 日をまたいでも探し続ける
+    tick(gE, 1);
+    for (const g of gE.groups) {
+      if (!g.pet) continue;
+      petSeen++;
+      if (g.petState === 'toPlay' || g.petState === 'play') { wired = g.petState; wiredMin = i + 1; break; }
+    }
+  }
+  check('tick()（sim/game.js）からもペットが遊びに行く', !!wired,
+    wired ? `${wiredMin} 分後に ${wired}` : `ペット連れ ${petSeen} 組を見たが toPlay にならない（tick に tickPets が未配線？）`);
+}
+
 say('');
 stage('summary');
 say(fails === 0 ? '<span class="pass">SCENE TEST: ALL PASSED</span>' : `<span class="fail">SCENE TEST: ${fails} FAILED</span>`);

@@ -12,6 +12,7 @@ import { DISHES, dishById } from '../data/dishes.js';
 import { STAFF_POOL, staffById, candidatesFor, ROLE_LABEL } from '../data/staff.js';
 import { initEvents, tickEvents, recomputeMults, activeEventInfo, forceEvent } from './events.js';
 import { initMissions, tickMissions } from './missions.js';
+import { tickPets } from './pets.js';
 
 /* ---------------------------------------------------------------- 常數 */
 
@@ -64,7 +65,11 @@ export const CUSTOMER_KINDS = {
   nightworker:{ jp: '夜勤明け',    zh: '夜班下班', party: [1, 2], spend: 1.05, patience: 0.95, base: 3, hours: { 11: 2.0, 12: 1.6, 21: 1.4, 22: 1.8 } },
   petlover:   { jp: 'ペット連れ',  zh: '寵物客',   party: [2, 3], spend: 1.15, patience: 1.2,  base: 4, pet: true, hours: { 11: 1.6, 12: 1.6, 13: 1.4, 14: 1.4, 15: 1.2, 16: 1.2 } },
   // スプライトシート（6 コマ歩行）で描かれる特別な常連。一人で來て、甘い物とコーヒーを好む。
-  cherish:    { jp: 'Cherish',     zh: 'Cherish',   party: [1, 1], spend: 1.5,  patience: 1.4,  base: 3, fame: 1.5, sheet: 'cherish', hours: { 11: 1.4, 12: 1.6, 13: 1.6, 14: 1.8, 15: 1.8, 16: 1.4, 17: 1.2, 18: 1.4, 19: 1.6, 20: 1.4 } }
+  cherish:    { jp: 'Cherish',     zh: 'Cherish',   party: [1, 1], spend: 1.5,  patience: 1.4,  base: 3, fame: 1.5, sheet: 'cherish', hours: { 11: 1.4, 12: 1.6, 13: 1.6, 14: 1.8, 15: 1.8, 16: 1.4, 17: 1.2, 18: 1.4, 19: 1.6, 20: 1.4 } },
+  // ── 有名人・テレビ局（人氣が高い店にだけ來る。満足すれば大きく宣傳、怒らせれば大打擊）──
+  actor:      { jp: '俳優',        zh: '演員',     party: [2, 3], spend: 1.8, patience: 1.3,  base: 2, famous: true, fame: 2.2, hours: { 12: 1.4, 13: 1.4, 18: 1.8, 19: 2.0, 20: 1.8, 21: 1.2 } },
+  celebrity:  { jp: '人氣タレント', zh: '知名藝人', party: [2, 4], spend: 2.0, patience: 1.2,  base: 2, famous: true, fame: 2.0, hours: { 12: 1.6, 13: 1.4, 18: 1.6, 19: 2.0, 20: 1.8 } },
+  tvcrew:     { jp: 'テレビ取材クルー', zh: '電視採訪組', party: [3, 5], spend: 1.6, patience: 1.35, base: 2, famous: true, fame: 1.8, hours: { 11: 1.6, 12: 1.8, 13: 1.6, 14: 1.4, 15: 1.2 } }
 };
 export const KIND_IDS = Object.keys(CUSTOMER_KINDS);
 const KIND_JP = Object.fromEntries(Object.entries(CUSTOMER_KINDS).map(([k, v]) => [k, v.jp]));
@@ -142,6 +147,8 @@ export function setFloorCount(state, n) {
   state.settings.floorCount = target;
   // 重建平面
   state.plan = buildFloorPlan(state.seed + state.day, { floorCount: target });
+  state.restrooms = {};                 // 新しいフロアも含めて洗手間を作り直す
+  syncRestroomAggregate(state);
   // 同步桌子狀態
   for (const s of state.staff) { s.taskId = null; s.carry = 0; }
   return { ok: true, floorCount: target, cost };
@@ -184,6 +191,7 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
   const W = 13.2, D = 9.6;
   const FLOOR_HEIGHT = 3.4;
   const stairX = -5.6, stairZ = 1.4;   // 樓梯位置（所有樓層相同 XY）
+  const RW_X = -5.9, RW_Z = -4.15;     // 洗手間群（所有樓層相同位置・男性/女性で左右）
 
   /** 產生單一樓層的桌子 */
   function buildFloorTables(floorIdx, rng2) {
@@ -242,6 +250,11 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
     floorPlans.push({
       tables,
       stair: { x: stairX, z: stairZ },
+      // 各樓層に「男性用／女性用」の洗手間を必ず用意する（北西の角）
+      restrooms: {
+        m: { x: RW_X - 0.9, z: RW_Z, jp: 'お手洗い（男性）', zh: '男廁' },
+        f: { x: RW_X + 0.9, z: RW_Z, jp: 'お手洗い（女性）', zh: '女廁' }
+      },
       // 各樓層的地板高度（繪圖用）
       yOffset: f * FLOOR_HEIGHT
     });
@@ -260,7 +273,10 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
     kitchen: { x: 3.6, z: -4.0, w: 5.6, d: 1.9 },
     stove: { x: 3.4, z: -3.55 },
     pass: { x: 1.9, z: -3.0 },
-    restroom: { x: -6.0, z: -4.1 },
+    // 舊版相容：1F 的洗手間（＝男性用）だけを指す
+    restroom: { x: RW_X - 0.9, z: RW_Z },
+    // 各樓層に男性用・女性用の洗手間がある（floorPlans[f].restrooms が正）
+    restrooms: floorPlans.map((fp) => fp.restrooms),
     entrance: { x: 1.2, z: D / 2 - 0.1 },
     outside: { x: 1.2, z: D / 2 + 1.7 },
     // 街道（人行道兩端）：客人從這裡走過來，吃飽也從這裡走回去
@@ -439,6 +455,76 @@ export function setRoleUniform(state, role, uniformId) {
   if (!list.length) return { ok: false, error: role === 'chef' ? '料理人がいません' : 'ホールがいません' };
   for (const s of list) s.uniformId = uniformId;
   return { ok: true, role, uniformId, count: list.length };
+}
+
+/* ---------------------------------------------------- 星級の條件とヒント */
+
+/**
+ * 星級ごとの昇格條件。settleDay で満たしていれば自動で昇格する。
+ *   guests: 累計來客 / fame: 人氣 / days: 営業日數 / missions: 依頼の達成數 / floors: 必要階數
+ */
+export const STAR_REQS = [
+  null,
+  null,
+  { stars: 2, guests: 120, fame: 35, days: 3, missions: 0, floors: 1 },
+  { stars: 3, guests: 400, fame: 55, days: 7, missions: 3, floors: 1 },
+  { stars: 4, guests: 900, fame: 72, days: 14, missions: 6, floors: 2 },
+  { stars: 5, guests: 1800, fame: 90, days: 24, missions: 10, floors: 3 }
+];
+
+export const STAR_LABEL = {
+  guests: '累計來客', fame: '評價（人氣）', days: '營業日數', missions: '依頼の達成', floors: '階數'
+};
+
+/** 人氣を上げるための實戰ヒント（HUD の「⭐ 目標」に出す） */
+export const FAME_TIPS = [
+  '來客を増やす：名物をメニューに入れる／立地の客層に合った品書きにする／營業時間を延ばす',
+  '怒らせない：ホールと料理人を増やして「帶位・配膳・お会計」が滯らないようにする',
+  '清潔を保つ：洗手間が汚れると客の機嫌が下がる（トイレ清掃タスクを消化させる）',
+  '設備を整える：空調・冷蔵庫・コンロが故障すると料理と評價が落ちる（故障は即修理）',
+  '接客の質：腕前の高い従業員を雇い、疲労が溜まったらシフトを考え直す',
+  'イベントを活かす：テレビ取材・SNS・祭りなどの好材料は逃さない（壞材料は設備で半減）'
+];
+
+/** 現在の星級・次の條件・進捗・ヒントをまとめて返す（HUD 用） */
+export function starReport(state) {
+  const stars = Math.max(1, Math.min(5, state.stars || 1));
+  const req = STAR_REQS[Math.min(5, stars + 1)] || null;
+  const missionsDone = state.missions ? Object.keys(state.missions.claimed || {}).length : 0;
+  const cur = {
+    guests: state.servedTotal || 0,
+    fame: Math.round((state.fame || 0) * 10) / 10,
+    days: state.day || 1,
+    missions: missionsDone,
+    floors: state.plan?.floorCount || 1
+  };
+  const list = req ? Object.keys(STAR_LABEL).map((k) => ({
+    key: k,
+    label: STAR_LABEL[k],
+    cur: cur[k],
+    target: req[k] || 0,
+    ok: (cur[k] || 0) >= (req[k] || 0)
+  })) : [];
+  return {
+    stars,
+    max: 5,
+    next: stars < 5 ? stars + 1 : null,
+    req,
+    list,
+    cur,
+    tips: FAME_TIPS,
+    ready: !!req && list.every((r) => r.ok)
+  };
+}
+
+/** 昇格條件を満たしているか（settleDay から呼ぶ）。昇格したら新しい星を返す */
+export function checkStarUp(state) {
+  const r = starReport(state);
+  if (!r.next || !r.ready) return null;
+  state.stars = r.next;
+  state.fame = Math.min(100, (state.fame || 0) + 4);   // 昇格ボーナス
+  emit(state, 'starup', { stars: state.stars });
+  return state.stars;
 }
 
 /* ---------------------------------------------------- 店の混み具合（看板用） */
@@ -995,6 +1081,7 @@ export function tick(state, dtMin) {
 
   for (const g of state.groups) updateGroup(state, g, dtMin);
   updateStaff(state, dtMin);
+  tickPets(state, dtMin);       // ペットスペース：連れられたペットが遊びに行く
   cleanupTasks(state);
   updateDirt(state, dtMin);
 
@@ -1017,13 +1104,76 @@ export function tick(state, dtMin) {
   if (state.phase === 'closing' && !state.groups.length) state.phase = 'settle';
 }
 
+/**
+ * 各樓層・男女別の洗手間の汚れ（0..100）。
+ * state.restrooms は "樓層:性別" をキーにした單なる數值マップ（存檔そのまま）。
+ * 舊版との互換のため state.restroom.dirt には「一番汚い部屋」を入れておく。
+ */
+export function restroomKey(floor, which) { return `${floor}:${which}`; }
+
+export function restroomDirt(state, floor, which) {
+  if (!state.restrooms || typeof state.restrooms !== 'object') state.restrooms = {};
+  const k = restroomKey(floor, which);
+  if (typeof state.restrooms[k] !== 'number') state.restrooms[k] = 0;
+  return state.restrooms[k];
+}
+
+export function setRestroomDirt(state, floor, which, v) {
+  if (!state.restrooms || typeof state.restrooms !== 'object') state.restrooms = {};
+  state.restrooms[restroomKey(floor, which)] = Math.max(0, Math.min(100, v));
+  syncRestroomAggregate(state);
+  return state.restrooms[restroomKey(floor, which)];
+}
+
+function syncRestroomAggregate(state) {
+  let worst = 0;
+  for (const v of Object.values(state.restrooms || {})) if (v > worst) worst = v;
+  state.restroom = state.restroom || { dirt: 0 };
+  state.restroom.dirt = worst;
+  return worst;
+}
+
+/** 全洗手間（樓層×男女）の一覧。HUD・看板・テスト用 */
+export function restroomList(state) {
+  const out = [];
+  const floors = state.plan?.floorPlans || [];
+  for (let f = 0; f < floors.length; f++) {
+    const rw = floors[f].restrooms || {};
+    for (const which of ['m', 'f']) {
+      const spot = rw[which];
+      if (!spot) continue;
+      out.push({
+        floor: f, which, jp: spot.jp, zh: spot.zh, x: spot.x, z: spot.z,
+        dirt: Math.round(restroomDirt(state, f, which))
+      });
+    }
+  }
+  return out;
+}
+
 function updateDirt(state, dtMin) {
   const guests = state.groups.reduce((a, g) => a + g.size, 0);
-  state.restroom.dirt = Math.min(100, state.restroom.dirt + RESTROOM_DIRT_PER_MIN * dtMin * (1 + guests * 0.06));
-  if (state.restroom.dirt > 72 && !hasTask(state, 'cleanRestroom', () => true)) {
-    addTask(state, 'cleanRestroom', { tx: state.plan.restroom.x, tz: state.plan.restroom.z });
+  const floors = state.plan?.floorPlans || [];
+  // 來客が多いほど汚れる。1F は出入口があるので少しだけ早い
+  const rate = RESTROOM_DIRT_PER_MIN * 0.6 * (1 + guests * 0.06);
+  for (let f = 0; f < floors.length; f++) {
+    for (const which of ['m', 'f']) {
+      if (!floors[f].restrooms || !floors[f].restrooms[which]) continue;
+      const add = rate * (f === 0 ? 1 : 0.7);
+      setRestroomDirt(state, f, which, restroomDirt(state, f, which) + add * dtMin);
+    }
   }
-  if (state.restroom.dirt > 60) {
+  // 72 を超えた部屋ごとに「トイレ清掃」タスクを立てる（同時に立てすぎない）
+  const dirty = restroomList(state).filter((r) => r.dirt > 72);
+  if (dirty.length && state.tasks.filter((t) => t.type === 'cleanRestroom').length < 2) {
+    const worst = dirty.sort((a, b) => b.dirt - a.dirt)[0];
+    addTask(state, 'cleanRestroom', {
+      tx: worst.x, tz: worst.z, floor: worst.floor, which: worst.which,
+      jp: `${worst.jp}`
+    });
+  }
+  // どこかが汚いと客の機嫌が下がる
+  if ((state.restroom?.dirt || 0) > 60) {
     for (const g of state.groups) g.mood = Math.max(-3, g.mood - dtMin * 0.02);
   }
 }
@@ -1043,6 +1193,20 @@ function moveToward(w, tx, tz, dtMin, speed) {
 
 function tableOf(state, g) {
   return allTables(state.plan).find((t) => t.id === g.tableId) || null;
+}
+
+/**
+ * 客が怒って帰るときの共通處理。
+ * 有名人・テレビ取材クルーを怒らせた場合は、噂になって評價が大きく落ちる。
+ */
+function emitAngry(state, g, reason) {
+  emit(state, 'angry', { size: g.size, kind: g.kind, reason });
+  const def = CUSTOMER_KINDS[g.kind] || {};
+  if (def.famous) {
+    const hit = 4 * (1 + Math.min(1.0, (state.fame || 0) / 70));
+    state.fame = Math.max(0, (state.fame || 0) - hit);
+    emit(state, 'famousAngry', { kind: g.kind, jp: def.jp, zh: def.zh, reason });
+  }
 }
 
 function updateGroup(state, g, dtMin) {
@@ -1088,7 +1252,7 @@ function updateGroup(state, g, dtMin) {
       if (!state.queue.includes(g.id)) state.queue.push(g.id);
       state.today.maxQueue = Math.max(state.today.maxQueue, state.queue.length);
       if (g.wait > g.patience) {
-        emit(state, 'angry', { size: g.size, kind: g.kind, reason: 'queue' });
+        emitAngry(state, g, 'queue');
         state.today.angry += g.size;
         state.today.walkouts += 1;
         state.angryTotal += g.size;
@@ -1106,7 +1270,7 @@ function updateGroup(state, g, dtMin) {
       syncMembers(g, 'wait', dtMin);
       if (g.escorted) { g.state = 'toSeat'; g.t = 0; break; }
       if (g.wait > g.patience * 0.75) {
-        emit(state, 'angry', { size: g.size, kind: g.kind, reason: 'noWaiter' });
+        emitAngry(state, g, 'noWaiter');
         state.today.angry += g.size;
         state.angryTotal += g.size;
         releaseTable(state, g);
@@ -1369,8 +1533,15 @@ function settlePayment(state, g, rev, quality = 1) {
     }
   }
   // 客層ごとの「噂の広がり」：同業の料理人や SNS 投稿客は満足すると評價が大きく動く
-  const fameMul = CUSTOMER_KINDS[g.kind]?.fame ?? 1;
+  const kdef = CUSTOMER_KINDS[g.kind] || {};
+  const fameMul = kdef.fame ?? 1;
   state.fame = Math.min(100, state.fame + 0.05 * g.size * quality * fameMul);
+  // 有名人・テレビ取材：満足すれば一気に宣傳される（怒らせたときは angryAt 側で大打擊）
+  if (kdef.famous) {
+    const boost = 3.2 * (1 + Math.min(1.2, (state.fame || 0) / 60));
+    state.fame = Math.min(100, state.fame + boost * quality);
+    emit(state, 'famous', { kind: g.kind, jp: kdef.jp, zh: kdef.zh, size: g.size });
+  }
 }
 
 /**
@@ -1522,8 +1693,11 @@ function completeTask(state, s, task) {
       break;
     }
     case 'cleanRestroom': {
-      state.restroom.dirt = 0;
-      emit(state, 'clean', { what: 'restroom' });
+      // タスクが指している部屋（樓層×男女）だけをきれいにする
+      const f = Number.isFinite(task.floor) ? task.floor : 0;
+      const which = task.which === 'f' ? 'f' : 'm';
+      setRestroomDirt(state, f, which, 0);
+      emit(state, 'clean', { what: 'restroom', floor: f, which });
       stat({ cleaned: 1 });
       bumpLedger(state, 'meta', 'cleanRestroom', { count: 1 });
       break;
@@ -1553,11 +1727,13 @@ function cleanupTasks(state) {
       state.tasks.splice(i, 1);
     }
   }
-  if (state.restroom.dirt <= 5) {
-    for (let i = state.tasks.length - 1; i >= 0; i--) {
-      const t = state.tasks[i];
-      if (t.type === 'cleanRestroom' && !t.claimedBy && !t.started) state.tasks.splice(i, 1);
-    }
+  // 担当している部屋がもうきれいなら、未着手の清掃タスクは取り下げる
+  for (let i = state.tasks.length - 1; i >= 0; i--) {
+    const t = state.tasks[i];
+    if (t.type !== 'cleanRestroom' || t.claimedBy || t.started) continue;
+    const f = Number.isFinite(t.floor) ? t.floor : 0;
+    const which = t.which === 'f' ? 'f' : 'm';
+    if (restroomDirt(state, f, which) <= 5) state.tasks.splice(i, 1);
   }
 }
 
@@ -1600,6 +1776,10 @@ export function settleDay(state) {
   };
   state.history.push(report);
 
+  // 星級の昇格判定（條件を満たしていれば自動で上がる）
+  report.starUp = checkStarUp(state) || null;
+  report.stars = state.stars;
+
   // 累計帳：各地點的成績（全地點排行 + 店史紀錄用）
   const L = ensureLedger(state);
   const rec = L.locations[loc.id] || (L.locations[loc.id] = {
@@ -1625,7 +1805,9 @@ export function startNextDay(state) {
   state.weather = rollWeather(state);
   state.tasks.length = 0;
   state.pass.length = 0;
-  state.restroom.dirt = 0;
+  // 各樓層×男女の洗手間を新品に戻す
+  state.restrooms = {};
+  syncRestroomAggregate(state);
   state.equipBroken = { fridge: false, ac_unit: false, stove: false };
   allTables(state.plan).forEach((t) => { t.occupied = false; t.groupId = null; t.dirty = 0; t.kind = 'free'; });
   state.groups.length = 0;
@@ -1646,7 +1828,9 @@ export function moveToLocation(state, id) {
   state.plan = buildFloorPlan(state.seed + state.day, {});
   state.tasks.length = 0;
   state.pass.length = 0;
-  state.restroom.dirt = 0;
+  // 各樓層×男女の洗手間を新品に戻す
+  state.restrooms = {};
+  syncRestroomAggregate(state);
   layoutStaffHome(state);
   state.weather = rollWeather(state, loc);
   initEvents(state);

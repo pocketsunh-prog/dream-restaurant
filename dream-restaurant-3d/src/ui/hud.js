@@ -8,7 +8,7 @@ import {
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, STAFF_LIMIT,
   EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
   activeEventInfo, TASK_KINDS, allTables, FLOOR_COST,
-  topMenuReport, kitchenReport, rankings, crowdInfo, setRoleUniform
+  topMenuReport, kitchenReport, rankings, crowdInfo, setRoleUniform, starReport
 } from '../sim/game.js';
 import { listSlots, deleteSlot, savedAtText, storageAvailable } from '../sim/save.js';
 import { uniformsForRole, uniformById, UNIFORMS } from '../data/uniforms.js';
@@ -433,6 +433,28 @@ export class Hud {
       <div class="rb-sub">受取済み <b>${R.claimedCount}</b> 件　解放ティア <b>${R.unlockedTier} / 5</b>（達成 3 件ごとに次のティアが開きます）
         ${R.titles.length ? `<br>称号：${R.titles.map((t) => `<b>${esc(t)}</b>`).join('・')}` : ''}</div>
     </div>`;
+
+    // ⓪ 星級の條件とヒント（依頼と同じ「目標」なのでここに出す）
+    const SR = starReport(st);
+    html += `<div class="section-title">⭐ 星級：${'★'.repeat(SR.stars)}${'☆'.repeat(SR.max - SR.stars)}　${SR.next ? `次の ★${SR.next} の條件` : '最高星に到達'}</div>`;
+    if (SR.next) {
+      html += `<div class="card"><div class="card-head"><b>★${SR.next} への條件</b><span class="role">${SR.ready ? '達成（打烊時に昇格）' : '進行中'}</span></div>`;
+      for (const r of SR.list) {
+        const pct = Math.max(0, Math.min(100, Math.round((r.cur / Math.max(1, r.target)) * 100)));
+        html += `<div class="report-row${r.ok ? ' me' : ''}">
+          <span class="r-rank">${r.ok ? '✅' : '▢'}</span>
+          <span class="r-name"><b>${esc(r.label)}</b></span>
+          <span class="r-num">${r.cur.toLocaleString('en-US')}</span>
+          <span class="r-bar"><b style="width:${pct}%"></b></span>
+          <span class="r-rev">${r.target.toLocaleString('en-US')}</span>
+        </div>`;
+      }
+      html += `<div class="card-desc">条件を満たした狀態で<b>打烊結算</b>すると ★${SR.next} に上がります（昇格時に人氣 +4）。</div></div>`;
+    } else {
+      html += `<div class="card"><div class="card-desc">最高星（★5）です。ここからは依頼の達成と週の利益で店を磨きましょう。</div></div>`;
+    }
+    html += `<div class="section-title">人氣を上げるヒント</div><div class="card"><div class="card-desc">`
+      + SR.tips.map((t) => `・${esc(t)}`).join('<br>') + `</div></div>`;
 
     // ① 受取可能
     html += `<div class="section-title">受取できます（${R.claimable.length}）</div>`;
