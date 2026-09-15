@@ -1105,6 +1105,71 @@ export function tick(state, dtMin) {
 }
 
 /**
+ * 洗手間のグレード（改修）。グレードが高いほど汚れにくく、客の満足度が上がる。
+ *   level 0 = 和式（初期狀態）→ 洋式 → ウォシュレット → 暖房便座＋自動清掃
+ */
+export const RESTROOM_LEVELS = [
+  { level: 0, jp: '和式', zh: '和式', cost: 0, dirtMul: 1.0, fame: 0, mood: 0 },
+  { level: 1, jp: '洋式', zh: '西式', cost: 120000, dirtMul: 0.7, fame: 0.02, mood: 0.4 },
+  { level: 2, jp: 'ウォシュレット', zh: '免治馬桶', cost: 380000, dirtMul: 0.5, fame: 0.05, mood: 1.0 },
+  { level: 3, jp: '暖房便座＋自動清掃', zh: '暖座＋自動清掃', cost: 900000, dirtMul: 0.28, fame: 0.09, mood: 1.8 }
+];
+export const RESTROOM_MAX_LEVEL = RESTROOM_LEVELS.length - 1;
+
+/** その部屋の改装レベル（未改修は 0） */
+export function restroomLevel(state, floor, which) {
+  const map = state.restroomLv && typeof state.restroomLv === 'object' ? state.restroomLv : {};
+  const v = map[restroomKey(floor, which)];
+  return Number.isFinite(v) ? Math.max(0, Math.min(RESTROOM_MAX_LEVEL, v)) : 0;
+}
+
+export function restroomLevelInfo(level) {
+  return RESTROOM_LEVELS[Math.max(0, Math.min(RESTROOM_MAX_LEVEL, level | 0))];
+}
+
+/** 全洗手間の平均グレード（0..3）。客の評価ボーナスに使う */
+export function avgRestroomLevel(state) {
+  const list = restroomList(state);
+  if (!list.length) return 0;
+  return list.reduce((a, r) => a + r.level, 0) / list.length;
+}
+
+/**
+ * 洗手間を 1 段階改修する。
+ * @param {number} floor 樓層 / @param {'m'|'f'} which 男性用・女性用
+ * @returns {{ok:boolean, cost?:number, level?:number, jp?:string, error?:string}}
+ */
+export function renovateRestroom(state, floor, which, discount = 1) {
+  const floors = state.plan && state.plan.floorPlans ? state.plan.floorPlans : [];
+  const fp = floors[floor];
+  if (!fp || !fp.restrooms || !fp.restrooms[which]) return { ok: false, error: 'その洗手間はありません' };
+  const cur = restroomLevel(state, floor, which);
+  if (cur >= RESTROOM_MAX_LEVEL) return { ok: false, error: 'これ以上は改装できません' };
+  const next = restroomLevelInfo(cur + 1);
+  const cost = Math.round(next.cost * discount);
+  if ((state.cash || 0) < cost) return { ok: false, error: `資金不足（${money(cost)} 必要）` };
+  state.cash -= cost;
+  state.restroomLv = state.restroomLv || {};
+  state.restroomLv[restroomKey(floor, which)] = cur + 1;
+  // 改修した部屋はきれいな狀態から始まる
+  setRestroomDirt(state, floor, which, 0);
+  emit(state, 'renovate', { floor, which, level: cur + 1, jp: next.jp, cost });
+  return { ok: true, cost, level: cur + 1, jp: next.jp, zh: next.zh };
+}
+
+/** その樓層の男性用・女性用をまとめて改修（10% 割引） */
+export function renovateFloorRestrooms(state, floor) {
+  const done = [];
+  for (const which of ['m', 'f']) {
+    const r = renovateRestroom(state, floor, which, 0.9);
+    if (r.ok) done.push({ which, ...r });
+  }
+  if (!done.length) return { ok: false, error: '改修できる洗手間がありません（資金不足か最大グレード）' };
+  const cost = done.reduce((a, d) => a + d.cost, 0);
+  return { ok: true, cost, rooms: done, level: done[0].level };
+}
+
+/**
  * 各樓層・男女別の洗手間の汚れ（0..100）。
  * state.restrooms は "樓層:性別" をキーにした單なる數值マップ（存檔そのまま）。
  * 舊版との互換のため state.restroom.dirt には「一番汚い部屋」を入れておく。
@@ -1144,7 +1209,9 @@ export function restroomList(state) {
       if (!spot) continue;
       out.push({
         floor: f, which, jp: spot.jp, zh: spot.zh, x: spot.x, z: spot.z,
-        dirt: Math.round(restroomDirt(state, f, which))
+        dirt: Math.round(restroomDirt(state, f, which)),
+        level: restroomLevel(state, f, which),
+        levelJp: restroomLevelInfo(restroomLevel(state, f, which)).jp
       });
     }
   }
@@ -1159,7 +1226,8 @@ function updateDirt(state, dtMin) {
   for (let f = 0; f < floors.length; f++) {
     for (const which of ['m', 'f']) {
       if (!floors[f].restrooms || !floors[f].restrooms[which]) continue;
-      const add = rate * (f === 0 ? 1 : 0.7);
+      const lvMul = restroomLevelInfo(restroomLevel(state, f, which)).dirtMul;
+      const add = rate * (f === 0 ? 1 : 0.7) * lvMul;
       setRestroomDirt(state, f, which, restroomDirt(state, f, which) + add * dtMin);
     }
   }
@@ -1532,6 +1600,9 @@ function settlePayment(state, g, rev, quality = 1) {
       addTask(state, 'cleanTable', { tableId: table.id, tx: table.x, tz: table.z, floor: table.floor || 0 });
     }
   }
+  // 洗手間がきれい・上等だと評價が少し上がる
+  const lvAvg = avgRestroomLevel(state);
+  if (lvAvg > 0) state.fame = Math.min(100, state.fame + lvAvg * 0.12 * quality);
   // 客層ごとの「噂の広がり」：同業の料理人や SNS 投稿客は満足すると評價が大きく動く
   const kdef = CUSTOMER_KINDS[g.kind] || {};
   const fameMul = kdef.fame ?? 1;
@@ -1826,6 +1897,7 @@ export function moveToLocation(state, id) {
   state.cash -= loc.moveCost;
   state.locationId = loc.id;
   state.plan = buildFloorPlan(state.seed + state.day, {});
+  state.restroomLv = {};
   state.tasks.length = 0;
   state.pass.length = 0;
   // 各樓層×男女の洗手間を新品に戻す

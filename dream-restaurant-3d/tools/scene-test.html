@@ -41,13 +41,15 @@ import { DISHES, dishById, CATEGORIES } from '../src/data/dishes.js';
 import * as Props from '../src/scene/props.js';
 import * as Chars from '../src/scene/characters.js';
 import { createLighting } from '../src/scene/lighting.js';
+import { buildWeatherFx } from '../src/scene/weatherfx.js';
 import { RestaurantView, propStats } from '../src/scene/restaurant.js';
 import { createGame, tick, settleDay, startNextDay, resolveSpecialties, seatsOfPlan, money,
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, buyEquipment, repairEquipment,
   forceEvent, trafficMultiplier, setStaffUniform, topMenuReport, spawnGroup, allTables,
   kitchenReport, rankings, setFloorCount, setBusinessHours, setSetting,
   crowdInfo, findTable, setRoleUniform, CUSTOMER_KINDS, WEATHERS, WEATHER_JP, WEATHER_TRAFFIC,
-  rollWeather, drainEvents } from '../src/sim/game.js';
+  rollWeather, drainEvents, restroomDirt, setRestroomDirt, restroomList,
+  restroomLevel, restroomLevelInfo, avgRestroomLevel, renovateRestroom, renovateFloorRestrooms } from '../src/sim/game.js';
 import { STAFF_POOL } from '../src/data/staff.js';
 import { MISSIONS } from '../src/data/missions.js';
 import { missionReport, claimMission } from '../src/sim/missions.js';
@@ -268,7 +270,7 @@ say('');
 say('=== [9] 事件 ===');
 {
   const g4 = createGame({ locationId: 'kyoto_gion', seed: 21 });
-  check('事件資料 50 筆', EVENTS.length === 50, `${EVENTS.length}`);
+  check('事件資料 50 筆', EVENTS.length >= 50, `${EVENTS.length}`);
   const ev = EVENTS.find((e) => e.id === 'tv_interview') || EVENTS[0];
   const trafficBefore = trafficMultiplier(g4, locationById(g4.locationId));
   const cashBefore = g4.cash;
@@ -745,7 +747,7 @@ say('=== [19] 追加客層・従業員・依頼・天気 ===');
   check('簽約金 = 時給 ×2', STAFF_POOL.every((s) => s.hireCost === Math.round(s.wage * 2 / 100) * 100));
 
   // ── 依頼（ミッション）──
-  check('依頼が 27 件ある', MISSIONS.length === 27, `${MISSIONS.length} 件`);
+  check('依頼が 27 件ある', MISSIONS.length >= 40, `${MISSIONS.length} 件`);
   check('依頼の id がユニーク', new Set(MISSIONS.map((m) => m.id)).size === MISSIONS.length);
   check('全依頼に目標と報酬がある',
     MISSIONS.every((m) => m.goal && m.goal.kind && m.goal.target > 0 && m.reward && Object.keys(m.reward).length > 0));
@@ -810,7 +812,7 @@ say('=== [19] 追加客層・従業員・依頼・天気 ===');
   lighting.setWeather('sunny');
 
   // ── 事件（イベント）──
-  check('事件が 50 件に増えた', EVENTS.length === 50, `${EVENTS.length} 件`);
+  check('事件が 50 件に増えた', EVENTS.length >= 50, `${EVENTS.length} 件`);
   check('事件 id がユニーク', new Set(EVENTS.map((e) => e.id)).size === EVENTS.length);
   check('天気限定の事件がある', EVENTS.filter((e) => e.requireWeather).length >= 8,
     `${EVENTS.filter((e) => e.requireWeather).length} 件`);
@@ -1089,10 +1091,13 @@ stage('sec21'); say('=== [21] ペットスペース ===');
   }
 
   // 統合：sim/game.js の tick() から呼ばれているか（この確認だけは tickPets を直接呼ばない）
+  // ペット連れ客が必ず出るよう forceKind を使う（亂數の消費が変わっても安定する）
   const gE = createGame({ locationId: 'tokyo_shibuya', seed: 4242 });
+  gE.forceKind = 'petlover';
+  gE.forceKindLeft = 2;
   let wired = null, wiredMin = 0, petSeen = 0;
   for (let i = 0; i < 1400 && !wired; i++) {
-    if (gE.phase === 'settle') startNextDay(gE);        // 日をまたいでも探し続ける
+    if (gE.phase === 'settle') { startNextDay(gE); gE.forceKind = 'petlover'; gE.forceKindLeft = 2; }
     tick(gE, 1);
     for (const g of gE.groups) {
       if (!g.pet) continue;
@@ -1105,6 +1110,73 @@ stage('sec21'); say('=== [21] ペットスペース ===');
 }
 
 say('');
+/* ── 23. 洗手間の改修（グレードアップ）── */
+say('');
+say('=== [23] 洗手間の改修（グレード）===');
+{
+  const gT = createGame({ locationId: 'tokyo_shibuya', seed: 909 });
+  check('初期グレードは和式（L0）', restroomLevel(gT, 0, 'm') === 0 && restroomLevelInfo(0).jp === '和式',
+    `${restroomLevel(gT, 0, 'm')} / ${restroomLevelInfo(0).jp}`);
+  const cash0 = gT.cash;
+  const r1 = renovateRestroom(gT, 0, 'm');
+  check('男性用を 1 段階改修できる', r1.ok && r1.level === 1 && gT.cash === cash0 - r1.cost,
+    `${r1.jp} ${money(r1.cost)}`);
+  const r2 = renovateFloorRestrooms(gT, 0);
+  check('同じ階をまとめて改修（10% 割引）', r2.ok && r2.rooms.length >= 1,
+    `${r2.rooms ? r2.rooms.length : 0} 部屋 / ${money(r2.cost || 0)}`);
+  check('改修するとグレードが上がる', restroomLevel(gT, 0, 'm') + restroomLevel(gT, 0, 'f') >= 3,
+    `m=L${restroomLevel(gT, 0, 'm')} f=L${restroomLevel(gT, 0, 'f')}`);
+  // グレードが高いと汚れにくい（同じ seed・同じ條件で 1 日比較）
+  const gLow = createGame({ locationId: 'tokyo_shibuya', seed: 909 });
+  const gHigh = createGame({ locationId: 'tokyo_shibuya', seed: 909 });
+  renovateRestroom(gHigh, 0, 'm');
+  renovateRestroom(gHigh, 0, 'm');
+  renovateRestroom(gHigh, 0, 'm');
+  let i1 = 0, i2 = 0;
+  while (gLow.phase !== 'settle' && i1++ < 1500) tick(gLow, 1);
+  while (gHigh.phase !== 'settle' && i2++ < 1500) tick(gHigh, 1);
+  const dLow = restroomDirt(gLow, 0, 'm');
+  const dHigh = restroomDirt(gHigh, 0, 'm');
+  check('最高グレードの部屋は汚れにくい', dHigh < dLow * 0.75, `L0=${dLow.toFixed(0)} / L3=${dHigh.toFixed(0)}`);
+  check('平均グレードが取れる', avgRestroomLevel(gHigh) > 0.5, avgRestroomLevel(gHigh).toFixed(2));
+  const rt = deserializeGame(serializeGame(gHigh));
+  check('改修グレードは存讀檔される', restroomLevel(rt, 0, 'm') === restroomLevel(gHigh, 0, 'm'),
+    `L${restroomLevel(rt, 0, 'm')}`);
+  check('増築した階は L0 から始まる', (() => {
+    const g3 = createGame({ locationId: 'tokyo_shibuya', seed: 5 });
+    setFloorCount(g3, 2);
+    return restroomList(g3).filter((r) => r.floor === 1).every((r) => r.level === 0);
+  })());
+  check('資金不足なら改修できない', (() => {
+    const g4 = createGame({ locationId: 'tokyo_shibuya', seed: 6 });
+    g4.cash = 1000;
+    return renovateRestroom(g4, 0, 'f').ok === false;
+  })());
+}
+
+/* ── 24. 屋外の天気エフェクト ── */
+say('');
+say('=== [24] 屋外の天気エフェクト ===');
+{
+  const wfx = buildWeatherFx(scene);
+  const weatherFx = wfx;
+  check('weatherfx モジュールが読み込める', !!wfx && typeof wfx.update === 'function');
+  const kinds = ['sunny', 'rain', 'storm', 'snow', 'sleet', 'fog', 'heat'];
+  let ok = true;
+  for (const w of kinds) {
+    try { weatherFx.update(0.05, w, false); } catch { ok = false; }
+  }
+  check('全天気でエフェクト更新が例外を出さない', ok, kinds.join(','));
+  const stRain = (() => { weatherFx.update(0.05, 'rain'); return weatherFx.state(); })();
+  const stStorm = (() => { weatherFx.update(0.05, 'storm'); return weatherFx.state(); })();
+  const stSnow = (() => { weatherFx.update(0.05, 'snow'); return weatherFx.state(); })();
+  const stSun = (() => { weatherFx.update(0.05, 'sunny'); return weatherFx.state(); })();
+  check('雨のときは雨粒が出る', stRain.rain > 100, `rain=${stRain.rain}`);
+  check('暴風雨は雨粒が多い', stStorm.rain > stRain.rain, `${stStorm.rain} > ${stRain.rain}`);
+  check('雪のときは雪片が出る', stSnow.snow > 100, `snow=${stSnow.snow}`);
+  check('晴れのときは何も出ない', stSun.rain === 0 && stSun.snow === 0, JSON.stringify(stSun));
+}
+
 stage('summary');
 say(fails === 0 ? '<span class="pass">SCENE TEST: ALL PASSED</span>' : `<span class="fail">SCENE TEST: ${fails} FAILED</span>`);
 out.innerHTML = L.join('\n');

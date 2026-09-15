@@ -6,6 +6,7 @@ import { createLighting } from './scene/lighting.js';
 import { OrbitCam } from './scene/controls.js';
 import { RestaurantView } from './scene/restaurant.js';
 import { loadSheets } from './scene/actors.js';
+import { buildWeatherFx } from './scene/weatherfx.js';
 import {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
   clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting,
@@ -66,6 +67,8 @@ let game = createGame({
 
 step('店内を建築中');
 const restaurant = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
+// 屋外の天気エフェクト（雨・雷・雪・みぞれ・霧・猛暑）
+const weatherFx = buildWeatherFx(scene);
 // スプライトシート式の客（Cherish）：読み込み完了後に一度だけスプライトを作り直す
 loadSheets().then((recs) => {
   const ok = (recs || []).some((r) => r && r.ready);
@@ -573,6 +576,7 @@ function frame(now) {
     if (s) cam.flyTo({ target: staffWorld(s) });
     else followingStaff = null;
   }
+  weatherFx.update(dtRaw, game.weather, !!game.__night);
   restaurant.update(dtRaw, game, camera);
   cam.update(dtRaw);
   hud.update();
@@ -627,7 +631,7 @@ function frame(now) {
 /* ------------------------------------------------------------ 測試掛鉤 */
 
 window.DREAM3D = {
-  THREE, scene, camera, renderer, game, lighting, restaurant, cam, hud, audio,
+  THREE, scene, camera, renderer, game, lighting, restaurant, cam, hud, audio, weatherFx,
   gotoShot,
   get info() {
     return {

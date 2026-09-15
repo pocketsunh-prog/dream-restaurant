@@ -8,7 +8,8 @@ import {
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, STAFF_LIMIT,
   EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
   activeEventInfo, TASK_KINDS, allTables, FLOOR_COST,
-  topMenuReport, kitchenReport, rankings, crowdInfo, setRoleUniform, starReport
+  topMenuReport, kitchenReport, rankings, crowdInfo, setRoleUniform, starReport,
+  restroomList, restroomLevel, restroomLevelInfo, renovateRestroom, renovateFloorRestrooms, RESTROOM_MAX_LEVEL
 } from '../sim/game.js';
 import { listSlots, deleteSlot, savedAtText, storageAvailable } from '../sim/save.js';
 import { uniformsForRole, uniformById, UNIFORMS } from '../data/uniforms.js';
@@ -274,9 +275,12 @@ export class Hud {
     document.querySelectorAll('#shop-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.shop === tab));
     const exp = $('shop-expand');
     const uni = $('shop-uniform');
+    const toi = $('shop-toilet');
     if (exp) exp.hidden = tab !== 'expand';
     if (uni) uni.hidden = tab !== 'uniform';
+    if (toi) toi.hidden = tab !== 'toilet';
     if (tab === 'expand') this.renderExpand();
+    else if (tab === 'toilet') this.renderToilets();
     else this.renderUniforms();
   }
 

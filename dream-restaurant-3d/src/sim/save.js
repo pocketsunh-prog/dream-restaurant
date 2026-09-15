@@ -68,6 +68,7 @@ export function deserializeGame(data) {
   state.equipment = state.equipment || ['fridge', 'ac_unit'];
   state.equipBroken = state.equipBroken || { fridge: false, ac_unit: false, stove: false };
   state.candidates = state.candidates || [];
+  if (!state.restroomLv || typeof state.restroomLv !== 'object') state.restroomLv = {};
   // ミッション（依頼）：舊存檔は未着手として補う
   if (!state.missions || typeof state.missions !== 'object') state.missions = {};
   if (!state.missions.completed) state.missions.completed = {};

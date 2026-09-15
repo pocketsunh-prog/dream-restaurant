@@ -1,7 +1,7 @@
 /**
  * events.js — 突發事件資料表（Event Master Data）
  *
- * 本檔案為《夢幻餐廳 3D》的事件主資料，收錄 50 筆日本在地化的餐廳經營事件，
+ * 本檔案為《夢幻餐廳 3D》的事件主資料，收錄 62 筆日本在地化的餐廳經營事件，
  * 分為正面（positive）、負面（negative）與中性（neutral）三種。
  *
  * 欄位契約（每個 entry 必有且僅有這些欄位，名稱與型別固定）：
@@ -51,7 +51,7 @@ export const EVENT_KINDS = ['positive', 'negative', 'neutral'];
 
 /** 全部突發事件。 */
 export const EVENTS = [
-  // ══════════════════════════ 正面 positive（18） ══════════════════════════
+  // ══════════════════════════ 正面 positive（24） ══════════════════════════
   {
     id: 'tv_interview',
     name: 'テレビ取材',
@@ -376,8 +376,116 @@ export const EVENTS = [
     duration: [300, 720],
     effects: { trafficMul: 1.6, cash: 30000, costMul: 1.1, moodAll: 6, staffFatigue: 12 }
   },
+  {
+    id: 'thunderstorm_brownout',
+    name: '雷雨の停電',
+    kana: 'らいうのていでん',
+    kind: 'positive',
+    weight: 3,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['storm'],
+    mitigateBy: 'fridge',
+    message: '落雷で街の電壓が跳ね上がり、冷蔵庫が一度止まってから、また唸り始めた。',
+    log: '雷雨の停電：冷蔵庫が再起動、庫内は無事。',
+    desc: '雷雨造成瞬間停電，幸好平時就備好冷藏設備（fridge），庫內溫度立刻回穩、食材幾乎沒受影響。外頭風雨太大，附近的人乾脆進店躲雨順便吃飯。',
+    duration: [60, 180],
+    effects: { cash: -4000, trafficMul: 1.1, moodAll: 4, staffFatigue: 5 }
+  },
+  {
+    id: 'heat_haze',
+    name: '陽炎の午後',
+    kana: 'かげろうのごご',
+    kind: 'positive',
+    weight: 4,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['heat'],
+    mitigateBy: 'ac_unit',
+    message: '柏油路上浮起一層搖晃的陽炎，客人一進門就長長吐一口氣說：「得救了。」',
+    log: '陽炎の午後：冷房目的の來店が増加。',
+    desc: '猛暑の午後、涼を求めて人が店に逃げ込んでくる。空調（ac_unit）が効いた店内は滞在時間が伸び、追加注文も増えやすい。',
+    duration: [120, 300],
+    effects: { trafficMul: 1.3, cash: 9000, moodAll: 8 }
+  },
+  {
+    id: 'snow_accumulation',
+    name: '雪の積もる音',
+    kana: 'ゆきのつもるおと',
+    kind: 'positive',
+    weight: 4,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['snow', 'sleet'],
+    mitigateBy: null,
+    message: '雪が音を吸い込んで、店内はしんと靜か。窓の外では子供が雪だるまをつくっている。',
+    log: '雪の積もる音：靜かな店内で滯在が延びる。',
+    desc: '雪が街の音を吸い込み、店内は不思議なほど靜か。客はゆっくり長居をして、溫かい汁物と甘味を追加で注文していく。ただし雪かきと足元の水拭きで外場は少し忙しくなる。',
+    duration: [180, 420],
+    effects: { trafficMul: 1.05, cash: 7000, moodAll: 7, dirt: 6, staffFatigue: 5 }
+  },
+  {
+    id: 'fog_couple_found',
+    name: '霧の中の一組',
+    kana: 'きりのなかのひとくみ',
+    kind: 'positive',
+    weight: 3,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: ['fog'],
+    mitigateBy: null,
+    message: '濃霧で道に迷った一組が、暖簾の灯りを頼りに店へ入ってきた。「ここだけ光って見えた」と笑う。',
+    log: '霧の中の一組：暖簾の灯りが道しるべに。',
+    desc: '濃霧で先が見えない中、店の灯りだけが道しるべになって偶然の客が入ってくる。數は多くないが、溫かい料理に満足して評價がじわりと上がる。',
+    duration: [120, 300],
+    effects: { trafficMul: 1.1, cash: 6000, fame: 2, moodAll: 6 }
+  },
+  {
+    id: 'inspection_followup',
+    name: '衛生検査の再検査',
+    kana: 'えいせいけんさのさいけんさ',
+    kind: 'positive',
+    weight: 3,
+    minStars: 3,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: 'fridge',
+    message: '保健所の担当者が改善確認に來て、冷藏庫の温度記録をめくりながら何度もうなずいた。',
+    log: '衛生検査の再検査：前回の指摘が解除。',
+    desc: '前回の指導事項をきちんと直したため、再検査はそのまま合格。冷藏設備（fridge）の管理記録が決め手になり、衛生面の信用が上がって客足も戻ってくる。',
+    duration: [0, 0],
+    effects: { cash: 12000, fame: 5, moodAll: 4 }
+  },
+  {
+    id: 'tv_rerun',
+    name: 'テレビ特集の再放送',
+    kana: 'てれびとくしゅうのさいほうそう',
+    kind: 'positive',
+    weight: 4,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '去年の特集が昼下がりに再放送され、見終わったお客様がその足で店に來た。',
+    log: 'テレビ特集の再放送：忘れていた客が戻る。',
+    desc: '以前に取材された特集が再放送され、その番組を見た人が「そういえば」と久しぶりに暖簾をくぐる。新しい費用は一切かからない、ありがたい再曝光。',
+    duration: [180, 360],
+    effects: { trafficMul: 1.4, fame: 6 }
+  },
 
-  // ══════════════════════════ 負面 negative（24） ══════════════════════════
+  // ══════════════════════════ 負面 negative（26） ══════════════════════════
   {
     id: 'typhoon_approaching',
     name: '台風接近',
@@ -810,8 +918,44 @@ export const EVENTS = [
     duration: [180, 480],
     effects: { cash: -38000, trafficMul: 0.5, moodAll: -10, dirt: 22, staffFatigue: 12 }
   },
+  {
+    id: 'long_rain_logistics',
+    name: '長雨の仕入れ遅延',
+    kana: 'ながあめのしいれちえん',
+    kind: 'negative',
+    weight: 4,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: ['rain'],
+    mitigateBy: 'fridge',
+    message: '雨で高速道路が止まり、朝に届くはずの魚がまだ來ない。冷蔵ケースは半分空いたままだ。',
+    log: '長雨の仕入れ遅延：配送が滯り、献立が縮む。',
+    desc: '長雨で物流網が滯り、生鮮の配送が丸一日遅れる。定番の料理が作れず、代わりの食材は割高になる。冷藏設備（fridge）で在庫を上手に回せば、欠品と廃棄の両方を抑えられる。',
+    duration: [720, 1440],
+    effects: { trafficMul: 0.85, costMul: 1.12, moodAll: -6 }
+  },
+  {
+    id: 'washroom_pipe_clog',
+    name: 'トイレの詰まり',
+    kana: 'といれのつまり',
+    kind: 'negative',
+    weight: 5,
+    minStars: 1,
+    maxStars: 3,
+    onlyWhileOpen: true,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: 'トイレから異音がして、水がまったく流れなくなった。外の業者を呼ぶしかない。',
+    log: 'トイレ詰まり：配管修理と悪臭で客足に影響。',
+    desc: '古い配管に汚れが溜まり、お手洗いが完全に詰まってしまう。修理業者を呼ぶ間は使えない上に臭いが広がり、客の苦情と掃除の手間が同時に増える。',
+    duration: [120, 360],
+    effects: { cash: -24000, fame: -4, dirt: 26, moodAll: -10, staffFatigue: 10 }
+  },
 
-  // ══════════════════════════ 中性 neutral（8） ══════════════════════════
+  // ══════════════════════════ 中性 neutral（12） ══════════════════════════
   {
     id: 'shotengai_cleanup',
     name: '商店街の清掃活動',
@@ -955,6 +1099,78 @@ export const EVENTS = [
     desc: '同業的老闆特地來店視察，坐在角落一頁頁抄著菜單與價格，還要求參觀廚房。員工被看得渾身不自在，但對方事後在商圈聚會上替你說了幾句好話。',
     duration: [60, 180],
     effects: { moodAll: -4, staffFatigue: 6, fame: 2 }
+  },
+  {
+    id: 'celebrity_rumor',
+    name: '有名人が來るらしい',
+    kana: 'ゆうめいじんがくるらしい',
+    kind: 'neutral',
+    weight: 4,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '社群上瘋傳「那位人氣甜點師好像常去某間店」，客人一進門就先四處張望。',
+    log: '名人來店傳聞：客人好奇上門，卻沒等到本人。',
+    desc: '網路上出現「有名人常來這家店」的傳聞，好奇的客人一批批上門張望，真正的那位卻始終沒有出現。來客與營業額小幅上升，員工則被問了一整天「他今天會來嗎」。',
+    duration: [180, 480],
+    effects: { trafficMul: 1.25, cash: 5000, moodAll: -3, staffFatigue: 6 }
+  },
+  {
+    id: 'staff_training',
+    name: '本社スタッフの接客研修',
+    kana: 'ほんしゃすたっふのせっきゃくけんしゅう',
+    kind: 'neutral',
+    weight: 4,
+    minStars: 2,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '本社から指導員が來て、お辭儀の角度から盆の持ち方まで全員やり直しになった。',
+    log: '接客研修：手が止まるが、動きが揃う。',
+    desc: '本社派來的指導員替全體員工做了一整天的接客研修，從鞠躬角度到端盤手勢全部重來。研修期間出餐明顯變慢，但員工的動作變齊、疲勞也比較不容易堆積。',
+    duration: [180, 360],
+    effects: { cash: -12000, staffFatigue: -10, moodAll: 3 }
+  },
+  {
+    id: 'supplier_special',
+    name: '仕入れ業者の特価品',
+    kana: 'しいれぎょうしゃのとっかひん',
+    kind: 'neutral',
+    weight: 5,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: 'fridge',
+    message: 'いつもの業者が「產地直送の余り物だけど」と、箱を一つ格安で置いていった。',
+    log: '仕入れ特価品：原價下降，但得自己想辦法用完。',
+    desc: '批發商把產地直送的餘貨便宜讓給你，進貨成本立刻下降。但數量不少、保存期限又短，得靠廚房的創意菜單跟冷藏設備（fridge）一起消化，否則只是換個方式報廢。',
+    duration: [720, 1440],
+    effects: { costMul: 0.9, dirt: 4, staffFatigue: 4 }
+  },
+  {
+    id: 'washroom_renewal_plan',
+    name: 'お手洗い改修の噂',
+    kana: 'おてあらいかいしゅうのうわさ',
+    kind: 'neutral',
+    weight: 3,
+    minStars: 1,
+    maxStars: 5,
+    onlyWhileOpen: false,
+    locations: null,
+    requireWeather: null,
+    mitigateBy: null,
+    message: '常連客が「お手洗い、ちょっと直したら？」と笑いながら耳打ちしていった。',
+    log: 'お手洗い改修の噂：常連が工事を勧めてくる。',
+    desc: '常客半開玩笑地提起お手洗い的狀況，話題就這樣在熟客之間傳開。改修工事期間客人會少一點、費用也跑不掉，但把お手洗い整理好，之後的清潔與評價都會跟著改善。',
+    duration: [120, 360],
+    effects: { trafficMul: 0.8, cash: -20000, dirt: 15, moodAll: -2 }
   }
 ];
 

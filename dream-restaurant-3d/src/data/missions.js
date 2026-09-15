@@ -40,7 +40,7 @@ export const GOAL_KINDS = {
   severeServed: '荒天の日の接客'
 };
 
-/** 依頼の全体（26 件）。tier が小さいほど序盤向け。 */
+/** 依頼の全体（40 件）。tier が小さいほど序盤向け。 */
 export const MISSIONS = [
   // ── tier 1：開店直後にやること ─────────────────────────────────────
   { id: 'm_first_guests', tier: 1, jp: '初めてのお客様', zh: '第一批客人',
@@ -58,6 +58,15 @@ export const MISSIONS = [
   { id: 'm_five_menus', tier: 1, jp: '品書きを増やす', zh: '菜單擴充',
     desc: '提供中の料理を 5 品以上にしましょう。選択肢が増えると客単価も上がります。',
     goal: { kind: 'menus', target: 5 }, reward: { cash: 20000 } },
+  { id: 'm_restroom_ten', tier: 1, jp: '掃除の習慣', zh: '打掃的習慣',
+    desc: 'トイレ清掃を累計 10 回行いましょう。汚れは評判に直結します。',
+    goal: { kind: 'cleanRestroom', target: 10 }, reward: { cash: 35000 } },
+  { id: 'm_serve_300', tier: 1, jp: '累計 300 名', zh: '累計服務 300 人',
+    desc: 'これまでの來客数の合計を 300 名にしましょう。',
+    goal: { kind: 'serveGuests', target: 300, scope: 'total' }, reward: { cash: 50000, fame: 1 } },
+  { id: 'm_rain_day_service', tier: 1, jp: '雨の日の一組', zh: '雨天也要接一組',
+    desc: '荒天（暴風雨・雪・みぞれ・猛暑）の日に累計 10 名をご案内しましょう。悪天候ほど暖簾のありがたみが出ます。',
+    goal: { kind: 'severeServed', target: 10 }, reward: { cash: 45000 } },
 
   // ── tier 2：基礎を固める ───────────────────────────────────────────
   { id: 'm_no_angry_day', tier: 2, jp: '誰も怒らせない日', zh: '沒人生氣的一天',
@@ -75,6 +84,12 @@ export const MISSIONS = [
   { id: 'm_good_tips', tier: 2, jp: '気前のいい一日', zh: '慷慨的一天',
     desc: '1 日のチップを ¥8,000 以上にしましょう。接客の質がそのまま出ます。',
     goal: { kind: 'tips', target: 8000, scope: 'day' }, reward: { cash: 45000 } },
+  { id: 'm_uniform_pair', tier: 2, jp: '制服を二着', zh: '兩套制服',
+    desc: '2 種類の制服を従業員に着せましょう。色が揃うと店内の印象が締まります。',
+    goal: { kind: 'uniforms', target: 2 }, reward: { cash: 40000 } },
+  { id: 'm_pet_twenty', tier: 2, jp: 'ペット席の常連', zh: '寵物席的常客',
+    desc: 'ペット連れのお客様を累計 20 組ご案内しましょう。水飲み場と足拭きを忘れずに。',
+    goal: { kind: 'petGroups', target: 20 }, reward: { cash: 130000, fame: 1, title: 'ペット席の主' } },
 
   // ── tier 3：お店らしさを出す ───────────────────────────────────────
   { id: 'm_fame_40', tier: 3, jp: '評判が広がる', zh: '口碑擴散',
@@ -95,6 +110,12 @@ export const MISSIONS = [
   { id: 'm_specialty_3', tier: 3, jp: '名物を三つ', zh: '三道名物',
     desc: 'この土地の名物を 3 品以上メニューに入れましょう。來客と単価が上がります。',
     goal: { kind: 'specialties', target: 3 }, reward: { cash: 100000, fame: 1 } },
+  { id: 'm_famous_kinds', tier: 3, jp: '有名人の客層', zh: '名流客層上門',
+    desc: '俳優・人氣タレント・テレビ取材クルーなど、有名人の客層を 2 種類お迎えしましょう。接客が良ければ大きく宣傳してくれます。',
+    goal: { kind: 'kindsServed', target: 2 }, reward: { cash: 120000, fame: 2 } },
+  { id: 'm_uniforms_eight', tier: 3, jp: '制服を八種類', zh: '八種制服',
+    desc: '8 種類以上の制服を揃えましょう。場面ごとに着替えると接客の氣合いも変わります。',
+    goal: { kind: 'uniforms', target: 8 }, reward: { cash: 130000, title: '制服コレクター' } },
 
   // ── tier 4：腕試し ─────────────────────────────────────────────────
   { id: 'm_storm_service', tier: 4, jp: '嵐の日の営業', zh: '暴風雨也要營業',
@@ -112,6 +133,12 @@ export const MISSIONS = [
   { id: 'm_queue_5', tier: 4, jp: '行列五組', zh: '排隊五組',
     desc: '同時に 5 組以上の行列をつくりましょう（断られないことが前提です）。',
     goal: { kind: 'maxQueue', target: 5 }, reward: { cash: 110000, title: '行列のできる店' } },
+  { id: 'm_ace_waiter', tier: 4, jp: '看板ホール', zh: '招牌外場',
+    desc: '腕前 80 以上のホール（外場）を雇いましょう。行列のさばき方がまるで変わります。',
+    goal: { kind: 'staffSkill', target: 80, extra: 'waiter' }, reward: { cash: 140000, title: '看板ホール' } },
+  { id: 'm_cook_1500', tier: 4, jp: '1500 品の経験', zh: '累計 1500 道',
+    desc: '厨房で累計 1,500 品をつくりましょう。手数が店の厚みになります。',
+    goal: { kind: 'cookDishes', target: 1500 }, reward: { cash: 260000, title: '鉄鍋の職人' } },
 
   // ── tier 5：一流店への道 ───────────────────────────────────────────
   { id: 'm_fame_80', tier: 5, jp: '評價 80', zh: '評價 80',
@@ -123,15 +150,27 @@ export const MISSIONS = [
   { id: 'm_all_kinds', tier: 5, jp: '全客層制覇', zh: '全客層制霸',
     desc: '15 種類すべての客層をお迎えしましょう。',
     goal: { kind: 'kindsServed', target: 15 }, reward: { cash: 350000, title: '萬人受け' } },
-  { id: 'm_ten_days', tier: 5, jp: '十日目の暖簾', zh: '第十天的暖簾',
-    desc: '10 日以上営業を続けましょう。',
-    goal: { kind: 'days', target: 10 }, reward: { cash: 180000 } },
   { id: 'm_cash_10m', tier: 5, jp: '現金 ¥10,000,000', zh: '現金一千萬',
     desc: '所持金を ¥10,000,000 以上にしましょう。',
     goal: { kind: 'cash', target: 10000000 }, reward: { cash: 500000, fame: 3, title: '大旦那' } },
   { id: 'm_pet_twelve', tier: 5, jp: 'ペットの常連', zh: '寵物常客',
     desc: 'ペット連れのお客様を累計 12 組ご案内しましょう。',
-    goal: { kind: 'petGroups', target: 12 }, reward: { cash: 140000, fame: 2, title: 'ペット友の会' } }
+    goal: { kind: 'petGroups', target: 12 }, reward: { cash: 140000, fame: 2, title: 'ペット友の会' } },
+  { id: 'm_twenty_days', tier: 5, jp: '二十日の暖簾', zh: '第二十天的暖簾',
+    desc: '20 日以上営業を続けましょう。暖簾が街に根づいた証拠です。',
+    goal: { kind: 'days', target: 20 }, reward: { cash: 220000 } },
+  { id: 'm_famous_visits', tier: 5, jp: '有名人御用達', zh: '名流御用店',
+    desc: '俳優・人氣タレント・テレビ取材クルーなど、有名人の客層をすべてお迎えしましょう。',
+    goal: { kind: 'kindsServed', target: 3 }, reward: { cash: 300000, fame: 3, title: '有名人御用達' } },
+  { id: 'm_restroom_fifty', tier: 5, jp: '清掃五十回', zh: '清掃五十回',
+    desc: 'トイレ清掃を累計 50 回行いましょう。清潔さこそ一流店の最低條件です。',
+    goal: { kind: 'cleanRestroom', target: 50 }, reward: { cash: 240000, fame: 1 } },
+  { id: 'm_rain_two_hundred', tier: 5, jp: '雨ニモマケズ', zh: '風雨無阻',
+    desc: '荒天（暴風雨・雪・みぞれ・猛暑）の日に累計 200 名をご案内しましょう。',
+    goal: { kind: 'severeServed', target: 200 }, reward: { cash: 320000, fame: 2, equipment: 'security_host' } },
+  { id: 'm_cash_30m', tier: 5, jp: '現金 ¥30,000,000', zh: '現金三千萬',
+    desc: '所持金を ¥30,000,000 以上にしましょう。次の一手のための軍資金です。',
+    goal: { kind: 'cash', target: 30000000 }, reward: { cash: 420000, fame: 3, equipment: 'fire_system' } }
 ];
 
 export const MISSION_IDS = MISSIONS.map((m) => m.id);
