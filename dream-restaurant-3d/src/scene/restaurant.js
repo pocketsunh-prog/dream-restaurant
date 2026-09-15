@@ -7,7 +7,7 @@ import * as Props from './props.js';
 import * as Chars from './characters.js';
 import { uniformById } from '../data/uniforms.js';
 import { dishById } from '../data/dishes.js';
-import { allTables } from '../sim/game.js';
+import { allTables, crowdInfo } from '../sim/game.js';
 
 /* ------------------------------------------------------------ 工具 */
 
@@ -162,6 +162,20 @@ export class RestaurantView {
     this.buildOutside();
     this.buildStaff();
     this.buildStairs();
+  }
+
+  /**
+   * 接手另一個 view 的成果（搬遷／擴建／讀檔時重建場景用）。
+   * 之前 main.js 是用 Object.assign 手寫欄位，常常漏掉新加的成員
+   * （厨房的爐火、調理標籤、候位繩…），這裡一次複製全部，避免漏掉。
+   */
+  adoptFrom(next) {
+    if (!next) return this;
+    for (const k of Object.keys(next)) {
+      if (k === 'scene' || k === '_tmp') continue;
+      this[k] = next[k];
+    }
+    return this;
   }
 
   /* ── 樓梯（連通各樓層）────────────────────────────────────────── */
@@ -424,7 +438,9 @@ export class RestaurantView {
   /* ── 桌子＋椅子＋餐具（各樓層）────────────────────────────────── */
 
   _buildTablesForFloor(fg, tables, floorIdx) {
+    this.tableById = this.tableById || new Map();
     for (const t of tables) {
+      this.tableById.set(t.id, t);
       const baseY = (floorIdx === 0 && t.style === 'chabudai') ? this.tatamiY : 0;
       if (t.style === 'chabudai' && floorIdx === 0) {
         const table = makePropSafe('chabudai', { w: 1.25, d: 0.8, h: 0.34 }, { x: 1.25, y: 0.34, z: 0.8 });
@@ -468,8 +484,45 @@ export class RestaurantView {
         set.position.set(t.x, baseY + 0.72, t.z);
         fg.add(shadowize(set));
       }
+      // ペット同伴席：桌子旁鋪寵物墊、放水碗與飼料碗、立一個小牌子
+      if (t.petOk) this._buildPetSpot(fg, t, baseY);
       this.tableProps.push({ table: t, y: baseY });
     }
+  }
+
+  /** 寵物席的擺設（墊子＋水碗＋看板），並記下寵物要待的位置 */
+  _buildPetSpot(fg, t, baseY) {
+    this.petSpots = this.petSpots || [];
+    const matCol = new THREE.Color(this._accent).lerp(new THREE.Color('#2f6b5f'), 0.6);
+    const mat = new THREE.Mesh(
+      new THREE.BoxGeometry(1.0, 0.025, 0.62),
+      new THREE.MeshStandardMaterial({ color: matCol, roughness: 0.95 })
+    );
+    // 墊子放在桌子南側（走道邊），寵物就趴在那裡
+    const mz = t.z + 0.95;
+    mat.position.set(t.x, baseY + 0.013, mz);
+    mat.receiveShadow = true;
+    fg.add(mat);
+    const bowlMat = new THREE.MeshStandardMaterial({ color: 0xd9d2c4, roughness: 0.4, metalness: 0.25 });
+    for (const [dx, col] of [[-0.26, 0x6fa8dc], [0.04, 0xc9b48a]]) {
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.075, 0.07, 12), bowlMat);
+      bowl.position.set(t.x + dx, baseY + 0.05, mz + 0.08);
+      bowl.castShadow = true;
+      fg.add(bowl);
+      const water = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.086, 0.086, 0.012, 12),
+        new THREE.MeshStandardMaterial({ color: col, roughness: 0.25, metalness: 0.1 })
+      );
+      water.position.set(t.x + dx, baseY + 0.082, mz + 0.08);
+      fg.add(water);
+    }
+    // 「ペット可」立牌
+    const sign = makePropSafe('signboard', { w: 0.34, h: 0.18, text: 'ペット可' }, { x: 0.34, y: 0.18, z: 0.05 });
+    sign.position.set(t.x + 0.62, baseY + 0.74, t.z - 0.02);
+    sign.rotation.y = Math.PI * 0.5;
+    sign.scale.setScalar(0.75);
+    fg.add(shadowize(sign));
+    this.petSpots.push({ tableId: t.id, x: t.x, z: mz, y: baseY });
   }
 
   _cushionMaterial(floorIdx) {
@@ -803,6 +856,8 @@ export class RestaurantView {
     this.buildQueueLane();
     // 街上的東西：街燈、斑馬線、巴士站、行人穿越標誌
     this.buildStreetProps();
+    // 門口的「にぎわい看板」：即時顯示店內人數與候位名單
+    this.buildNoticeBoard();
 
     // 街道的兩端（客人從這裡走過來、也從這裡走回去）
     const st = p.street || { ax: -12.4, az: D / 2 + 1.6, bx: 12.4, bz: D / 2 + 1.6 };
@@ -817,6 +872,157 @@ export class RestaurantView {
     }
   }
 
+  /* ── 門口的「にぎわい看板」（即時顯示店內人數與候位名單）──────── */
+
+  buildNoticeBoard() {
+    const p = this.plan;
+    const D = p.depth;
+    const grp = new THREE.Group();
+    grp.name = 'noticeBoard';
+
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.78 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1d1a16, roughness: 0.6 });
+    const post = new THREE.MeshStandardMaterial({ color: 0x3b3a3c, metalness: 0.5, roughness: 0.45 });
+
+    // 看板本體：木框 + 自發光面板（夜晚也看得清楚）
+    const cv = document.createElement('canvas');
+    cv.width = 512; cv.height = 384;
+    const tex = new THREE.CanvasTexture(cv);
+    if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const board = new THREE.Group();
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.86, 0.06), wood);
+    frame.castShadow = true;
+    board.add(frame);
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.0, 0.74),
+      new THREE.MeshBasicMaterial({ map: tex, toneMapped: false })
+    );
+    panel.position.z = 0.033;
+    board.add(panel);
+    // 小小的屋簷（日本街頭看板的樣子）
+    const eave = new THREE.Mesh(new THREE.BoxGeometry(1.26, 0.05, 0.24), dark);
+    eave.position.set(0, 0.47, 0.06);
+    eave.castShadow = true;
+    board.add(eave);
+
+    board.position.set(0, 1.62, 0);
+    grp.add(board);
+
+    // 兩根腳柱
+    for (const x of [-0.42, 0.42]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.042, 1.24, 10), post);
+      leg.position.set(x, 0.62, 0);
+      leg.castShadow = true;
+      grp.add(leg);
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.05, 12), post);
+      foot.position.set(x, 0.025, 0);
+      grp.add(foot);
+    }
+    grp.position.set(p.entrance.x + 2.55, 0, D / 2 + 0.72);
+    grp.rotation.y = -0.14;
+    this.root.add(grp);
+    aoBlob(this.root, p.entrance.x + 2.55, 0.006, D / 2 + 0.72, 0.95, 0.42, 0.5);
+
+    this.noticeBoard = { group: grp, canvas: cv, texture: tex, key: '' };
+    this._noticeKey = '';
+  }
+
+  /** 更新看板內容（內容沒變就不重畫） */
+  syncNoticeBoard(state, info) {
+    const nb = this.noticeBoard;
+    if (!nb || !info) return;
+    const list = (info.waitingList || []).slice(0, 5);
+    const key = [
+      info.insideGuests, info.seats, info.seatsFree, info.todayGuests,
+      info.waiting, info.maxQueueWait, info.petInside, info.petToday,
+      list.map((w) => `${w.size}/${w.waitMin}/${w.pet ? 'p' : ''}`).join('|'),
+      state?.phase || ''
+    ].join(',');
+    if (key === this._noticeKey) return;
+    this._noticeKey = key;
+    nb.key = key;
+
+    const c = nb.canvas.getContext('2d');
+    const W = nb.canvas.width, H = nb.canvas.height;
+    // 底：深色電光板
+    c.fillStyle = '#15161a';
+    c.fillRect(0, 0, W, H);
+    const grd = c.createLinearGradient(0, 0, 0, H);
+    grd.addColorStop(0, 'rgba(255,255,255,0.06)');
+    grd.addColorStop(1, 'rgba(0,0,0,0.25)');
+    c.fillStyle = grd;
+    c.fillRect(0, 0, W, H);
+
+    // 標題
+    c.fillStyle = '#ffd479';
+    c.font = 'bold 34px system-ui, sans-serif';
+    c.fillText('本日のにぎわい', 22, 48);
+    c.fillStyle = 'rgba(255,212,121,0.35)';
+    c.fillRect(22, 62, W - 44, 3);
+
+    // 店內人數（大字）
+    const full = info.seatsFree <= 0;
+    c.fillStyle = full ? '#ff8a7a' : '#9ff0a8';
+    c.font = 'bold 40px system-ui, sans-serif';
+    c.fillText(full ? '満席' : '空席あり', 22, 112);
+    c.fillStyle = '#f2ede2';
+    c.font = 'bold 30px system-ui, sans-serif';
+    c.fillText(`店内 ${info.insideGuests} 名`, 210, 112);
+    c.fillStyle = '#c9c2b4';
+    c.font = '24px system-ui, sans-serif';
+    c.fillText(`（${info.seats} 席 / 空き ${info.seatsFree}）`, 210, 142);
+
+    // 本日の来客
+    c.fillStyle = '#e8dfd0';
+    c.font = '26px system-ui, sans-serif';
+    c.fillText(`本日の来客 ${info.todayGuests} 名`, 24, 178);
+
+    // 候位
+    if (info.waiting > 0) {
+      c.fillStyle = '#ffb26b';
+      c.font = 'bold 28px system-ui, sans-serif';
+      c.fillText(`行列 ${info.waiting} 組・待ち ${info.maxQueueWait} 分`, 24, 214);
+    } else {
+      c.fillStyle = '#9ff0a8';
+      c.font = 'bold 28px system-ui, sans-serif';
+      c.fillText('行列なし（すぐご案内できます）', 24, 214);
+    }
+
+    // 候位名單
+    c.fillStyle = 'rgba(255,255,255,0.14)';
+    c.fillRect(20, 232, W - 40, 2);
+    c.font = '23px system-ui, sans-serif';
+    if (!list.length) {
+      c.fillStyle = '#8f8a80';
+      c.fillText('ただいまお待ちのお客様はおりません', 24, 268);
+    } else {
+      list.forEach((w, i) => {
+        const y = 268 + i * 30;
+        c.fillStyle = '#cfe6ff';
+        c.fillText(`${i + 1}.`, 24, y);
+        c.fillStyle = '#f2ede2';
+        c.fillText(`${w.size} 名様`, 58, y);
+        c.fillStyle = w.waitMin > 20 ? '#ff9a8a' : '#b9b2a4';
+        c.fillText(`待ち ${w.waitMin} 分`, 190, y);
+        if (w.pet) {
+          c.fillStyle = '#ffd479';
+          c.fillText('🐾', 330, y);
+        }
+        c.fillStyle = '#8f8a80';
+        c.fillText(w.kindJp || '', 372, y);
+      });
+    }
+    // 寵物席資訊
+    if (info.petOkTables > 0) {
+      c.fillStyle = '#9fd0ff';
+      c.font = '20px system-ui, sans-serif';
+      c.fillText(`ペット同伴席 ${info.petOkTables} 卓（店内 ${info.petInside} 組・本日 ${info.petToday} 組）`, 24, H - 16);
+    }
+    nb.texture.needsUpdate = true;
+  }
+
+  /* ── 候位繩（支柱＋繩子）：把排隊的隊伍框在人行道上 */
   /** 候位繩（支柱＋繩子）：把排隊的隊伍框在人行道上 */
   buildQueueLane() {
     const q = this.plan.queue || { x: 2.6, z: this.plan.depth / 2 + 2.3, step: 1.15 };
@@ -1074,22 +1280,36 @@ export class RestaurantView {
       // 位置與姿勢（客人站在自己用餐的那一層）
       const pose = g.pose || 'stand';
       const gy = (g.floor || 0) * this.FH;
+      const tbl = g.tableId ? (this.tableById || new Map()).get(g.tableId) : null;
+      const floorSeat = !!(tbl && tbl.style === 'chabudai' && (tbl.floor || 0) === 0);
       for (let i = 0; i < rec.meshes.length; i++) {
         const m = rec.meshes[i];
         const mem = g.members[i];
         if (!mem) { m.visible = false; continue; }
         m.visible = true;
-        const y = gy + ((mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && this._onTatami(g, mem) ? this.tatamiY : this.floorY);
+        const onTatami = (mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && this._onTatami(g, mem);
+        const y = gy + ((mem.seat >= 0 && (pose === 'sit' || pose === 'eat')) && onTatami ? this.tatamiY : this.floorY);
+        // 榻榻米上的矮桌是「盤坐」：座高只有坐墊那麼高，不然人會飄在半空中
+        m.userData.seatHeight = (floorSeat && onTatami) ? 0.09 : 0.45;
         m.position.set(mem.x, y, mem.z);
         m.rotation.y = mem.ry || 0;
         try { Chars.setPose(m, pose === 'eat' ? 'eat' : pose, this._clock + i * 0.3); } catch { /* 姿勢失敗就維持 */ }
       }
-      // 寵物跟著這組移動（掛在領頭的成員旁邊）
+      // 寵物跟著這組移動；如果是寵物同伴席，就讓牠待在桌邊的墊子上
       if (rec.pets.length && g.members[0]) {
         const lead = g.members[0];
-        for (const pet of rec.pets) {
-          pet.position.set(lead.x + 0.55, gy + this.floorY, lead.z + 0.35);
-          pet.rotation.y = (lead.ry || 0) + Math.PI * 0.5;
+        const spot = (g.petTable && (g.state === 'ordering' || g.state === 'waitCook'
+          || g.state === 'waitServe' || g.state === 'eating' || g.state === 'waitPay'))
+          ? (this.petSpots || []).find((s) => s.tableId === g.tableId) : null;
+        for (let i = 0; i < rec.pets.length; i++) {
+          const pet = rec.pets[i];
+          if (spot) {
+            pet.position.set(spot.x + (i - 0.5) * 0.4, gy + this.floorY + spot.y + 0.01, spot.z);
+            pet.rotation.y = Math.PI;                     // 面向桌子
+          } else {
+            pet.position.set(lead.x + 0.55, gy + this.floorY, lead.z + 0.35);
+            pet.rotation.y = (lead.ry || 0) + Math.PI * 0.5;
+          }
           pet.visible = g.state !== 'gone';
         }
       }
@@ -1246,6 +1466,7 @@ export class RestaurantView {
     this.syncPass(state);
     this.syncDirtyTables(state);
     this.syncCooking(state);
+    this.syncNoticeBoard(state, crowdInfo(state));
 
     // 夜晚：燈籠與店外光
     const night = state.__night ?? false;

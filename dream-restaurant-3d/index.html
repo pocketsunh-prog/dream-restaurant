@@ -56,6 +56,7 @@
     <button id="btn-locations">🗾 立地 <kbd>L</kbd></button>
     <button id="btn-menu">🍜 菜單 <kbd>M</kbd></button>
     <button id="btn-cook">🍳 調理を見る <kbd>K</kbd></button>
+    <button id="btn-shop">🏗 店舗 <kbd>E</kbd></button>
     <button id="btn-camera">🎥 視角 <kbd>C</kbd></button>
     <button id="btn-report">📊 分析 <kbd>R</kbd></button>
     <button id="btn-rank">🏆 番付 <kbd>T</kbd></button>
@@ -159,6 +160,22 @@
   <div class="panel-body" id="report-body"></div>
 </section>
 
+<!-- ── 面板：店舗（増築・制服）────────────────────────────────── -->
+<section class="panel" id="panel-shop" hidden>
+  <header class="panel-head">
+    <h2>店舗<span>店舖擴建（2F・3F）與制服</span></h2>
+    <button class="panel-close" data-close="panel-shop">✕</button>
+  </header>
+  <div class="panel-body">
+    <nav class="tabs" id="shop-tabs">
+      <button data-shop="expand" class="on">🏗 増築</button>
+      <button data-shop="uniform">👕 制服</button>
+    </nav>
+    <div id="shop-expand"></div>
+    <div id="shop-uniform" hidden></div>
+  </div>
+</section>
+
 <!-- ── 面板：番付（ランキング）────────────────────────────────── -->
 <section class="panel" id="panel-rank" hidden>
   <header class="panel-head">
@@ -187,9 +204,10 @@
       <tr><td>右鍵拖曳 / 中鍵拖曳</td><td>平移視角</td></tr>
       <tr><td>點擊客人</td><td>看這位客人點了什麼、吃到哪一步</td></tr>
       <tr><td>點擊員工 / <kbd>K</kbd></td><td>鏡頭跟著他，看料理人怎麼做菜（頭上會顯示正在煮的菜與進度）</td></tr>
+      <tr><td><kbd>E</kbd></td><td>🏗 店舗面板：<b>増築 2F／3F</b>（擴建樓層）與<b>制服選擇</b>（料理人／ホール一次換或個人換）</td></tr>
       <tr><td><kbd>1</kbd>〜<kbd>7</kbd></td><td>預設機位：全館／1F／客席／厨房／2F／3F／爐前</td></tr>
       <tr><td><kbd>Space</kbd></td><td>暫停 / 繼續</td></tr>
-      <tr><td><kbd>L</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>R</kbd> <kbd>T</kbd> <kbd>O</kbd> <kbd>H</kbd></td><td>立地 / 従業員 / 菜單 / 分析 / 番付 / 設定 / 說明</td></tr>
+      <tr><td><kbd>L</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>R</kbd> <kbd>T</kbd> <kbd>E</kbd> <kbd>O</kbd> <kbd>H</kbd></td><td>立地 / 従業員 / 菜單 / 分析 / 番付 / 店舗 / 設定 / 說明</td></tr>
       <tr><td><kbd>F</kbd></td><td>切換晝夜光影（快看夜晚燈籠）</td></tr>
       <tr><td><kbd>A</kbd></td><td>音效／BGM 開關（第一次互動後才會發聲，這是瀏覽器限制）</td></tr>
       <tr><td>打烊結算</td><td>會自動存到「オートセーブ」槽位</td></tr>
@@ -199,6 +217,10 @@
     <p class="muted"><b>員工的分工</b>：<b>料理人</b>站在爐前把菜煮好放上出餐口（爐火、蒸氣與頭上的菜名標籤都會動）；<b>ホール（外場）</b>負責帶位、送菜、埋單、收拾桌面與清掃洗手間，客人坐二、三樓時服務生會走樓梯上樓。
     人手不足時客人會等不到位子或等不到菜而生气離開 —— 用「従業員」面板招募。</p>
     <p class="muted"><b>番付（<kbd>T</kbd>）</b>：可以看「この店」的排行（菜色、料理人、ホール、客層、時間帯、店史紀錄）與「全地点」排行（28 個地點的平均日商，以及自店目前排第幾名）。</p>
+    <p class="muted"><b>門口的「にぎわい看板」</b>：即時顯示店內人數、空席、本日來客與<b>候位名單</b>（第幾組、幾位、等幾分鐘、有沒有帶寵物）；
+    同一份資料也顯示在「📊 分析」面板最上面。帶寵物的客人會優先被帶到<b>ペット同伴席</b>（一樓靠門口的座位，鋪寵物墊、放水碗）。</p>
+    <p class="muted"><b>增築（<kbd>E</kbd>）</b>：餐廳可以從 1 樓加到 2 樓、3 樓（2F ¥800,000／3F ¥2,400,000），
+    每層多 8 張四人桌；客人與服務生會走樓梯上下樓。</p>
     <p class="muted"><b>事件</b>：營業中會隨機發生（颱風、電視採訪、食材漲價、衛生檢查、祭典人潮…），
     效果會持續幾十分鐘；部分事件可以靠<b>設備</b>減免一半（監視器、滅火器、消防設備、保全系統…），設備在「従業員 → 設備・事件」購買。</p>
   </div>

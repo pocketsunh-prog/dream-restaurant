@@ -7,11 +7,11 @@ import {
   money, clockText, WEATHER_JP, CUSTOMER_KINDS,
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, STAFF_LIMIT,
   EQUIPMENT_CATALOG, buyEquipment, repairEquipment,
-  activeEventInfo, TASK_KINDS, allTables,
-  topMenuReport, kitchenReport, rankings
+  activeEventInfo, TASK_KINDS, allTables, FLOOR_COST,
+  topMenuReport, kitchenReport, rankings, crowdInfo, setRoleUniform
 } from '../sim/game.js';
 import { listSlots, deleteSlot, savedAtText, storageAvailable } from '../sim/save.js';
-import { uniformsForRole, uniformById } from '../data/uniforms.js';
+import { uniformsForRole, uniformById, UNIFORMS } from '../data/uniforms.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -44,6 +44,14 @@ export class Hud {
     $('btn-settings')?.addEventListener('click', () => this.toggle('panel-settings'));
     $('btn-report')?.addEventListener('click', () => { this.toggle('panel-report'); this.renderReport(); });
     $('btn-rank')?.addEventListener('click', () => { this.toggle('panel-rank'); this.renderRank(); });
+    $('btn-shop')?.addEventListener('click', () => { this.toggle('panel-shop'); this.renderShopPanel(); });
+    // 店舗面板分頁（拡張 / 制服）
+    document.querySelectorAll('#shop-tabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        this._shopTab = b.dataset.shop;
+        this.renderShopPanel();
+      });
+    });
     $('btn-cook')?.addEventListener('click', () => this.hooks.onFocusCook?.());
     // 番付の分頁
     document.querySelectorAll('#rank-tabs button').forEach((b) => {
@@ -103,6 +111,7 @@ export class Hud {
       if (id === 'panel-settings') this.renderSettings();
       if (id === 'panel-report') this.renderReport();
       if (id === 'panel-rank') this.renderRank();
+      if (id === 'panel-shop') this.renderShopPanel();
     }
   }
 
@@ -252,6 +261,152 @@ export class Hud {
     }));
   }
 
+  /* ── 店舗：増築（2F/3F）と制服 ─────────────────────────────── */
+
+  renderShopPanel() {
+    const host = $('shop-expand');
+    if (!host) return;
+    const tab = this._shopTab || 'expand';
+    document.querySelectorAll('#shop-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.shop === tab));
+    const exp = $('shop-expand');
+    const uni = $('shop-uniform');
+    if (exp) exp.hidden = tab !== 'expand';
+    if (uni) uni.hidden = tab !== 'uniform';
+    if (tab === 'expand') this.renderExpand();
+    else this.renderUniforms();
+  }
+
+  /** 増築：現在幾層、每層幾個位子、下一層多少錢 */
+  renderExpand() {
+    const host = $('shop-expand');
+    if (!host) return;
+    const st = this.game;
+    const plan = st.plan || {};
+    const fc = plan.floorCount || 1;
+    const perFloor = (plan.floorPlans || []).map((fp, i) => ({
+      floor: i,
+      tables: (fp.tables || []).length,
+      seats: (fp.tables || []).reduce((a, t) => a + t.seats, 0),
+      pet: (fp.tables || []).filter((t) => t.petOk).length
+    }));
+    const totalSeats = perFloor.reduce((a, f) => a + f.seats, 0);
+    const totalTables = perFloor.reduce((a, f) => a + f.tables, 0);
+    const c = crowdInfo(st);
+
+    let html = `<div class="section-title">店舗の広さ</div>
+    <div class="card">
+      <div class="card-head"><b>現在 ${fc} 階</b><span class="role">${totalTables} 卓 / ${totalSeats} 席</span></div>
+      <div class="card-sub">
+        <span>店内 <b>${c.insideGuests}</b> 名</span>
+        <span>空き <b>${c.seatsFree}</b> 席</span>
+        <span>行列 <b>${c.waiting}</b> 組</span>
+        <span>ペット同伴席 <b>${c.petOkTables}</b> 卓</span>
+      </div>
+    </div>`;
+
+    for (const f of perFloor) {
+      const name = f.floor === 0 ? '1F（客席・調理場・お手洗い）' : `${f.floor + 1}F（客席のみ）`;
+      html += `<div class="report-row">
+        <span class="r-name"><b>${name}</b><i>${f.pet ? `ペット同伴席 ${f.pet} 卓` : ' '}</i></span>
+        <span class="r-num">${f.tables} 卓</span>
+        <span class="r-rev">${f.seats} 席</span>
+      </div>`;
+    }
+    html += `<p class="muted">增築すると新しい客席が増えます。${fc > 1 ? '客人とスタッフは<b>階段</b>で各階を行き来します。' : ''}</p>`;
+
+    if (fc >= 3) {
+      html += `<div class="section-title">増築</div>
+      <div class="card"><div class="card-head"><b>これ以上は増築できません</b><span class="role">3 階建て</span></div>
+      <div class="card-desc">すでに最上階まで増築済みです。席を増やしたいときは「設備・事件」で内装を整え、回転率を上げましょう。</div></div>`;
+    } else {
+      const next = fc + 1;
+      const cost = FLOOR_COST[next] || 0;
+      const afford = st.cash >= cost;
+      const addSeats = next === 2 ? 32 : 32;   // 樓上的座位數（參考值）
+      html += `<div class="section-title">増築</div>
+      <div class="card">
+        <div class="card-head"><b>${next}F を増築する</b><span class="role">${money(cost)}</span></div>
+        <div class="card-desc">客席が約 ${addSeats} 席増えます（4 人卓 ×8）。費用は 2F ¥800,000／3F ¥2,400,000、
+          まとめて増築するとその分だけかかります。</div>
+        <div class="card-actions">
+          <button class="buy" data-floor="${next}" ${afford ? '' : 'disabled'}>${next}F を増築（${money(cost)}）</button>
+        </div>
+      </div>`;
+      if (fc === 1 && st.cash >= (FLOOR_COST[2] || 0) + (FLOOR_COST[3] || 0)) {
+        html += `<div class="card">
+          <div class="card-head"><b>一気に 3F まで</b><span class="role">${money((FLOOR_COST[2] || 0) + (FLOOR_COST[3] || 0))}</span></div>
+          <div class="card-desc">2F と 3F をまとめて増築します（2 層分の費用）。</div>
+          <div class="card-actions"><button data-floor="3">3F まで増築</button></div>
+        </div>`;
+      }
+    }
+    host.innerHTML = html;
+    host.querySelectorAll('[data-floor]').forEach((b) => b.addEventListener('click', () => {
+      const res = this.hooks.onFloor?.(Number(b.dataset.floor));
+      if (res && res.ok) this.toast(`${res.floorCount} 階に増築しました（${money(res.cost)}）`, 'good');
+      else if (res && res.error) this.toast(res.error, 'bad');
+      this.renderExpand();
+    }));
+  }
+
+  /** 制服：職種ごとに一括で選ぶ／個人ごとに選ぶ */
+  _uniformSwatch(u) {
+    const c = (col) => `<i class="sw" style="background:${esc(col || '#888')}"></i>`;
+    return `<span class="sw-row">${c(u.shirt)}${c(u.vest)}${c(u.pants)}${c(u.hat || u.accent)}</span>`;
+  }
+
+  renderUniforms() {
+    const host = $('shop-uniform');
+    if (!host) return;
+    const st = this.game;
+    const roles = [
+      { role: 'chef', jp: '料理人', zh: '廚師' },
+      { role: 'waiter', jp: 'ホール', zh: '服務生' }
+    ];
+    let html = '';
+    for (const r of roles) {
+      const members = st.staff.filter((s) => s.role === r.role);
+      const ids = uniformsForRole(r.role);
+      html += `<div class="section-title">${r.jp}の制服（${r.zh}）　${members.length} 人</div>`;
+      if (!members.length) html += `<div class="empty">${r.jp}がいません。「従業員 → 招募」で雇ってください。</div>`;
+      for (const uid of ids) {
+        const u = uniformById(uid);
+        const used = members.filter((s) => s.uniformId === uid).length;
+        html += `
+        <div class="card uniform-card${used ? ' on' : ''}">
+          <div class="card-head"><b>${esc(u.label)}</b><span class="role">${used ? used + ' 人が着用' : '未使用'}</span></div>
+          <div class="card-sub">${this._uniformSwatch(u)}<span>${esc(u.labelZh)}</span></div>
+          <div class="card-actions">
+            <button class="buy" data-role-uniform="${esc(r.role)}:${esc(uid)}" ${members.length ? '' : 'disabled'}>全員に適用</button>
+          </div>
+        </div>`;
+      }
+      if (members.length) {
+        html += `<div class="section-title">個人ごと</div>`;
+        for (const s of members) {
+          const opts = ids.map((uid) => {
+            const u = uniformById(uid);
+            return `<option value="${uid}" ${uid === s.uniformId ? 'selected' : ''}>${esc(u?.label || uid)}</option>`;
+          }).join('');
+          html += `<div class="uniform-row"><span class="nm"><b>${esc(s.name)}</b><i>${r.jp}</i></span>
+            <select data-uni="${esc(s.id)}">${opts}</select></div>`;
+        }
+      }
+    }
+    host.innerHTML = html;
+    host.querySelectorAll('[data-role-uniform]').forEach((b) => b.addEventListener('click', () => {
+      const [role, uid] = b.dataset.roleUniform.split(':');
+      const res = this.hooks.onRoleUniform?.(role, uid) || setRoleUniform(st, role, uid);
+      if (res && res.ok) this.toast(`${role === 'chef' ? '料理人' : 'ホール'} ${res.count} 人の制服を「${uniformById(uid)?.label}」にしました`, 'good');
+      this.renderUniforms();
+    }));
+    host.querySelectorAll('[data-uni]').forEach((sel) => sel.addEventListener('change', () => {
+      const res = this.hooks.onUniform?.(sel.dataset.uni, sel.value);
+      if (res && res.ok) this.toast(`制服を「${uniformById(sel.value)?.label}」にしました`, 'good');
+      this.renderUniforms();
+    }));
+  }
+
   /* ── 熱門菜單報表 ＋ 調理場の状況 ───────────────────────────── */
 
   renderReport() {
@@ -260,9 +415,29 @@ export class Hud {
     const st = this.game;
     const r = topMenuReport(st);
     const k = kitchenReport(st);
+    const c = crowdInfo(st);
     const rank = ['🥇', '🥈', '🏅', '4.', '5.', '6.', '7.', '8.'];
 
-    let html = `<div class="section-title">調理場　（料理人 ${k.counts.chefs} 人・調理中 ${k.counts.cooking}・出餐口 ${k.counts.ready}）</div>`;
+    let html = `<div class="section-title">にぎわい看板（門前の掲示）</div>
+    <div class="card">
+      <div class="card-head"><b>${c.full ? '満席' : '空席あり'}</b><span class="role">店内 ${c.insideGuests} 名 / ${c.seats} 席</span></div>
+      <div class="card-sub">
+        <span>本日の来客 <b>${c.todayGuests}</b> 名</span>
+        <span>行列 <b>${c.waiting}</b> 組（待ち ${c.maxQueueWait} 分）</span>
+        <span>ペット同伴 <b>${c.petInside}</b> 組</span>
+      </div>
+    </div>`;
+    if (c.waitingList.length) {
+      html += `<div class="section-title">候位名單（店外の列）</div>`;
+      html += c.waitingList.map((w, i) => `
+        <div class="report-row">
+          <span class="r-rank">${i + 1}.</span>
+          <span class="r-name"><b>${w.size} 名様</b><i>${esc(w.kindJp)}${w.pet ? '・🐾 ペット同伴' : ''}</i></span>
+          <span class="r-pct">${w.waitMin} 分</span>
+        </div>`).join('');
+    }
+
+    html += `<div class="section-title">調理場　（料理人 ${k.counts.chefs} 人・調理中 ${k.counts.cooking}・出餐口 ${k.counts.ready}）</div>`;
     if (!k.chefs.length) html += `<div class="empty">料理人がいません。「従業員 → 招募」で料理人を雇ってください。</div>`;
     for (const c of k.chefs) {
       const dishes = c.dishes.length
@@ -639,22 +814,15 @@ export class Hud {
     const st = this.game;
     const owned = st.equipment || [];
 
-    // 擴建樓層
+    // 擴建樓層移到「🏗 店舗」面板（這裡只留提示，避免兩個地方各有一份）
     const fc = st.plan?.floorCount || 1;
     if (fc < 3) {
-      const cost = fc === 1 ? 800000 : 2400000;
-      const label = fc === 1 ? '増築 2F' : '増築 3F';
-      let html = `<div class="section-title">拡張</div>`;
-      html += `<div class="card"><div class="card-head"><b>${label}</b><span class="role">${money(cost)}</span></div>
-        <div class="card-desc">現在 ${fc} 階。増築すると各階に新しい客席が追加されます。</div>
-        <div class="card-actions"><button class="buy" data-floor="${fc + 1}">${label}（${money(cost)}）</button></div></div>`;
-      host.innerHTML = html + host.innerHTML;
-      host.querySelectorAll('[data-floor]').forEach((b) => b.addEventListener('click', () => {
-        const res = this.hooks.onFloor?.(Number(b.dataset.floor));
-        if (res && res.ok) this.toast(`${res.floorCount} 階に増築しました（${money(res.cost)}）`, 'good');
-        else if (res && res.error) this.toast(res.error, 'bad');
-        this.renderShop();
-      }));
+      const cost = FLOOR_COST[fc + 1] || 0;
+      host.innerHTML = `<div class="section-title">増築</div>
+      <div class="card"><div class="card-head"><b>${fc + 1}F を増築できます</b><span class="role">${money(cost)}</span></div>
+        <div class="card-desc">現在 ${fc} 階。増築の詳細は「🏗 店舗」パネル（<kbd>E</kbd>）で。</div>
+        <div class="card-actions"><button class="buy" data-goshop="1">🏗 店舗を開く</button></div></div>` + host.innerHTML;
+      host.querySelector('[data-goshop]')?.addEventListener('click', () => this.toggle('panel-shop'));
     }
 
     let html = `<div class="section-title">設備（事件の被害を半分に）</div>`;
@@ -817,8 +985,10 @@ export class Hud {
     $('hud-seats').textContent = String(seatsOf(st));
     const q = $('hud-queue');
     if (q) {
-      q.textContent = String((st.queue || []).length);
-      q.style.color = (st.queue || []).length > 2 ? 'var(--shu-2)' : '';
+      const c = crowdInfo(st);
+      q.textContent = String(c.waiting);
+      q.title = c.waiting ? `待ち ${c.maxQueueWait} 分（最長）` : '行列なし';
+      q.style.color = c.waiting > 2 ? 'var(--shu-2)' : '';
     }
     const sf = $('hud-staff');
     if (sf) sf.textContent = String((st.staff || []).length);

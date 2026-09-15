@@ -45,7 +45,8 @@ import { RestaurantView, propStats } from '../src/scene/restaurant.js';
 import { createGame, tick, settleDay, startNextDay, resolveSpecialties, seatsOfPlan, money,
   hireStaff, fireStaff, candidateInfo, ROLE_LABEL, buyEquipment, repairEquipment,
   forceEvent, trafficMultiplier, setStaffUniform, topMenuReport, spawnGroup, allTables,
-  kitchenReport, rankings, setFloorCount, setBusinessHours, setSetting } from '../src/sim/game.js';
+  kitchenReport, rankings, setFloorCount, setBusinessHours, setSetting,
+  crowdInfo, findTable, setRoleUniform } from '../src/sim/game.js';
 import { serializeGame, deserializeGame, saveToSlot, loadFromSlot, slotInfo, deleteSlot, listSlots, storageAvailable } from '../src/sim/save.js';
 import { EVENTS } from '../src/data/events.js';
 import { UNIFORMS } from '../src/data/uniforms.js';
@@ -593,6 +594,100 @@ say('=== [16] 番付（この店 / 全地点）===');
     const st = deserializeGame(raw);
     return Array.isArray(rankings(st).global) && rankings(st).global.length === 28;
   })());
+}
+
+/* ── 17. 門口的にぎわい看板（店內人數／候位名單）──────────────── */
+say('');
+say('=== [17] にぎわい看板 ===');
+{
+  const gN = createGame({ locationId: 'tokyo_shibuya', seed: 31 });
+  const c0 = crowdInfo(gN);
+  check('看板資料欄位齊全',
+    typeof c0.insideGuests === 'number' && typeof c0.seats === 'number' && typeof c0.seatsFree === 'number'
+    && Array.isArray(c0.waitingList) && typeof c0.petOkTables === 'number',
+    JSON.stringify({ inside: c0.insideGuests, seats: c0.seats, free: c0.seatsFree, pet: c0.petOkTables }));
+  check('開店前店內 0 人', c0.insideGuests === 0 && c0.waiting === 0, `inside=${c0.insideGuests}`);
+
+  // 把所有桌子佔滿 → 應該出現候位名單
+  for (const t of allTables(gN.plan)) { t.occupied = true; t.groupId = 'x'; }
+  let guardN = 0;
+  while (gN.queue.length < 2 && guardN++ < 900) tick(gN, 1);
+  const c1 = crowdInfo(gN);
+  check('客滿時看板顯示候位', c1.waiting >= 2 && c1.waitingList.length === c1.waiting,
+    `行列 ${c1.waiting} 組 / 名單 ${c1.waitingList.length} 筆`);
+  check('候位名單有號碼、人數、等待時間',
+    c1.waitingList.every((w, i) => w.no === i + 1 && w.size > 0 && w.waitMin >= 0),
+    c1.waitingList.map((w) => `${w.no}.${w.size}名/${w.waitMin}分`).join(' '));
+  check('客滿時 seatsFree = 0', c1.seatsFree === 0, `${c1.seatsFree}`);
+  check('看板會算店內人數', c1.insideGuests > 0, `${c1.insideGuests} 名 / ${c1.seats} 席`);
+  check('看板會算本日來客', c1.todayGuests > 0, `${c1.todayGuests} 名`);
+  check('看板會算候位總人數', c1.queueGuests === c1.waitingList.reduce((a, w) => a + w.size, 0),
+    `${c1.queueGuests} 名`);
+
+  // 場景中的看板
+  check('場景有門口看板', !!view.noticeBoard && !!view.noticeBoard.canvas, view.noticeBoard ? 'ok' : '無');
+  view.update(0.016, gN);
+  check('看板內容會被更新', !!view._noticeKey, view.noticeBoard?.key ? view.noticeBoard.key.slice(0, 40) + '…' : '空');
+  const firstKey = view._noticeKey;
+  // 狀態改變後看板會重畫（key 不同）
+  tick(gN, 1);
+  view.update(0.016, gN);
+  check('狀態變化時看板會重畫', view._noticeKey !== firstKey || gN.minute === 0, `${firstKey.slice(0, 24)} → ${view._noticeKey.slice(0, 24)}`);
+}
+
+/* ── 18. ペット同伴席 ────────────────────────────────────────── */
+say('');
+say('=== [18] ペット同伴席 ===');
+{
+  const gP = createGame({ locationId: 'tokyo_shibuya', seed: 77 });
+  const petTables = allTables(gP.plan).filter((t) => t.petOk);
+  check('有ペット同伴席', petTables.length >= 2, `${petTables.length} 卓`);
+  check('寵物席都在一樓（方便帶寵物進出）', petTables.every((t) => t.floor === 0),
+    petTables.map((t) => `${t.id}:${t.seats}席`).join('、'));
+
+  // 帶寵物的客人優先坐寵物席（直接造幾組帶寵物的客人，結果才穩定）
+  const gPet = createGame({ locationId: 'tokyo_shibuya', seed: 4242 });
+  const petGroups = [];
+  for (let i = 0; i < 800 && petGroups.length < 3; i++) {
+    const g = spawnGroup(gPet, locationById('tokyo_shibuya'));
+    if (!g.pet) continue;
+    g.state = 'queue';
+    gPet.groups.push(g);
+    gPet.queue.push(g.id);
+    petGroups.push(g);
+  }
+  check('可以造出帶寵物的客人', petGroups.length === 3, `${petGroups.length} 組（寵物：${petGroups.map((g) => g.pet).join('/')}）`);
+  for (let i = 0; i < 24; i++) tick(gPet, 1);
+  const seatedPets = petGroups.filter((g) => g.tableId);
+  const allOnPetTable = seatedPets.length > 0 && seatedPets.every((g) => {
+    const t = allTables(gPet.plan).find((x) => x.id === g.tableId);
+    return !!t && t.petOk && g.petTable === true;
+  });
+  check('帶寵物的客人會被帶到ペット同伴席', allOnPetTable,
+    seatedPets.map((g) => `${g.size}名→${g.tableId}${g.petTable ? '(ペット席)' : '(普通桌)'}`).join('、') || '還沒入座');
+  check('今日有統計帶寵物的組數', (gPet.today.petGroups || 0) === 3, `${gPet.today.petGroups} 組`);
+
+  // 沒帶寵物的客人把寵物席留給需要的人
+  const gQ2 = createGame({ locationId: 'tokyo_shibuya', seed: 12 });
+  for (const t of allTables(gQ2.plan)) { t.occupied = false; t.dirty = 0; }
+  const normalTables = allTables(gQ2.plan).filter((t) => !t.petOk);
+  const petOnly = allTables(gQ2.plan).filter((t) => t.petOk);
+  // 只留一張普通桌與一張寵物桌 → 普通客人應該拿普通桌
+  for (const t of petOnly) { t.occupied = true; t.dirty = 1; }
+  for (const t of normalTables.slice(1)) { t.occupied = true; t.dirty = 1; }
+  const pickNormal = findTable(gQ2, 2, null, { pet: false, noPet: true });
+  check('普通客人優先坐普通桌', !!pickNormal && !pickNormal.petOk, pickNormal ? pickNormal.id : '無');
+  for (const t of petOnly) { t.occupied = false; t.dirty = 0; }
+  const pickPet = findTable(gQ2, 2, null, { pet: true });
+  check('帶寵物的客人優先坐寵物席', !!pickPet && pickPet.petOk, pickPet ? pickPet.id : '無');
+  // 寵物席全滿時，帶寵物的客人還是可以坐普通桌（不會被擋在門外）
+  for (const t of petOnly) { t.occupied = true; t.dirty = 1; }
+  for (const t of normalTables) { t.occupied = false; t.dirty = 0; }
+  const pickFallback = findTable(gQ2, 2, null, { pet: true });
+  check('寵物席客滿時仍可坐普通桌', !!pickFallback && !pickFallback.petOk, pickFallback ? pickFallback.id : '無');
+
+  // 場景：寵物席的擺設與寵物位置
+  check('場景有寵物墊／水碗的位置', (view.petSpots || []).length >= 2, `${(view.petSpots || []).length} 處`);
 }
 
 say('');

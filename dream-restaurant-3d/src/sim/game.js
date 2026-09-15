@@ -162,7 +162,7 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
   function buildFloorTables(floorIdx, rng2) {
     const tables = [];
     const mk = (id, x, z, seats, style) => {
-      const t = { id, x, z, floor: floorIdx, seats, style, occupants: [], seatPos: [], occupied: false, groupId: null, kind: 'free', dirty: 0 };
+      const t = { id, x, z, floor: floorIdx, seats, style, occupants: [], seatPos: [], occupied: false, groupId: null, kind: 'free', dirty: 0, petOk: false };
       const R = style === 'chabudai' ? 0.78 : 0.82;
       for (let i = 0; i < seats; i++) {
         const ang = (i / seats) * Math.PI * 2 + (style === 'chabudai' ? Math.PI / 4 : 0);
@@ -186,10 +186,12 @@ export function buildFloorPlan(seed = 1, rooms = {}) {
       for (const z of rows) for (const x of cols) mk('t' + (++n), x + (rng2() - 0.5) * 0.12, z + (rng2() - 0.5) * 0.12, 4, 'table');
       mk('t' + (++n), 3.1, -1.1, 4, 'table');
       mk('t' + (++n), 0.8, 0.15, 4, 'table');
-      mk('t' + (++n), -4.9, 2.7, 2, 'table');
-      mk('t' + (++n), -3.1, 2.75, 2, 'table');
-      mk('t' + (++n), 3.5, 2.5, 4, 'chabudai');
-      mk('t' + (++n), 5.3, 2.5, 4, 'chabudai');
+      const pet1 = mk('t' + (++n), -4.9, 2.7, 2, 'table');
+      const pet2 = mk('t' + (++n), -3.1, 2.75, 2, 'table');
+      const pet3 = mk('t' + (++n), 3.5, 2.5, 4, 'chabudai');
+      const pet4 = mk('t' + (++n), 5.3, 2.5, 4, 'chabudai');
+      // ペット同伴席：靠門口與緣側的座位可以帶寵物進來（場景會鋪寵物墊、放水碗）
+      for (const t of [pet1, pet2, pet3, pet4]) { t.petOk = true; t.kind = 'pet'; }
     } else {
       // 樓上：四人桌兩排（樓梯旁留走道）
       const cols = [-4.6, -1.9, 0.8, 3.4];
@@ -401,6 +403,67 @@ export function setStaffUniform(state, staffId, uniformId) {
   if (!s) return { ok: false, error: '沒有這位員工' };
   s.uniformId = uniformId;
   return { ok: true, staff: s };
+}
+
+/** 一次更換整個職種（料理人／ホール）所有人的制服 */
+export function setRoleUniform(state, role, uniformId) {
+  const list = (state.staff || []).filter((s) => s.role === role);
+  if (!list.length) return { ok: false, error: role === 'chef' ? '料理人がいません' : 'ホールがいません' };
+  for (const s of list) s.uniformId = uniformId;
+  return { ok: true, role, uniformId, count: list.length };
+}
+
+/* ---------------------------------------------------- 店の混み具合（看板用） */
+
+/**
+ * 店內／候位的即時狀況：門口的「にぎわい看板」與 HUD 都用這份資料。
+ *   insideGuests / insideGroups — 已經在店裡的人（不含還在街上走過來的）
+ *   seats / seatsFree           — 座位數與空位
+ *   waiting / waitingList       — 候位組數與每一組的人數、等了幾分鐘
+ *   petInside / petWaiting      — 帶寵物的組數
+ */
+export function crowdInfo(state) {
+  const groups = state.groups || [];
+  const tables = allTables(state.plan);
+  const seats = tables.reduce((a, t) => a + t.seats, 0);
+  const inside = groups.filter((g) => g.state !== 'entering' && g.state !== 'gone'
+    && g.state !== 'leaving' && g.state !== 'angryLeave');
+  const queue = state.queue || [];
+  const waitingList = queue.map((gid, i) => {
+    const g = groups.find((x) => x.id === gid);
+    return {
+      no: i + 1,
+      id: gid,
+      size: g?.size || 0,
+      kindJp: g?.kindJp || '',
+      waitMin: Math.round(g?.wait || 0),
+      pet: !!g?.pet,
+      maxWait: Math.round(g?.patience || 0)
+    };
+  });
+  const seatsFree = tables.filter((t) => !t.occupied && t.dirty === 0).reduce((a, t) => a + t.seats, 0);
+  const queueGuests = (state.queue || []).reduce((a, gid) => a + (groups.find((x) => x.id === gid)?.size || 0), 0);
+  return {
+    insideGuests: inside.reduce((a, g) => a + g.size, 0),
+    insideGroups: inside.length,
+    walkingIn: groups.filter((g) => g.state === 'entering').length,
+    seats,
+    seatsFree,
+    tables: tables.length,
+    tablesFree: tables.filter((t) => !t.occupied && t.dirty === 0).length,
+    petOkTables: tables.filter((t) => t.petOk).length,
+    waiting: queue.length,
+    waitingList,
+    queueGuests,
+    maxQueueWait: waitingList.reduce((a, w) => Math.max(a, w.waitMin), 0),
+    petInside: inside.filter((g) => g.pet).length,
+    petWaiting: waitingList.filter((w) => w.pet).length,
+    petToday: state.today?.petGroups || 0,
+    todayGuests: state.today?.guests || 0,
+    full: seatsFree <= 0,
+    phase: state.phase,
+    minute: Math.round(state.minute || 0)
+  };
 }
 
 /** 指派員工的待機位置（廚房／外場） */
@@ -735,6 +798,7 @@ export function spawnGroup(state, loc) {
     });
   }
   state.today.kindCount[kind] = (state.today.kindCount[kind] || 0) + 1;
+  if (pet) state.today.petGroups = (state.today.petGroups || 0) + 1;
   bumpLedger(state, 'kinds', kind, { groups: 1, guests: size });
   bumpLedger(state, 'hours', String(Math.min(23, Math.floor(state.minute / 60))), { groups: 1, guests: size });
   return g;
@@ -756,16 +820,33 @@ export function pickFloorForGroup(state, size) {
   // 若全部沒空位，還是分配到 0 樓（等等候位）
   return best;
 }
-export function findTable(state, size, floorIdx = null) {
+/**
+ * 找一張適合的桌子。
+ * @param {object} [opts] opts.pet = true → 帶寵物的客人優先坐「ペット同伴席」
+ *                       opts.noPet = true → 沒帶寵物的客人先避開寵物席
+ */
+export function findTable(state, size, floorIdx = null, opts = {}) {
   const tables = allTables(state.plan).filter((t) => floorIdx === null || t.floor === floorIdx);
-  let best = null;
-  for (const t of tables) {
-    if (t.occupied || t.dirty > 0) continue;
-    if (t.seats < size) continue;
-    const waste = t.seats - size;
-    if (!best || waste < best.waste) best = { t, waste };
+  const pick = (wantPet) => {
+    let best = null;
+    for (const t of tables) {
+      if (t.occupied || t.dirty > 0) continue;
+      if (t.seats < size) continue;
+      if (wantPet !== null && !!t.petOk !== wantPet) continue;
+      const waste = t.seats - size;
+      if (!best || waste < best.waste) best = { t, waste };
+    }
+    return best ? best.t : null;
+  };
+  if (opts.pet) {
+    // 帶寵物：先找寵物席，真的客滿才坐普通桌（寵物還是可以一起進店）
+    return pick(true) || pick(null);
   }
-  return best ? best.t : null;
+  if (opts.noPet) {
+    // 沒帶寵物：先坐普通桌，把寵物席留給需要的人
+    return pick(false) || pick(null);
+  }
+  return pick(null);
 }
 
 function orderFor(state, group) {
@@ -1129,11 +1210,12 @@ function removeFromQueue(state, id) {
 /** 試著幫這一組找位子：找到就保留桌位並建立「帶位」任務 */
 function trySeatTable(state, g) {
   if (g.tableId) return true;
-  const table = findTable(state, g.size);
+  const table = findTable(state, g.size, null, { pet: !!g.pet, noPet: !g.pet });
   if (!table) return false;
   table.occupied = true;
   table.groupId = g.id;
   g.tableId = table.id;
+  g.petTable = !!table.petOk;
   g.seatIdx = [];
   for (let i = 0; i < g.size; i++) {
     g.seatIdx.push(i % table.seats);
@@ -1714,5 +1796,6 @@ export default {
   hireStaff, fireStaff, candidateInfo, refreshCandidates, taskSummary, drainEvents,
   buyEquipment, repairEquipment, EQUIPMENT_CATALOG, setStaffUniform, topMenuReport, spawnGroup,
   setFloorCount, allTables, pickFloorForGroup,
-  kitchenReport, rankings, locationPotential, emptyLedger, ensureLedger
+  kitchenReport, rankings, locationPotential, emptyLedger, ensureLedger,
+  setRoleUniform, crowdInfo, FLOOR_COST
 };

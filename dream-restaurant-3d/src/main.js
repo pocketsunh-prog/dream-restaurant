@@ -8,7 +8,7 @@ import { RestaurantView } from './scene/restaurant.js';
 import {
   createGame, tick, settleDay, startNextDay, moveToLocation, setStars,
   clockText, money, OPEN_MINUTE, CLOSE_MINUTE, drainEvents, setBusinessHours, setSetting,
-  allTables, TASK_KINDS, ROLE_LABEL
+  allTables, TASK_KINDS, ROLE_LABEL, setRoleUniform, crowdInfo, setFloorCount, spawnGroup
 } from './sim/game.js';
 import { Hud, seatsOf } from './ui/hud.js';
 import { locationById } from './data/locations.js';
@@ -149,15 +149,12 @@ const hud = new Hud(game, {
   onFloor: (n) => {
     const res = setFloorCount(game, n);
     if (res.ok) {
+      // 擴建後重建場景（adoptFrom 會把爐火／調理標籤／候位繩等一起換新）
       const fresh = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
-      Object.assign(restaurant, {
-        root: fresh.root, groupMeshes: fresh.groupMeshes, staffMeshes: fresh.staffMeshes,
-        staffGroup: fresh.staffGroup, passDishes: fresh.passDishes, dirtyMarks: fresh.dirtyMarks,
-        lampPointers: fresh.lampPointers, tableProps: fresh.tableProps, porchLight: fresh.porchLight,
-        floorY: fresh.floorY, tatamiY: fresh.tatamiY, shell: fresh.shell, floorGroups: fresh.floorGroups,
-        _clock: 0, _passShown: -1, _dirtyShown: ''
-      });
+      restaurant.dispose();
+      restaurant.adoptFrom(fresh);
       hud.renderShop && hud.renderShop();
+      hud.update();
     }
     return res;
   },
@@ -167,6 +164,17 @@ const hud = new Hud(game, {
       // 重建該員工的 3D 模型（制服顏色不同）
       const sm = restaurant.staffMeshes.get(staffId);
       if (sm) { restaurant.staffGroup.remove(sm); restaurant.staffMeshes.delete(staffId); }
+    }
+    return res;
+  },
+  onRoleUniform: (role, uniformId) => {
+    const res = setRoleUniform(game, role, uniformId);
+    if (res.ok) {
+      // 整個職種換制服 → 把這些員工的模型全部丟掉，下一帧重建
+      for (const s of game.staff.filter((x) => x.role === role)) {
+        const sm = restaurant.staffMeshes.get(s.id);
+        if (sm) { restaurant.staffGroup.remove(sm); restaurant.staffMeshes.delete(s.id); }
+      }
     }
     return res;
   },
@@ -200,24 +208,7 @@ const hud = new Hud(game, {
 function rebuildPlan() {
   restaurant.dispose();
   const next = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
-  // 讓新的 view 取代舊的（用屬性交換避免重新賦值 const）
-  Object.assign(restaurant, {
-    root: next.root,
-    groupMeshes: next.groupMeshes,
-    staffMeshes: next.staffMeshes,
-    staffGroup: next.staffGroup,
-    passDishes: next.passDishes,
-    dirtyMarks: next.dirtyMarks,
-    _passShown: -1,
-    _dirtyShown: '',
-    lampPointers: next.lampPointers,
-    tableProps: next.tableProps,
-    porchLight: next.porchLight,
-    floorY: next.floorY,
-    tatamiY: next.tatamiY,
-    _clock: 0
-  });
-  // 用原型方法綁回新資料（restaurant 仍是原實例）
+  restaurant.adoptFrom(next);
   hud.update();
 }
 
@@ -232,6 +223,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'm') hud.toggle('panel-menu');
   else if (k === 'r') { hud.toggle('panel-report'); hud.renderReport(); }
   else if (k === 't') { hud.toggle('panel-rank'); hud.renderRank(); }
+  else if (k === 'e') { hud.toggle('panel-shop'); hud.renderShopPanel(); }
   else if (k === 'k') focusCook();
   else if (k === 'o') hud.toggle('panel-settings');
   else if (k === 'h') hud.toggle('panel-help');
@@ -428,25 +420,10 @@ function applyGraphics() {
 function adoptState(next) {
   game = next;
   hud.game = next;
-  restaurant.dispose();
+  const prev = restaurant;
   const fresh = new RestaurantView(scene, game.plan, { location: locationById(game.locationId) });
-  Object.assign(restaurant, {
-    root: fresh.root,
-    groupMeshes: fresh.groupMeshes,
-    staffMeshes: fresh.staffMeshes,
-    staffGroup: fresh.staffGroup,
-    passDishes: fresh.passDishes,
-    dirtyMarks: fresh.dirtyMarks,
-    lampPointers: fresh.lampPointers,
-    tableProps: fresh.tableProps,
-    porchLight: fresh.porchLight,
-    floorY: fresh.floorY,
-    tatamiY: fresh.tatamiY,
-    shell: fresh.shell,
-    _clock: 0,
-    _passShown: -1,
-    _dirtyShown: ''
-  });
+  prev.dispose();
+  restaurant.adoptFrom(fresh);
   applyGraphics();
   camera.fov = game.settings?.fov ?? 46;
   camera.updateProjectionMatrix();
@@ -631,6 +608,17 @@ window.DREAM3D = {
   applyGraphics,
   setStars(n) { setStars(game, n); hud.renderMenu(); return this.info; },
   openPanel(id) { hud.toggle(id); },
+  /** 測試／展示用：馬上叫幾組帶寵物的客人來（看ペット同伴席的運作） */
+  spawnPet(n = 2) {
+    let made = 0;
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < 400; k++) {
+        const g = spawnGroup(game, locationById(game.locationId));
+        if (g.pet) { game.groups.push(g); made++; break; }
+      }
+    }
+    return { ok: made > 0, made };
+  },
   focusCook(staffId, immediate = false) { return focusCook(staffId, immediate); },
   focusStaff(id, dist) { return focusStaff(id, dist, true); },
   locationName(id) { return locationById(id)?.name; }
@@ -675,6 +663,19 @@ if (params.get('stab')) {
     document.querySelectorAll('#settings-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.stab === hud._settingsTab));
     hud.renderSettings();
   } catch (e) { console.warn('stab failed', e); }
+}
+// ?pets=2 → 開場先叫 2 組帶寵物的客人（展示／截圖用），可搭配 ?ff= 讓他們入座
+if (params.get('pets')) {
+  window.DREAM3D.spawnPet(Math.max(1, Number(params.get('pets')) || 2));
+  if (!ff) window.DREAM3D.fastForward(40);
+}
+// ?shoptab=expand|uniform → 開場直接開店舗面板的指定分頁（測試用）
+if (params.get('shoptab')) {
+  try {
+    hud._shopTab = params.get('shoptab');
+    hud.toggle('panel-shop');
+    hud.renderShopPanel();
+  } catch (e) { console.warn('shoptab failed', e); }
 }
 if (params.get('shot')) gotoShot(Number(params.get('shot')));
 // ?cam=az,pol,dist,tx,ty,tz → 直接指定機位（驗證用）
@@ -734,6 +735,8 @@ if (params.get('uitest') === '1') {
   const textOf = (id) => (host(id)?.textContent || '');
   probe('panel-rank(local)', () => { hud.toggle('panel-rank'); hud._rankTab = 'local'; hud.renderRank(); });
   probe('panel-rank(global)', () => { hud._rankTab = 'global'; hud.renderRank(); });
+  probe('panel-shop(expand)', () => { hud.toggle('panel-shop'); hud._shopTab = 'expand'; hud.renderShopPanel(); });
+  probe('panel-shop(uniform)', () => { hud._shopTab = 'uniform'; hud.renderShopPanel(); });
   probe('panel-report', () => { hud.toggle('panel-report'); hud.renderReport(); });
   probe('panel-staff(roster)', () => { hud._staffTab = 'roster'; hud.toggle('panel-staff'); hud.renderStaff(); });
   probe('panel-staff(hire)', () => { hud._staffTab = 'hire'; hud.renderStaff(); });
@@ -756,8 +759,36 @@ if (params.get('uitest') === '1') {
   const repText = textOf('report-body');
   rep.push(`CHECK report hasKitchen=${/調理場/.test(repText)} hasPass=${/出餐口/.test(repText)} hasTop=${/今日点単ランキング/.test(repText)}`);
   if (host('customer-detail')?.innerHTML) rep.push('CHECK customer detail rendered');
-  // 場景與模擬是否一致（客人／員工有沒有真的畫出來）：先手動跑一幀讓場景建出人物
+  // 店舗面板：實際按下「増築 2F」與「全員に適用」，確認真的生效
+  probe('shop: expand 2F', () => {
+    hud.toggle('panel-shop'); hud._shopTab = 'expand'; hud.renderShopPanel();
+    const btn = document.querySelector('#shop-expand [data-floor="2"]');
+    if (!btn) throw new Error('找不到増築按鈕（可能已經 2 階以上）');
+    const errs = [];
+    const onErr = (e) => errs.push(e.message || String(e.reason || e));
+    addEventListener('error', onErr);
+    addEventListener('unhandledrejection', onErr);
+    btn.click();
+    removeEventListener('error', onErr);
+    removeEventListener('unhandledrejection', onErr);
+    if (errs.length) throw new Error('クリックで例外：' + errs.join(' / '));
+    if ((game.plan.floorCount || 1) < 2) throw new Error(`點擊後樓層沒變（cash=${Math.round(game.cash)} disabled=${btn.disabled}）`);
+  });
+  probe('shop: role uniform', () => {
+    hud._shopTab = 'uniform'; hud.renderShopPanel();
+    const b = document.querySelector('#shop-uniform [data-role-uniform^="chef:"]');
+    if (!b) throw new Error('找不到料理人制服按鈕');
+    b.click();
+    const want = b.dataset.roleUniform.split(':')[1];
+    if (!game.staff.filter((s) => s.role === 'chef').every((s) => s.uniformId === want)) throw new Error('制服沒有全部套用');
+  });
+  rep.push(`CHECK shop floors=${game.plan.floorCount} floorGroups=${(restaurant.floorGroups || []).length} cookFx=${!!restaurant.cookFx} chefUniform=${game.staff.find((s) => s.role === 'chef')?.uniformId}`);
+  hud.closeAll();
+  // 場景與模擬是否一致（客人／員工有沒有真的畫出來）：先手動跑一幀讓場景建出人物、也讓看板畫一次
   restaurant.update(0.016, game);
+  const ci = crowdInfo(game);
+  rep.push(`CHECK crowd inside=${ci.insideGuests} seats=${ci.seats} free=${ci.seatsFree} waiting=${ci.waiting} list=${ci.waitingList.length} petOk=${ci.petOkTables} noticeKey=${restaurant._noticeKey ? 'set' : 'empty'}`);
+  rep.push(`CHECK petGroupsToday=${ci.petToday} petSpots=${(restaurant.petSpots || []).length} petTableGroup=${(game.groups || []).filter((g) => g.petTable).length}`);
   let visibleGuests = 0, meshCount = 0;
   for (const [, rec] of restaurant.groupMeshes) {
     for (const m of rec.meshes) { meshCount++; if (m.visible) visibleGuests++; }
