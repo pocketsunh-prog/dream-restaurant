@@ -267,6 +267,10 @@ function spawnCustomers(state, dtMin, rng) {
     c.path = path || [];
     c.pathIndex = 0;
     c.state = 'arriving';
+    // 常連の Cherish が來たらログに出す（特別なスプライトで歩いてくる）
+    if (c.type === 'cherish') {
+      pushLog(state, '常連の Cherish が來店（今日もおひとり様）', 'good');
+    }
   }
 }
 

@@ -29,6 +29,12 @@ const LOCATION_TYPE_BIAS = {
 
 export function typeName(type) { return B.CUSTOMER_TYPES[type]?.name || '顧客'; }
 
+/**
+ * 這個客層要用哪一張「スプライトシート」來畫（沒有就用程序化像素人物）。
+ * Cherish 是唯一的例外：她有 6 コマの歩行シート（assets/cherish-walk.png）。
+ */
+const TYPE_SHEET = { cherish: 'cherish' };
+
 /** 這一組幾個人的範圍 */
 export function partyRange(type) {
   return B.CUSTOMER_TYPES[type]?.party || [1, 2];
@@ -66,7 +72,13 @@ export function pickCustomerType(state, rng) {
 }
 
 export function makeCustomer(state, rng, opts = {}) {
-  const type = opts.type || pickCustomerType(state, rng);
+  // テスト／デモ用：state.sim.forceType が入っていれば次の數組だけその客層にする
+  let forced = null;
+  if (!opts.type && state.sim && state.sim.forceTypeLeft > 0 && state.sim.forceType) {
+    forced = state.sim.forceType;
+    state.sim.forceTypeLeft -= 1;
+  }
+  const type = opts.type || forced || pickCustomerType(state, rng);
   const loc = getLocation(state.locationId);
   const patienceRange = B.PATIENCE[type] || [40, 60];
   const [pMin, pMax] = partyRange(type);
@@ -77,7 +89,11 @@ export function makeCustomer(state, rng, opts = {}) {
   const customer = {
     uid: `c${state.day}_${state.sim.customersSpawned}_${Math.floor(rng.next() * 9999)}`,
     type,
-    appearance: randomAppearance(rng),
+    appearance: (() => {
+      const look = randomAppearance(rng);
+      const sheet = TYPE_SHEET[type];
+      return sheet ? Object.assign({}, look, { sheet, name: typeName(type) }) : look;
+    })(),
     mood: rng.range(0, 12),
     patience: rng.range(patienceRange[0], patienceRange[1]) * (type === 'office' ? 0.85 : 1) *
       (1 + (partySize - 1) * B.PARTY_PATIENCE_BONUS),

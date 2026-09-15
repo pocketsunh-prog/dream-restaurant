@@ -19,6 +19,7 @@ import { setMusic, resumeMusic, sfx, initAudio } from './core/audio.js';
 import { hasAnySave, loadGame } from './core/save.js';
 import { loadAtlas, setAtlasLoadedHook } from './render/materials.js';
 import { clearSpriteCache } from './render/sprites.js';
+import { loadActors } from './render/actors.js';
 import { getLocation, LOCATIONS } from './data/locations.js';
 import { getDish } from './data/dishes.js';
 import { furnitureById, FURNITURE } from './data/furniture.js';
@@ -66,6 +67,8 @@ try {
 // スプライトキャッシュを捨てて、柄入りのタイルを描き直させる。
 setAtlasLoadedHook(() => { try { clearSpriteCache(); } catch { /* ignore */ } });
 loadAtlas();
+// スプライトシート式の常連客（Cherish）も起動時に読み込む
+loadActors();
 
 /**
  * 縮放策略：以「裝置像素」為單位取整數倍，再換算回 CSS 尺寸。
@@ -1091,6 +1094,13 @@ function main() {
       else if (show === 'gameover') settleUI.showGameOver({ state: s, ui, store });
     }
     if (params.get('panel')) windows.openWindow(params.get('panel'));
+    // ?cherish=1 → 直後のスポーンを Cherish にする（自動化テスト／截圖用）
+    const cher = Number(params.get('cherish') || 0);
+    if (cher > 0) {
+      const s = store.getState();
+      s.sim.forceType = 'cherish';
+      s.sim.forceTypeLeft = cher;
+    }
     // ?floorMat=waga-0-1&wallMat=waga-3-2 → 直接貼和柄（自動化測試／分享用）
     if (params.get('floorMat')) store.dispatch({ type: 'SET_SETTING', key: 'floorMat', value: params.get('floorMat') });
     if (params.get('wallMat')) store.dispatch({ type: 'SET_SETTING', key: 'wallMat', value: params.get('wallMat') });

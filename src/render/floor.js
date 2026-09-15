@@ -29,6 +29,7 @@ import { getDish } from '../data/dishes.js';
 import {
   materialsOf, projectedPattern, FLOOR_BASIS, WALL_L_BASIS, WALL_R_BASIS,
 } from './materials.js';
+import { actorReady, drawActor } from './actors.js';
 
 export {
   TILE_W, TILE_H, GRID_W, GRID_H, ORIGIN_X, ORIGIN_Y, LOGICAL_W, LOGICAL_H,
@@ -1639,6 +1640,30 @@ export class FloorRenderer {
     // → view.fx.shadows 關閉時完全不畫
     if (seated && fxx.shadows) drawContactShadow(ctx, p.px, p.py + 3, kind === 4 ? 19 : 20, 5);
     const rec = this._rec(this._peopleRecs, idx);
+    // スプライトシートの登場人物（Cherish）：6 コマ歩行を循環させて描く。
+    // シートに影は無いので、歩いているときも接觸陰影を足して接地させる。
+    const sheetId = app && typeof app.sheet === 'string' ? app.sheet : null;
+    if (sheetId && actorReady(sheetId)) {
+      if (!seated && fxx.shadows) drawContactShadow(ctx, p.px, p.py + 3, 18, 5);
+      const walkPhase = Math.floor((e.x + e.y) * 3) + (frame | 0);
+      const box = drawActor(ctx, sheetId, p.px, fy, {
+        pose,
+        dir: dirRaw,
+        seated,
+        phase: walkPhase,
+        out: rec.box,
+      });
+      if (box && this._hitPeopleN < 512) {
+        rec.box.x = box.x - 1;
+        rec.box.y = box.y - 4;
+        rec.box.w = box.w + 2;
+        rec.box.h = box.h + 6;
+        rec.hit = rec.box;
+        this._hitPeople[this._hitPeopleN] = rec;
+        this._hitPeopleN++;
+      }
+      return rec.box;
+    }
     const box = drawPerson(ctx, app, p.px, fy, {
       dir: dirRaw,
       frame: entFrame,

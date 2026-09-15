@@ -46,7 +46,8 @@ export const PATIENCE = {
   family: [70, 105],
   tourist: [62, 96],
   critic: [59, 86],
-  vip: [51, 74]
+  vip: [51, 74],
+  cherish: [82, 124]        // 常連さんなので気長に待ってくれる
 };
 
 /** 食譜標示的調理時間 → 實際經過的營業時間（原作 30 分鐘是食譜上的說法） */
@@ -109,14 +110,17 @@ export const CUSTOMER_TYPES = {
   tour_group: { name: '旅行團', party: [5, 8], tags: ['local', 'tourist', 'rice', 'soup'], taste: 60, bucket: 'outside' },
   critic: { name: '美食評論家', party: [1, 2], tags: ['premium', 'seafood', 'soup', 'local'], taste: 55, bucket: 'outside' },
   blogger: { name: '美食部落客', party: [1, 2], tags: ['premium', 'sweet', 'dessert', 'tourist'], taste: 58, bucket: 'outside' },
-  vip: { name: '貴賓', party: [2, 4], tags: ['premium', 'seafood', 'meat'], taste: 50, bucket: 'outside' }
+  vip: { name: '貴賓', party: [2, 4], tags: ['premium', 'seafood', 'meat'], taste: 50, bucket: 'outside' },
+  // 常連のお客さん「Cherish」：スプライトシート（6 コマ歩行）で描かれる特別な常客。
+  // 一人でふらっと來て、甘い物とコーヒーを好む。満足すると噂を広めてくれる。
+  cherish: { name: 'Cherish', party: [1, 1], tags: ['sweet', 'dessert', 'caffeine', 'premium'], taste: 72, bucket: 'local' }
 };
 
 /** 各類型出現的基礎權重（會再依地點顧客組成與時段調整） */
 export const TYPE_BASE_WEIGHT = {
   student: 22, office: 16, family: 14, couple: 9, colleagues: 7, regulars: 6,
   kids_party: 5, elderly: 5, soldiers: 3, cyclists: 4,
-  tourist: 10, tour_group: 2.5, critic: 1.2, blogger: 1.6, vip: 1.2
+  tourist: 10, tour_group: 2.5, critic: 1.2, blogger: 1.6, vip: 1.2, cherish: 1.8
 };
 
 /** 一組客人的消費：整組金額 = 餐點小計 × 人數 × 這個折數（分食折扣，人多不會等比例貴） */

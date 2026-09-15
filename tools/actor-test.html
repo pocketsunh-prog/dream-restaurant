@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Cherish スプライトシート検証 — Dream Restaurant</title>
+<style>
+  body { background:#20242d; color:#cfe8d0; font:13px/1.7 Consolas,monospace; padding:16px; margin:0 }
+  pre { white-space:pre-wrap; margin:0 0 10px }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start }
+  figure { margin:0 }
+  figcaption { color:#9fb0c4; font-size:11px; margin:3px 0 8px }
+  canvas { border:1px solid #4b5563; display:block; image-rendering:pixelated; background:
+    repeating-conic-gradient(#2b303a 0% 25%, #232830 0% 50%) 50% / 12px 12px }
+</style>
+</head>
+<body>
+<pre id="out">initializing…</pre>
+<div class="row">
+  <figure><canvas id="cFrames"></canvas><figcaption>切り出した 6 コマ（背景をクロマキーで抜いた状態・3 倍）</figcaption></figure>
+  <figure><canvas id="cScene" width="640" height="480" style="image-rendering:pixelated;transform:scale(1.4);transform-origin:0 0"></canvas>
+    <figcaption>店内に立たせたところ（Cherish 3 人＋一般客 2 人）</figcaption></figure>
+  <figure><canvas id="cZoom" style="image-rendering:pixelated"></canvas>
+    <figcaption>Cherish の足元を 4 倍（背景が抜けているか確認）</figcaption></figure>
+</div>
+<script type="module">
+import { createNewGame } from '../src/core/state.js';
+import { reduce } from '../src/core/actions.js';
+import { FloorRenderer } from '../src/render/floor.js';
+import { loadActors, actorReady, actorStatus, actorFrameCount, drawActor } from '../src/render/actors.js';
+import { makeCustomer, seatParty } from '../src/sim/customer.js';
+import { makeRng } from '../src/core/rng.js';
+
+const out = document.getElementById('out');
+const lines = [];
+let fails = 0;
+const check = (name, ok, detail = '') => {
+  if (!ok) fails++;
+  lines.push(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' :: ' + detail : ''}`);
+};
+
+try {
+  await loadActors();
+  const st = actorStatus('cherish');
+  lines.push('=== [1] スプライトシート ===');
+  check('Cherish のシートが読み込めた', st.state === 'ready', `${st.state}${st.error ? ' — ' + st.error : ''}`);
+  check('6 コマに切り出せた', actorFrameCount('cherish') === 6, `${actorFrameCount('cherish')} コマ`);
+  check('描畫準備 OK', actorReady('cherish') === true);
+
+  // 切り出し結果を 3 倍で並べる（背景が抜けているか目視できるように）
+  const fc = document.getElementById('cFrames');
+  const s3 = 3;
+  let fw = 0, fh = 0;
+  {
+    const probe = document.createElement('canvas');
+    const box = drawActor(probe.getContext('2d'), 'cherish', 0, 0, { pose: 'walk', phase: 0 });
+    fw = box.w; fh = box.h;
+  }
+  fc.width = fw * 6 * s3 + 7 * s3;
+  fc.height = fh * s3 + 2 * s3;
+  const fctx = fc.getContext('2d');
+  fctx.imageSmoothingEnabled = false;
+  for (let i = 0; i < 6; i++) {
+    // drawActor は「足元座標」基準なので、ここでは直接フレームを並べる
+    drawActor(fctx, 'cherish', (i * (fw + 7) + fw / 2) * s3, fh * s3, { pose: 'walk', phase: i });
+  }
+  // 背景が透過しているか：左上の餘白が透明かどうかを見る
+  const frameData = fctx.getImageData(0, 0, fc.width, fc.height).data;
+  let transparent = 0;
+  for (let i = 3; i < frameData.length; i += 4) if (frameData[i] === 0) transparent++;
+  check('背景が透明になっている（クロマキー成功）', transparent > 200, `透明ピクセル ${transparent}`);
+
+  lines.push('');
+  lines.push('=== [2] 店内に立たせて描畫 ===');
+  const state = createNewGame(20240101);
+  reduce(state, { type: 'START_DAY' });
+  const rng = makeRng ? makeRng(12345) : state.rng;
+  // 動いている状態に見えるよう、店内の通路に 5 人置く
+  const spots = [
+    { x: 4.5, y: 3.5 }, { x: 6.5, y: 5.5 }, { x: 8.5, y: 7.5 },
+    { x: 10.5, y: 4.5 }, { x: 12.5, y: 6.5 }
+  ];
+  state.sim.customers = [];
+  for (let i = 0; i < spots.length; i++) {
+    const c = makeCustomer(state, rng, i < 3 ? { type: 'cherish' } : undefined);
+    c.x = spots[i].x;
+    c.y = spots[i].y;
+    c.state = 'ordering';
+    c.dir = i % 2 ? 'W' : 'E';
+    c.path = [];
+    state.sim.customers.push(c);
+  }
+  const canvas = document.getElementById('cScene');
+  const view = { frame: 0, tick: 0, showGrid: false, fx: { pools: false, shadows: true, ao: false, vignette: false, outsideShade: false, shafts: false } };
+  const r = new FloorRenderer(canvas);
+  r.render(state, view);
+  const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+
+  // Cherish の髪（茶）とシャツ（暗い緑茶）に近い色が絵の中に存在するか
+  const near = (r0, g0, b0, tol) => {
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      if (Math.abs(data[i] - r0) <= tol && Math.abs(data[i + 1] - g0) <= tol && Math.abs(data[i + 2] - b0) <= tol) n++;
+    }
+    return n;
+  };
+  const hair = near(0x6b, 0x3f, 0x2a, 26);      // 髪（茶色）
+  const shirt = near(0x37, 0x4a, 0x45, 26);     // シャツ（暗い青緑）
+  const pants = near(0xe8, 0xea, 0xee, 22);     // 白いズボン
+  check('Cherish の髪色が絵に含まれる', hair > 30, `${hair} px`);
+  check('Cherish のシャツ色が絵に含まれる', shirt > 30, `${shirt} px`);
+  check('Cherish のズボン色が絵に含まれる', pants > 20, `${pants} px`);
+  check('シートの人物は一般客より大きい（32×48 に合わせた倍率）', fw <= 40 && fh <= 52, `${fw}×${fh}`);
+
+  // 実際に立っているところを 4 倍で切り出して見えるようにする
+  {
+    const p0 = r.tileToScreen(spots[0].x, spots[0].y);
+    const cw = 90, ch = 76, s4 = 4;
+    const zc = document.getElementById('cZoom');
+    zc.width = cw * s4; zc.height = ch * s4;
+    const zx = zc.getContext('2d');
+    zx.imageSmoothingEnabled = false;
+    zx.drawImage(canvas, Math.round(p0.px - cw / 2), Math.round(p0.py - ch + 14), cw, ch, 0, 0, cw * s4, ch * s4);
+  }
+
+  lines.push('');
+  lines.push(fails === 0 ? '<span style="color:#8ef0a0">ACTOR TEST: ALL PASSED</span>' : `<span style="color:#ff9090">ACTOR TEST: ${fails} FAILED</span>`);
+  out.innerHTML = lines.join('\n');
+  document.title = fails === 0 ? 'ACTOR-OK' : 'ACTOR-FAIL-' + fails;
+  console.log('ACTOR_TEST fails=' + fails + ' frames=' + actorFrameCount('cherish'));
+} catch (err) {
+  out.textContent = 'ERROR: ' + err.message + '\n' + err.stack;
+  document.title = 'ACTOR-ERROR';
+}
+</script>
+</body>
+</html>

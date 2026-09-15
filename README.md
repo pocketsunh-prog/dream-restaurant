@@ -141,6 +141,7 @@ tests/smoke.mjs         無 DOM 模擬煙霧測試
 tools/serve.mjs         零依賴靜態伺服器（預設 http://127.0.0.1:8080/）
 tools/ui-test.html      傢俱操作端到端 UI 測試（瀏覽器開 /tools/ui-test.html）
 tools/material-test.html  和柄素材驗證（切格、等角投影、貼圖後畫面真的改變）
+tools/actor-test.html   Cherish スプライトシート驗證（6 格切圖、去背、店內實際繪製）
 tools/zoom.html         截圖局部放大檢視（美術檢查）
 tools/weather-clip-test.html  天氣覆蓋層裁切驗證（店內不得被天氣蓋到；瀏覽器開）
 tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不被網點模糊化；瀏覽器開）
@@ -149,7 +150,6 @@ tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不�
 ---
 
 ## 和柄素材（床材・壁紙）
-
 `assets/wagara-atlas.png` 是一張和柄（ちよがみ）見本帳，遊戲在啟動時自動讀入並**切成 60 種柄**
 （自動偵測格子線，切格時會把每格外圍的黑框修掉，接圖才不會出現黑格線）。
 
@@ -162,6 +162,29 @@ tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不�
   廚房與洗手間的磁磚、牆上的窗戶／壁燈／踢腳板都維持原本的樣子。
 - 選擇會存在存檔的 `state.settings.floorMat / wallMat`，讀檔後自動還原。
 - 測試網址：`?floorMat=waga-1-1&wallMat=waga-4-2`（直接貼指定柄，方便截圖與分享）。
+
+---
+
+## 常連客 Cherish（スプライトシート式の客）
+
+`assets/cherish-walk.png`（6 コマの歩行スプライト）を使った新しい客層「**Cherish**」を追加した。
+
+- **客層**：`balance.js` の `CUSTOMER_TYPES.cherish`（名前 Cherish、party `[1,1]`＝いつも一人、
+  好み `sweet / dessert / caffeine / premium`、舌が肥えている `taste: 72`、気長 `PATIENCE.cherish`）。
+  出現は基礎權重 1.8 のレア客（一般抽選に混ざる）。
+- **描き方**：`sim/customer.js` が `appearance.sheet = 'cherish'` を付けると、
+  `render/actors.js` がシートから描く（`render/floor.js` の人物パスが自動で切り替わる）。
+  - 読み込み時に**背景のベタ色（rgb 110,116,134）をクロマキーで透明化**（縁はアルファを段階的に落として、
+    輪郭に灰色のフチが殘らないようにしている）
+  - 列の「中身がある範囲」を自動検出して **6 コマに切り出し**、足元基準・32×48（既存の人物スプライト）に
+    合わせた倍率 0.75 で描く
+  - **歩行は 6 コマ循環**（位置＋模擬フレームから位相を決めるので、同じ場所では同じコマにならない）、
+    立ち止まれば 1 コマ目、`W` 方向は左右反転、座っているときは少し下げて椅子に座って見えるようにする
+- **効果**：満足して帰ると口コミで評價 +0.25（`sim/rating.js`）。來店時はログに
+  「常連の Cherish が來店（今日もおひとり様）」と出る。
+- **測試網址**：`?cherish=1`（次の 1 組を Cherish にする／デモ・截圖用。`?cherish=3` で 3 組）
+- 驗證：`tools/actor-test.html`（6 コマ切圖・去背・店內繪製をチェック、4 倍の拡大表示つき）
+  と `tests/smoke.mjs`（客層の生成・外觀標記・通常抽選での出現）でカバー。
 
 ---
 

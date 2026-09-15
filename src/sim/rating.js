@@ -17,6 +17,7 @@ export function applyCustomerMood(state, customer) {
   let delta = (m >= 0 ? (m / 100) * 0.4 : (m / 100) * 0.25) * weight;
   if (customer.leftAngry) delta -= 0.45 * weight;
   if (customer.wasCritic && customer.mood > 30) delta += 0.4;   // 評論家好評加成
+  if (customer.type === 'cherish' && customer.mood > 20) delta += 0.25;  // 常連 Cherish の口コミ
   // 區外客比較少，同一份意見在外面傳得比較遠
   if (bucket === 'outside') delta *= 1.45;
   // 一組人的聲量：人越多，一句話傳得越廣

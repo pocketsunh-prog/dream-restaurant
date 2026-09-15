@@ -11,6 +11,9 @@ import { getDish, dishesForStars } from '../src/data/dishes.js';
 import { getLocation } from '../src/data/locations.js';
 import { rebuildTables, seatCount } from '../src/sim/build.js';
 import { menuLimitFor } from '../src/core/state.js';
+import { makeCustomer } from '../src/sim/customer.js';
+import { makeRng } from '../src/core/rng.js';
+import { ACTORS } from '../src/render/actors.js';
 
 const DAYS = Number(process.argv[2] || 14);
 const SEED = Number(process.env.SEED || 20240101);
@@ -278,6 +281,27 @@ for (const w of state.stats.weekly) {
   console.log(`${String(w.week).padStart(2)}  d${w.startDay}-${w.endDay}  ${String(w.totalRank).padStart(5)}  ${String(w.ranks.taste).padStart(4)} ${String(w.ranks.service).padStart(4)} ${String(w.ranks.decor).padStart(4)} ${String(w.ranks.price).padStart(4)} ${String(w.ranks.popularity).padStart(4)}  ${w.stars}  ${w.prize}`);
 }
 console.log('分數:', JSON.stringify(state.stats.weekly.at(-1)?.scores || {}));
+
+/* --------------------------------------------------- 常連 Cherish（特別客層） */
+
+console.log('\n--- 常連 Cherish ---');
+{
+  const s2 = createNewGame(SEED + 7);
+  const rng2 = makeRng(4242);
+  const cher = makeCustomer(s2, rng2, { type: 'cherish' });
+  check(cher && cher.type === 'cherish', '指定客層可以建立 Cherish', cher && cher.type);
+  check(cher.partySize === 1, 'Cherish 一定是一個人來', String(cher.partySize));
+  check(cher.appearance && cher.appearance.sheet === 'cherish', '外觀帶有 sprite sheet 標記', cher.appearance && cher.appearance.sheet);
+  check(!!ACTORS[cher.appearance.sheet], '渲染層有對應的シート定義', Object.keys(ACTORS).join(','));
+  // 一般抽選也會出現（權重 > 0），且她的耐心比一般客層高
+  let seen = 0;
+  for (let i = 0; i < 5000; i++) {
+    const c = makeCustomer(s2, rng2);
+    if (c.type === 'cherish') seen++;
+  }
+  check(seen > 0, '一般抽選也會出現 Cherish', `${seen} / 5000 組`);
+  check((cher.patience || 0) > 0 && Number.isFinite(cher.patience), '耐心值有效', String(Math.round(cher.patience)));
+}
 
 /* ---------------------------------------------------------- 最終不變式 */
 
