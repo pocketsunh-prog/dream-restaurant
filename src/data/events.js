@@ -2,12 +2,17 @@
 // 《夢幻西餐廳》突發事件表（欄位形狀依 docs/ARCHITECTURE.md §2.5、內容依 GAME_PROMPT.md §3.11）
 //
 // kind      : positive | negative | neutral
+// weight    : 相對權重（越大越常出現）
+// minStars / maxStars : 只在該星級區間內抽得到
 // locations : null（全地點）或 LOCATIONS[].id 陣列
+// onlyWhileOpen : true 表示只在營業中才會觸發
 // mitigateBy: null 或 FURNITURE[].id 陣列 —— 買了對應防治設備，事件損失大幅下降
-// effects 僅可使用下列鍵：
+// effects 僅可使用下列鍵（皆由 src/sim/events.js 的 triggerEvent 實際讀取）：
 //   fame, reputation:{community,outside}, cash, moodAll,
 //   supplierPriceMul, trafficMul, trafficMulMinutes, damage, stockLoss
 //   damage ∈ 'ac' | 'stove' | 'fridge' | 'random_item' | null
+//   trafficMul 一定要搭配 trafficMulMinutes；負面事件的 fame／評價／cash／moodAll 請用負值
+// 另有選用欄位 onTrigger(state)（src/sim/events.js 會在套用 effects 後呼叫），本表未使用。
 
 export const EVENTS = [
   // ══════════════════════════ 正面 positive（13） ══════════════════════════
@@ -194,7 +199,7 @@ export const EVENTS = [
     kind: 'negative', weight: 3, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '兩桌客人同時捂著肚子站起來，臉色比桌上的魚還白。',
-    effects: { cash: 30000, fame: 8, moodAll: -0, reputation: { community: 35, outside: 25 } },
+    effects: { cash: -30000, fame: 8, moodAll: -0, reputation: { community: -35, outside: -25 } },
     log: '食物中毒：評價重挫，還得賠醫藥費。'
   },
   {
@@ -202,7 +207,7 @@ export const EVENTS = [
     kind: 'negative', weight: 6, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '一位客人拍桌大吼說湯是涼的，還要把整桌的帳都算在你頭上。',
-    effects: { moodAll: 10, reputation: { community: 12, outside: 6 } },
+    effects: { moodAll: 10, reputation: { community: -12, outside: -6 } },
     log: '奧客鬧場：鄰桌客人也跟著心情變差。'
   },
   {
@@ -210,7 +215,7 @@ export const EVENTS = [
     kind: 'negative', weight: 5, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: null,
     message: '廁所傳來一陣騷動，水已經慢慢從門縫底下流出來。',
-    effects: { cash: 3500, moodAll: 10, reputation: { community: 8, outside: 3 } },
+    effects: { cash: -3500, moodAll: 10, reputation: { community: -8, outside: -3 } },
     log: '廁所堵塞：清潔度崩盤。'
   },
   {
@@ -218,7 +223,7 @@ export const EVENTS = [
     kind: 'negative', weight: 4, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: ['fire_system'],
     message: '天花板開始滴水，正好滴在剛坐下的那桌客人頭上。',
-    effects: { cash: 12000, damage: 'random_item', moodAll: 6, reputation: { community: 5, outside: 2 } },
+    effects: { cash: -12000, damage: 'random_item', moodAll: 6, reputation: { community: -5, outside: -2 } },
     log: '漏水：裝潢受損，還得叫水電師傅。'
   },
   {
@@ -226,7 +231,7 @@ export const EVENTS = [
     kind: 'negative', weight: 3, minStars: 1, maxStars: 5,
     locations: null, onlyWhileOpen: true, mitigateBy: ['fire_extinguisher', 'fire_system'],
     message: '廚房飄出濃濃的瓦斯味，所有人立刻被趕到街上。',
-    effects: { cash: 15000, moodAll: 12, reputation: { community: 8, outside: 4 }, damage: 'stove' },
+    effects: { cash: -15000, moodAll: 12, reputation: { community: -8, outside: -4 }, damage: 'stove' },
     log: '瓦斯外洩：緊急停業檢修。'
   },
   {
@@ -270,6 +275,170 @@ export const EVENTS = [
     message: '衛生局來抽查，看了廚房與冰箱之後默默在表格上打了勾。',
     effects: { fame: 3, reputation: { community: 3, outside: 0 }, cash: -2000 },
     log: '衛生局檢查：合格通過，小幅加分。'
+  },
+
+  // ══════════════════════ 天氣／季節 weather（4） ══════════════════════
+  {
+    id: 'plum_rain', name: '梅雨鋒面',
+    kind: 'negative', weight: 6, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '雨下了整整一週，門口的傘架全滿，騎車的人寧願在家吃泡麵。',
+    effects: { cash: -3000, moodAll: -4, trafficMul: 0.78, trafficMulMinutes: 360 },
+    log: '梅雨鋒面：外帶與來客雙雙下滑。'
+  },
+  {
+    id: 'typhoon_day', name: '颱風假',
+    kind: 'negative', weight: 2, minStars: 2, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: ['fire_system', 'security_host'],
+    message: '市府宣布停班停課，鐵門被風吹得砰砰響，你只能提早拉下。',
+    effects: { cash: -18000, moodAll: -10, trafficMul: 0.5, trafficMulMinutes: 240, damage: 'random_item' },
+    log: '颱風假：被迫停業一天，還有設備受損。'
+  },
+  {
+    id: 'heat_wave', name: '熱浪來襲',
+    kind: 'negative', weight: 4, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: true, mitigateBy: ['security_host'],
+    message: '中午柏油路快要融化，冷氣開到最強還是吹不涼，電表轉得像陀螺。',
+    effects: { cash: -12000, moodAll: -9, reputation: { community: -3, outside: -1 }, damage: 'ac' },
+    log: '熱浪來襲：冷氣操到極限，電費暴增。'
+  },
+  {
+    id: 'sign_blown_down', name: '招牌被颱風吹壞',
+    kind: 'negative', weight: 2, minStars: 2, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: ['security_host'],
+    message: '颱風過後，你的招牌歪掛在半空中，路過的人抬頭都替你捏把冷汗。',
+    effects: { cash: -22000, fame: -4, reputation: { community: -7, outside: -4 }, damage: 'random_item', trafficMul: 0.85, trafficMulMinutes: 240 },
+    log: '招牌被吹壞：名號受損，得花錢重做。'
+  },
+
+  // ══════════════════════ 衛生／健康 hygiene（4） ══════════════════════
+  {
+    id: 'hygiene_crackdown', name: '衛生局突擊稽查',
+    kind: 'negative', weight: 4, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: ['fire_system'],
+    message: '稽查員沒預告就推門進來，戴著白手套直接往抽油煙機上方摸。',
+    effects: { cash: -20000, fame: -5, reputation: { community: -10, outside: -6 }, moodAll: -8 },
+    log: '衛生局突擊：限期改善並開罰。'
+  },
+  {
+    id: 'food_poison_probe', name: '食物中毒疑雲',
+    kind: 'negative', weight: 3, minStars: 2, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: ['cctv'],
+    message: '有客人上網說吃完你的店之後掛急診，衛生局要你把進貨單全部翻出來。',
+    effects: { cash: -15000, fame: -7, reputation: { community: -8, outside: -4 }, moodAll: -6 },
+    log: '食物中毒疑雲：雖然最後沒事，名聲已經受傷。'
+  },
+  // ══════════════════════ 人事 staffing（3） ══════════════════════
+  {
+    id: 'staff_turnover_wave', name: '離職潮',
+    kind: 'negative', weight: 3, minStars: 2, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '三天內走了兩個外場，排班表上出現一整排沒人顧的紅字。',
+    effects: { cash: -12000, moodAll: -12, reputation: { community: -7, outside: -3 } },
+    log: '離職潮：人手吃緊，還要發資遣費。'
+  },
+  {
+    id: 'intern_arrival', name: '實習生報到',
+    kind: 'positive', weight: 4, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '餐飲科的老師帶著三個實習生來報到，說要借你的廚房練一個月。',
+    effects: { cash: 6000, moodAll: 7, reputation: { community: 6, outside: 3 } },
+    log: '實習生報到：人手變多，士氣提升。'
+  },
+  {
+    id: 'exam_week_leave', name: '工讀生考試週請假',
+    kind: 'negative', weight: 6, minStars: 1, maxStars: 5,
+    locations: ['taipei_nanyang', 'taichung_zhonghua', 'zhongli_xinming'], onlyWhileOpen: true, mitigateBy: null,
+    message: '期中考週，三個工讀生同時遞假單，還附上課表證明自己真的不是偷懶。',
+    effects: { moodAll: -6, reputation: { community: -3, outside: -1 } },
+    log: '考試週請假：外場只剩你跟老闆娘。'
+  },
+
+  // ══════════════════════ 行銷／媒體 marketing（2） ══════════════════════
+  {
+    id: 'food_show_feature', name: '美食節目採訪',
+    kind: 'positive', weight: 3, minStars: 2, maxStars: 5,
+    locations: null, onlyWhileOpen: true, mitigateBy: null,
+    message: '主持人拿著麥克風走進來，說要介紹「巷子裡連在地人都排隊的那一家」。',
+    effects: { fame: 11, reputation: { community: 6, outside: 14 }, trafficMul: 1.55, trafficMulMinutes: 240, moodAll: 8 },
+    log: '美食節目：播出後來客暴增。'
+  },
+  {
+    id: 'youtuber_review', name: 'YouTuber 踩點',
+    kind: 'neutral', weight: 4, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: true, mitigateBy: null,
+    message: '一位帶著穩定器的年輕人走進來，鏡頭對著菜單拍了整整三分鐘。',
+    effects: { fame: 7, trafficMul: 1.45, trafficMulMinutes: 150 },
+    log: 'YouTuber 踩點：年輕客人聞風而來。'
+  },
+  // ══════════════════════ 供應商／市場 supplier（3） ══════════════════════
+  {
+    id: 'veggie_price_spike', name: '菜價暴漲',
+    kind: 'negative', weight: 7, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '颱風掃過產地，高麗菜一顆喊到兩百，菜販說「今天不買明天更貴」。',
+    effects: { supplierPriceMul: 1.3 },
+    log: '菜價暴漲：進貨成本上升 30%。'
+  },
+  {
+    id: 'good_catch', name: '漁獲豐收',
+    kind: 'positive', weight: 4, minStars: 1, maxStars: 5,
+    locations: ['keelung_miaokou', 'tainan_dongdi', 'kaohsiung_xinkujiang'], onlyWhileOpen: false, mitigateBy: null,
+    message: '漁港回來滿滿一船，船長直接批給你，每條魚的眼睛都還亮著。',
+    effects: { supplierPriceMul: 0.85, reputation: { community: 3, outside: 2 } },
+    log: '漁獲豐收：海鮮進貨成本下降 15%。'
+  },
+  {
+    id: 'supplier_bounced', name: '供應商跳票',
+    kind: 'negative', weight: 2, minStars: 3, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '合作多年的老供應商電話變成空號，你預付的那批貨連影子都沒有。',
+    effects: { cash: -38000, stockLoss: 0.18 },
+    log: '供應商跳票：預付款拿不回來。'
+  },
+
+  // ══════════════════════ 鄰里／社區 neighbourhood（3） ══════════════════════
+  {
+    id: 'metro_construction', name: '捷運施工圍籬',
+    kind: 'negative', weight: 4, minStars: 2, maxStars: 5,
+    locations: ['taipei_nanyang', 'taichung_zhonghua', 'kaohsiung_xinkujiang'], onlyWhileOpen: false, mitigateBy: null,
+    message: '捷運工程把門口的動線圍成迷宮，客人繞了兩圈才找到你的門。',
+    effects: { trafficMul: 0.7, trafficMulMinutes: 480, reputation: { community: -4, outside: -2 } },
+    log: '捷運施工：動線受阻，來客大減。'
+  },
+  {
+    id: 'new_rival_shop', name: '隔壁開新店',
+    kind: 'negative', weight: 4, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '隔壁掛起嶄新的紅布條，開幕價打到骨折，排隊的人龍就從你窗前經過。',
+    effects: { fame: -2, reputation: { community: -9, outside: -4 }, trafficMul: 0.85, trafficMulMinutes: 300 },
+    log: '隔壁開新店：熟客先跑去嘗鮮。'
+  },
+  {
+    id: 'village_chief_visit', name: '里長拜訪',
+    kind: 'positive', weight: 4, minStars: 1, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '里長拎著一盒水果來坐，說下個月的社區餐會想訂你這裡的便當。',
+    effects: { cash: 15000, moodAll: 5, reputation: { community: 11, outside: 2 } },
+    log: '里長拜訪：接到社區餐會訂單。'
+  },
+
+  // ══════════════════════ 稀有重大 rare big（2） ══════════════════════
+  {
+    id: 'landlord_sells_shop', name: '房東賣店面',
+    kind: 'negative', weight: 1, minStars: 4, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '房東說有人開價要買整棟樓，暗示你「不想搬就出錢」，契約擺在桌上。',
+    effects: { cash: -120000, fame: -6, reputation: { community: -10, outside: -4 }, moodAll: -12 },
+    log: '房東賣店面：為保住店面付出高額代價。'
+  },
+  {
+    id: 'michelin_guide', name: '國際美食指南推薦',
+    kind: 'positive', weight: 1, minStars: 4, maxStars: 5,
+    locations: null, onlyWhileOpen: false, mitigateBy: null,
+    message: '一份國際美食指南把你列進推薦名單，電話從開店響到打烊。',
+    effects: { fame: 12, reputation: { community: 24, outside: 56 }, cash: 45000, trafficMul: 1.75, trafficMulMinutes: 480, moodAll: 14 },
+    log: '國際指南推薦：全台客人都在查怎麼來。'
   }
 ];
 
