@@ -18,6 +18,8 @@ export const MINUTES_PER_SECOND = 1;          // 1 真實秒 = 1 遊戲分鐘（
 export const SPEEDS = [0, 1, 2, 4];
 export const SETTLE_MINUTE = 22 * 60;          // 週日 22:00 結算
 export const WEEKLY_BONUS = 20000000;            // 每週一社區獎金（原作約 20 萬）
+/** 打烊前幾分鐘進入「準備打烊」：最後點餐、不再接待新客（可用來調整遊戲節奏） */
+export const CLOSING_SOON_MIN = 30;
 export const START_CASH = 90000000;
 export const BANKRUPT_DAYS = 7;                // 現金為負超過 7 天 → 破產
 

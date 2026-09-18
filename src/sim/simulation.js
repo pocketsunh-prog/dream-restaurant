@@ -107,10 +107,18 @@ function safeCandidates(day, count, rng) {
 
 export function startBusiness(state) {
   state.phase = 'open';
+  state.sim.closingSoon = false;         // 準備打烊の窓をリセット
+  state.sim.lastOrderMinute = state.settings.closeMinute - B.CLOSING_SOON_MIN;
   state.minute = state.settings.openMinute;
   state.minuteFloat = state.settings.openMinute;
   pushLog(state, '開始營業！', 'good');
   state.uiQueue.push({ type: 'toast', message: '開始營業！祝生意興隆', kind: 'good' });
+}
+
+/** いま「準備打烊」の時間內か（打烊 B.CLOSING_SOON_MIN 分前〜打烊） */
+export function isClosingSoon(state) {
+  if (state.phase !== 'open') return false;
+  return state.settings.closeMinute - state.minute <= B.CLOSING_SOON_MIN;
 }
 
 export function requestClose(state) {
@@ -209,9 +217,17 @@ export function stepSimulation(state, dtMin) {
     advanceClock(state, dtMin);
 
     if (state.phase === 'open') {
+      // 準備打烊：打烊 B.CLOSING_SOON_MIN 分前から「最後點餐」，不再接待新客
+      const left = state.settings.closeMinute - state.minute;
+      if (!state.sim.closingSoon && left <= B.CLOSING_SOON_MIN) {
+        state.sim.closingSoon = true;
+        state.sim.lastOrderMinute = state.minute;
+        pushLog(state, `距離打烊還有 ${B.CLOSING_SOON_MIN} 分鐘：最後點餐，不再接待新客，開始收尾`, 'info');
+        state.uiQueue.push({ type: 'toast', message: `準備打烊：剩 ${B.CLOSING_SOON_MIN} 分鐘（最後點餐）`, kind: 'info' });
+      }
       // 自動打烊
       if (state.minute >= state.settings.closeMinute) requestClose(state);
-      else spawnCustomers(state, dtMin, rng);
+      else if (!state.sim.closingSoon) spawnCustomers(state, dtMin, rng);
     }
 
     refreshQueue(state);
