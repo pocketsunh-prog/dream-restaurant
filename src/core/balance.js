@@ -7,10 +7,10 @@
 /** 等角網格常數。
  *  像素尺寸的單一來源是 src/render/iso.js（TILE_W / TILE_H / LOGICAL_W / LOGICAL_H），
  *  這裡只是鏡射一份給模擬層參考，改解析度時記得同步。 */
-export const TILE_W = 42;
-export const TILE_H = 21;
-export const GRID_W = 20;
-export const GRID_H = 13;
+export const TILE_W = 64;
+export const TILE_H = 32;
+export const GRID_W = 26;
+export const GRID_H = 17;
 
 /** 遊戲節奏 */
 export const MINUTES_PER_DAY = 1440;

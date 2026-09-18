@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>畫布自動縮放檢查</title>
+<style>
+  body { margin: 0; background: #12151b; color: #ddd; font: 13px/1.5 Consolas, monospace; }
+  #out { white-space: pre-wrap; padding: 10px; }
+  iframe { position: absolute; left: -4000px; top: 0; border: 0; }
+</style>
+</head>
+<body>
+<pre id="out">running…</pre>
+<iframe id="game" src="/?autostart=1" width="1200" height="620"></iframe>
+<script type="module">
+// 遊戲載入完成後「同步」量一次：邏輯畫布與 #stage 的關係（不會被裁掉嗎）。
+// 用法：node tools/_fit-check.mjs --probe（先量一次預設視窗）
+const out = document.getElementById('out');
+const frame = document.getElementById('game');
+const lines = [];
+const measure = (label) => {
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  if (!win || !win.DREAM || !doc || !doc.getElementById('view')) return `${label}: game iframe not ready`;
+  const canvas = doc.getElementById('view');
+  const stage = doc.getElementById('stage');
+  const cr = canvas.getBoundingClientRect();
+  const sr = stage.getBoundingClientRect();
+  const L = win.DREAM.logical;
+  const fits = (cr.left - sr.left) >= -1 && (cr.top - sr.top) >= -1
+    && (cr.right - sr.left) <= sr.width + 1 && (cr.bottom - sr.top) <= sr.height + 1;
+  return `${label}: ${fits ? 'FIT  ' : 'CROP '} iframe=${frame.clientWidth}x${frame.clientHeight} logical=${L.w}x${L.h} deviceScale=${L.deviceScale} cssScale=${L.cssScale.toFixed(3)} canvasCSS=${Math.round(cr.width)}x${Math.round(cr.height)} stage=${Math.round(sr.width)}x${Math.round(sr.height)} rect x[${Math.round(cr.left - sr.left)},${Math.round(cr.right - sr.left)}] y[${Math.round(cr.top - sr.top)},${Math.round(cr.bottom - sr.top)}]`;
+};
+
+window.addEventListener('load', () => {
+  lines.push('logical canvas ' + (frame.contentWindow?.DREAM ? frame.contentWindow.DREAM.logical.w + 'x' + frame.contentWindow.DREAM.logical.h : '?'));
+  for (const [w, h] of [[1200, 760], [1400, 900], [1280, 800], [1024, 700], [1920, 1080]]) {
+    frame.style.width = w + 'px';
+    frame.style.height = h + 'px';
+    // 強制 reflow：讓 iframe 內部的 resize 事件真的先跑完再量（否則量到的是上一次的倍率）
+    const st = frame.contentWindow?.DREAM;
+    if (st && st.setZoom) st.setZoom(0);
+    void frame.offsetWidth;
+    frame.contentWindow?.dispatchEvent(new frame.contentWindow.Event('resize'));
+    lines.push(measure(`window ${w}x${h}`));
+  }
+  out.textContent = lines.join('\n');
+  document.title = 'FIT-PROBE-DONE';
+});
+</script>
+</body>
+</html>

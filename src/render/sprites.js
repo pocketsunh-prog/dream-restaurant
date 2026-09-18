@@ -14,9 +14,7 @@ import {
 } from './palette.js';
 import { TILE_W, TILE_H, HALF_W, HALF_H } from './iso.js';
 
-export const WALL_H = 44; // 主要牆面高度（px；＝舊版 22 → ×4/3 → 44，與 56×28 tile 等比）
-export const NEAR_WALL_H = 25; // 近端（南／東）矮牆，避免遮住客人（原 19 → ×4/3）
-/** 舊版 28×14 tile 的細節尺寸 → 新版 56×28 的整數換算（2 倍）。 */
+/** 舊版 28×14 tile 的細節尺寸 → 新版 64×32 的等比換算（＝TILE_W / 28）。 */
 export const ART_SCALE = TILE_W / 28;
 export const PERSON_W = 32;
 export const PERSON_H = 48;
@@ -24,6 +22,11 @@ export const PERSON_ANCHOR = PERSON_H; // 角色貼圖對齊：底邊 = 腳底
 
 /** 舊版人物尺寸（16×24）→ 新版 32×48 的等比參考，供舊程式碼／文件對照。 */
 export const PERSON_SCALE = PERSON_W / 16;
+
+/** 主要牆面高度（px；＝舊版 22 隨 tile 等比放大 22 × 64/28 ≈ 50）。 */
+export const WALL_H = Math.round(22 * ART_SCALE);
+/** 近端（南／東）矮牆，避免遮住客人（原 19 → 等比放大）。 */
+export const NEAR_WALL_H = Math.round(19 * ART_SCALE);
 
 // ===========================================================================
 // 0b. 光影效果開關（玩家回饋「pls remove light shadow」→ 陰影類預設全關、光池保留）
@@ -411,7 +414,7 @@ function mkPainter(c, W, flip) {
         }
       }
     },
-    /** 舊版像素尺寸 → 新版（28×14 → 42×21，1.5 倍四捨五入）。 */
+    /** 舊版像素尺寸 → 新版（28×14 基準 × ART_SCALE；ART_SCALE = TILE_W / 28）。 */
     u(v) {
       return Math.round(v * ART_SCALE);
     },
@@ -1318,7 +1321,7 @@ export function tilePaletteKey(pal) {
   return pal && pal.key ? pal.key : 'def';
 }
 
-// ── tile／牆面幾何：全部由 TILE_W / TILE_H 推導（28×14 → 42×21 不需改公式）──
+// ── tile／牆面幾何：全部由 TILE_W / TILE_H 推導（改變 tile 尺寸不需改公式）──
 const TCX = TILE_W / 2; // 21
 const THH = TILE_H / 2; // 10.5
 const WALL_CW = TILE_W + 6; // 48（左右各留 3px 給描邊）
@@ -3266,6 +3269,20 @@ const FURNITURE_ART = {
 
   unknown: { hgt: 28, paint: paintUnknown },
 };
+
+/**
+ * 傢俱美術的高度值（hgt／mount）是「以 42×21 tile 為基準」的像素數，
+ * 所以解析度改變時要跟著 tile 等比放大（64/42 ≈ 1.524），
+ * 否則桌子會相對地板變得扁平、壁掛裝飾會貼在牆腳。
+ * 這裡在表建好之後統一套用一次，個別項目不需要各自改數字。
+ */
+const FURNITURE_ART_SCALE = TILE_W / 42;
+for (const key of Object.keys(FURNITURE_ART)) {
+  const art = FURNITURE_ART[key];
+  if (Number.isFinite(art.hgt)) art.hgt = Math.round(art.hgt * FURNITURE_ART_SCALE);
+  if (Number.isFinite(art.mount)) art.mount = Math.round(art.mount * FURNITURE_ART_SCALE);
+  if (Number.isFinite(art.pad)) art.pad = Math.round(art.pad * FURNITURE_ART_SCALE);
+}
 
 // typeId 關鍵字 → 美術 key（順序即優先序；越特定越前面）
 const ART_HINTS = [

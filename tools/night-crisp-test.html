@@ -6,19 +6,25 @@
 </head>
 <body style="background:#20242d;color:#cfe8d0;font:14px Consolas,monospace;padding:20px;margin:0">
 <pre id="out" style="white-space:pre-wrap">initializing…</pre>
-<canvas id="cNight" width="1280" height="800" style="display:none"></canvas>
-<canvas id="cNoon" width="1280" height="800" style="display:none"></canvas>
+<canvas id="cNight" style="display:none"></canvas>
+<canvas id="cNoon" style="display:none"></canvas>
 <script type="module">
 import { createNewGame } from '../src/core/state.js';
 import { reduce } from '../src/core/actions.js';
 import { FloorRenderer } from '../src/render/floor.js';
-import { roomSilhouette } from '../src/render/iso.js';
+import { roomSilhouette, LOGICAL_W, LOGICAL_H } from '../src/render/iso.js';
 
 const out = document.getElementById('out');
 const lines = [];
 try {
 const state = createNewGame(20240101);
 reduce(state, { type: 'START_DAY' });
+// 畫布尺寸跟著邏輯解析度（iso.js 的 LOGICAL_W / LOGICAL_H）
+for (const id of ['cNight', 'cNoon']) {
+  const cv = document.getElementById(id);
+  cv.width = LOGICAL_W;
+  cv.height = LOGICAL_H;
+}
 
 const view = { frame: 0, tick: 0, showGrid: false, fx: { pools: true, shadows: false, ao: false, vignette: false, outsideShade: false, shafts: false } };
 
@@ -26,7 +32,7 @@ function render(minute) {
   state.minute = minute;
   const canvas = document.getElementById(minute === 12 * 60 ? 'cNoon' : 'cNight');
   new FloorRenderer(canvas).render(state, view);
-  return canvas.getContext('2d').getImageData(0, 0, 1280, 800).data;
+  return canvas.getContext('2d').getImageData(0, 0, LOGICAL_W, LOGICAL_H).data;
 }
 
 const noon = render(12 * 60);
@@ -56,19 +62,22 @@ const todData = {
   'morning 08:00': morning
 };
 lines.push('=== Interior pixel sampling: each TOD vs noon (12:00) ===');
+lines.push(`Canvas ${LOGICAL_W}×${LOGICAL_H}`);
 lines.push('Room centroid: ' + pcx.toFixed(0) + ',' + pcy.toFixed(0));
+// 取樣半徑隨解析度等比放大（原 1280×800 時為 180）
+const CENTER_R = Math.round(180 * (LOGICAL_W / 1280));
 let allPass = true;
 for (const [name, data] of Object.entries(todData)) {
   let cDiff = 0, cTotal = 0, cDark = 0, cBright = 0, eDiff = 0, eTotal = 0;
-  for (let y = 0; y < 800; y += 1) {
-    for (let x = 0; x < 1280; x += 1) {
+  for (let y = 0; y < LOGICAL_H; y += 1) {
+    for (let x = 0; x < LOGICAL_W; x += 1) {
       if (!inPoly(x, y)) continue;
-      const i = (y * 1280 + x) * 4;
+      const i = (y * LOGICAL_W + x) * 4;
       const d = Math.abs(noon[i] - data[i]) + Math.abs(noon[i + 1] - data[i + 1]) + Math.abs(noon[i + 2] - data[i + 2]);
       const lumSam = data[i] + data[i + 1] + data[i + 2];
       const lumNoon = noon[i] + noon[i + 1] + noon[i + 2];
       const dist = Math.sqrt((x - pcx) ** 2 + (y - pcy) ** 2);
-      if (dist < 180) { cTotal++; if (d > 6) { cDiff++; if (lumSam > lumNoon) cBright++; else cDark++; } }
+      if (dist < CENTER_R) { cTotal++; if (d > 6) { cDiff++; if (lumSam > lumNoon) cBright++; else cDark++; } }
       else { eTotal++; if (d > 6) eDiff++; }
     }
   }

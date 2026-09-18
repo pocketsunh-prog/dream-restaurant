@@ -15,14 +15,14 @@
 <body>
 <pre id="out">initializing…</pre>
 <div class="row">
-  <figure><canvas id="cPlain" width="1280" height="800"></canvas><figcaption>無地（純色）</figcaption></figure>
-  <figure><canvas id="cMat" width="1280" height="800"></canvas><figcaption>和柄（床＝waga-1-1／壁＝waga-4-2）</figcaption></figure>
+  <figure><canvas id="cPlain" width="1280" height="800" style="width:640px;height:400px"></canvas><figcaption>無地（純色）</figcaption></figure>
+  <figure><canvas id="cMat" width="1280" height="800" style="width:640px;height:400px"></canvas><figcaption>和柄（床＝waga-1-1／壁＝waga-4-2）</figcaption></figure>
 </div>
 <script type="module">
 import { createNewGame } from '../src/core/state.js';
 import { reduce } from '../src/core/actions.js';
 import { FloorRenderer } from '../src/render/floor.js';
-import { roomSilhouette } from '../src/render/iso.js';
+import { roomSilhouette, LOGICAL_W, LOGICAL_H } from '../src/render/iso.js';
 import { loadAtlas, materialsStatus, materialCells, cellCanvas, projectedPattern, FLOOR_BASIS } from '../src/render/materials.js';
 
 const out = document.getElementById('out');
@@ -32,6 +32,13 @@ const check = (name, ok, detail = '') => {
   if (!ok) fails++;
   lines.push(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' :: ' + detail : ''}`);
 };
+
+// 畫布尺寸跟著邏輯解析度（iso.js 的 LOGICAL_W / LOGICAL_H），改解析度不用改測試
+for (const id of ['cPlain', 'cMat']) {
+  const cv = document.getElementById(id);
+  cv.width = LOGICAL_W;
+  cv.height = LOGICAL_H;
+}
 
 function renderInto(canvas, state, view) {
   new FloorRenderer(canvas).render(state, view);
@@ -95,10 +102,10 @@ try {
   const inPoly = inPolyFn(poly);
 
   let changed = 0, total = 0, sumDiff = 0;
-  for (let y = 0; y < 800; y += 2) {
-    for (let x = 0; x < 1280; x += 2) {
+  for (let y = 0; y < LOGICAL_H; y += 2) {
+    for (let x = 0; x < LOGICAL_W; x += 2) {
       if (!inPoly(x, y)) continue;
-      const i = (y * 1280 + x) * 4;
+      const i = (y * LOGICAL_W + x) * 4;
       const d = Math.abs(plain[i] - matted[i]) + Math.abs(plain[i + 1] - matted[i + 1]) + Math.abs(plain[i + 2] - matted[i + 2]);
       total++;
       sumDiff += d;
@@ -111,10 +118,10 @@ try {
   // 花樣が「一様な塗り」ではなく模様になっているか：明度の分散を見る
   function variance(data) {
     let n = 0, s = 0, s2 = 0;
-    for (let y = 40; y < 760; y += 3) {
-      for (let x = 40; x < 1240; x += 3) {
+    for (let y = 40; y < LOGICAL_H - 40; y += 3) {
+      for (let x = 40; x < LOGICAL_W - 40; x += 3) {
         if (!inPoly(x, y)) continue;
-        const i = (y * 1280 + x) * 4;
+        const i = (y * LOGICAL_W + x) * 4;
         const l = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
         n++; s += l; s2 += l * l;
       }

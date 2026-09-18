@@ -55,7 +55,7 @@ const stage = document.getElementById('stage');
 // 邏輯解析度以 render/iso.js 的常數為單一來源（改解析度只要改那裡）
 canvas.width = LOGICAL_W;
 canvas.height = LOGICAL_H;
-canvas.style.imageRendering = 'pixelated';
+canvas.style.imageRendering = 'pixelated';   // 實際值由 fitCanvas() 依倍率決定
 let renderer = null;
 try {
   renderer = new FloorRenderer(canvas);
@@ -73,7 +73,11 @@ loadActors();
 /**
  * 縮放策略：以「裝置像素」為單位取整數倍，再換算回 CSS 尺寸。
  * 這樣 1 個邏輯像素永遠等於整數個裝置像素 → 不會有半像素造成的模糊。
- * 玩家可以用 + / - 手動指定倍率，0 回到自動。
+ *
+ * 但邏輯畫布（1600×1000）可能比視窗還大（例如視窗只有 1280 寬），
+ * 此時「最大 1 倍」會讓畫布被 #stage 裁掉，所以自動模式在放不下時
+ * 允許小於 1 的倍率（此時 `image-rendering: pixelated` 會暫停，
+ * 讓瀏覽器用平滑縮放，至少整張店都看得到）。玩家可以用 + / - 手動指定倍率，0 回到自動。
  */
 const VIEW = { deviceScale: 1, cssScale: 1, auto: true, userScale: 0 };
 try {
@@ -86,16 +90,23 @@ function fitCanvas() {
   const rect = stage.getBoundingClientRect();
   const availW = Math.max(320, rect.width) * dpr;
   const availH = Math.max(240, rect.height) * dpr;
+  // 放得下的最大倍率（可 < 1）
+  const fit = Math.min(availW / LOGICAL_W, availH / LOGICAL_H);
   let scale;
   if (!VIEW.auto && VIEW.userScale > 0) {
     scale = VIEW.userScale;
   } else {
-    scale = Math.max(1, Math.floor(Math.min(availW / LOGICAL_W, availH / LOGICAL_H)));
+    // 優先取整數倍（點對點最銳利）；小於 1 時退而求其次用縮放倍率，避免被裁掉
+    scale = fit >= 1 ? Math.floor(fit) : Math.max(0.25, fit);
   }
   VIEW.deviceScale = scale;
   VIEW.cssScale = scale / dpr;
   canvas.style.width = `${Math.round(LOGICAL_W * VIEW.cssScale)}px`;
   canvas.style.height = `${Math.round(LOGICAL_H * VIEW.cssScale)}px`;
+  // 縮小到 1 以下時用平滑縮放（pixelated 會讓畫面破損），放大時維持硬邊
+  const smoothing = VIEW.deviceScale >= 1 ? 'pixelated' : 'auto';
+  canvas.style.imageRendering = smoothing;
+  canvas.style.msImageRendering = smoothing;
   if (canvas.width !== LOGICAL_W) canvas.width = LOGICAL_W;
   if (canvas.height !== LOGICAL_H) canvas.height = LOGICAL_H;
 }

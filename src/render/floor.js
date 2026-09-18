@@ -251,7 +251,7 @@ function moodBubble(c) {
 
 export class FloorRenderer {
   /**
-   * @param {HTMLCanvasElement} canvas 邏輯尺寸 640×400 的畫布
+   * @param {HTMLCanvasElement} canvas 邏輯尺寸 LOGICAL_W×LOGICAL_H（iso.js，目前 1600×1000）的畫布
    * @param {{tileW?:number, tileH?:number, originX?:number, originY?:number, width?:number, height?:number, wallHeight?:number}} [opts]
    */
   constructor(canvas, opts = {}) {

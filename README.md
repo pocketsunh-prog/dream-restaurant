@@ -145,7 +145,23 @@ tools/actor-test.html   Cherish スプライトシート驗證（6 格切圖、�
 tools/zoom.html         截圖局部放大檢視（美術檢查）
 tools/weather-clip-test.html  天氣覆蓋層裁切驗證（店內不得被天氣蓋到；瀏覽器開）
 tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不被網點模糊化；瀏覽器開）
+tools/_layout-check.mjs       開局平面圖自我檢查（重疊／越界／座位數／動線；node 直接跑）
+tools/_browsertest.mjs        用 headless Chrome 批次跑上面幾個 *.html 測試並印出結果
+tools/_fit-check.mjs          畫布自動縮放檢查（各種視窗大小下都不會被裁掉；跑 tools/_fit-probe.html）
 ```
+
+### 解析度與店面大小（單一來源）
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `TILE_W` / `TILE_H` | **64 / 32** | `src/render/iso.js`（`src/core/balance.js` 鏡射一份，`main.js` 啟動時用它覆寫 canvas） |
+| `GRID_W` / `GRID_H` | **26 / 17** | 餐廳格數（原 20×13，房間面積約 1.7 倍） |
+| `LOGICAL_W` / `LOGICAL_H` | **1600 / 1000** | 邏輯畫布；畫面縮放由 `main.js` 的 `VIEW` 依視窗大小取整數倍（`+`／`-`／`0`） |
+| `ORIGIN_X` / `ORIGIN_Y` | **656 / 240** | 由上面三個常數推導（置中＋垂直取景） |
+
+改解析度只要改 `iso.js` 這幾個數字：`sprites.js` 的 `WALL_H`／`ART_SCALE`／傢俱高度、
+`materials.js` 的等角基底、`tools/*.html` 的測試畫布都由此推導（`tools/*.html` 會讀 `LOGICAL_W/LOGICAL_H`）。
+開局平面圖（17 張桌子／68 個座位）在 `src/core/state.js` 的 `premiumStarterItems`，排版約束見 `tools/_layout-check.mjs`。
 
 ---
 
@@ -156,7 +172,8 @@ tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不�
 - **哪裡選**：`環境設定 → 配色` 最下面的「**和柄（床材・壁紙）**」；
   牆面、地板各一排 swatch（第一格是「無地」＝回到原本的純色）。
 - **怎麼貼**：用 `CanvasPattern` 的 `setTransform()` 把柄**投影到等角平面上**
-  （地板：世界 x → (21,10.5)、y → (−21,10.5)；牆面：橫向 (21,±10.5)、縱向 (0,−1)），
+  （地板：世界 x → (32,16)、y → (−32,16)；牆面：橫向 (32,±16)、縱向 (0,−1)；
+  基底由 `iso.js` 的 `TILE_W/TILE_H` 推導，所以改解析度時「一個柄佔幾格」不會變），
   所以柄是**一整面連續流過去**的，不是每一格各自貼一張圖（不會有格與格的接縫）。
 - 貼了柄之後，那一格只補上**接縫、髒污、明暗與邊界**（`noBase`），
   廚房與洗手間的磁磚、牆上的窗戶／壁燈／踢腳板都維持原本的樣子。
@@ -216,3 +233,8 @@ tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不�
 - 存檔放在瀏覽器 `localStorage`（5 個手動槽 + 每日自動存檔），換瀏覽器不會帶著走。
 - 音效與 BGM 由 WebAudio 程序化合成，需要先有一次使用者互動（瀏覽器自動播放政策）。
 - 沒有分店系統 —— 與原作相同，只能舉家搬遷。
+- **邏輯解析度固定 1600×1000**：自動模式會挑「放得下的最大倍率」——放得下時取整數倍（點對點最銳利），
+  視窗比 1600×1000 小的時候允許小於 1 倍（畫布不會被 `#stage` 裁掉，代價是平滑縮放、稍微軟一點）；
+  `+`／`-` 可以手動指定倍率，`0` 回到自動。回歸檢查：`node tools/_fit-check.mjs`。
+- **六個地點的網格都是 26×17**：地點差異在大門位置、廚房大小、廁所方位、隔間牆與色調（改 `GRID_W/GRID_H`
+  時要一起改 `src/data/locations.js` 的 `gridW/gridH` 與 `src/sim/build.js` 的 `LAYOUT_VARIANTS` 座標）。

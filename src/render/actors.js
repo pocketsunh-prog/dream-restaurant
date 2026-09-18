@@ -9,6 +9,8 @@
 //   appearance.sheet に id を入れた顧客だけがこの見た目になる。
 // ============================================================================
 
+import { PERSON_H } from './sprites.js';
+
 /** シート定義。bg は背景のベタ色（クロマキーで抜く色） */
 export const ACTORS = {
   cherish: {
@@ -16,7 +18,13 @@ export const ACTORS = {
     name: 'Cherish',
     file: 'cherish-walk.png',
     bg: [110, 116, 134],
-    /** 手続き的スプライト（32×48）に高さを合わせる倍率 */
+    /**
+     * 手続き的スプライト（32×48）に高さを合わせる倍率。
+     * true ならシートを切り出したあと「コマの高さが手続き的スプライトと同じ」に
+     * なるよう自動で決める（シートの解像度や切り出し結果が変わっても、
+     * 店内の人物と大きさが揃う。以前は 0.75 を手書きしていた）。
+     */
+    autoScale: true,
     scale: 0.75,
     /** 座っているときに下へずらす量（px、拡大前） */
     seatDrop: 9,
@@ -79,6 +87,8 @@ export function loadActors() {
         rec.frames = slices.frames;
         rec.w = slices.w;
         rec.h = slices.h;
+        // コマの高さを手続き的スプライト（PERSON_H）に合わせる倍率を自動決定
+        if (def.autoScale && slices.h > 0) rec.scale = PERSON_H / slices.h;
         rec.ready = rec.frames.length > 0;
         if (!rec.ready) rec.error = 'コマを検出できませんでした';
       } catch (err) {
@@ -188,12 +198,13 @@ export function drawActor(ctx, id, x, y, opts = {}) {
   else if (pose === 'eat') fi = Math.min(1, n - 1);
   else fi = 0;
   const cv = s.frames[fi];
-  const scale = def.scale || 1;
+  // rec.scale：シートから自動決定した倍率（未設定なら定義側の scale）
+  const scale = Number.isFinite(s.scale) ? s.scale : (def.scale || 1);
   const w = cv.width * scale;
   const h = cv.height * scale;
   const dx = Math.round(x - w / 2);
-  // 足元合わせ（座っているときは少し下げる）
-  const drop = o.seated ? (def.seatDrop || 0) * scale : 0;
+  // 足元合わせ（座っているときは少し下げる。倍率が変わっても見た目の下げ幅が揃うよう正規化）
+  const drop = o.seated ? (def.seatDrop || 0) * (scale / (def.scale || 1)) : 0;
   const dy = Math.round(y - h + drop);
   const flip = o.dir === 'W';
   ctx.save();

@@ -8,10 +8,14 @@
 //   ところまでを担当する。実際に塗るのは floor.js（床のパス／壁のパス）。
 //
 //   為什麼要用 CanvasPattern：pattern.setTransform() で「柄の 1px が画面上でどれだけ
-//   動くか」を指定できるので、床なら (21, 10.5) / (-21, 10.5) の等角基底、
-//   壁なら横 (21, 10.5)・縦 (0, -1) の基底を渡せば、柄が面に沿って連続して流れる
+//   動くか」を指定できるので、床なら (32, 16) / (-32, 16) の等角基底、
+//   壁なら横 (32, 16)・縦 (0, -1) の基底を渡せば、柄が面に沿って連続して流れる
 //   （タイルごとに切り貼りしないので、柄の継ぎ目が出ない）。
+//   基底は tile 尺寸に比例（iso.js の TILE_W / TILE_H から導出）させる：解析度を
+//   上げても「1 柄が佔幾格」が変わらないので、柄の密度が同じに見える。
 // ============================================================================
+
+import { TILE_W, TILE_H } from './iso.js';
 
 /**
  * 見本帳の URL。ページの場所（/tools/... など）に左右されないよう、
@@ -33,10 +37,14 @@ const INSET = 3;
 /** これより小さい断片は柄として採用しない（圖の端の半端な行を落とす） */
 const MIN_CELL = 24;
 
-/** 等角平面の基底（pattern の 1px が畫面上で動く量） */
-export const FLOOR_BASIS = { ux: 0.52, uy: 0.26, vx: -0.52, vy: 0.26 };
-export const WALL_L_BASIS = { ux: 0.30, uy: 0.15, vx: 0, vy: -0.42 };
-export const WALL_R_BASIS = { ux: 0.30, uy: -0.15, vx: 0, vy: -0.42 };
+/**
+ * 等角平面の基底（pattern の 1px が畫面上で動く量）。
+ * TILE_W / TILE_H に比例させる：地板の u は「tile の西→南の辺」＝(TILE_W/2, TILE_H/2)、
+ * v は「西→北の辺」＝(−TILE_W/2, TILE_H/2)。壁は横 0.6 倍の緩い勾配、縦は固定。
+ */
+export const FLOOR_BASIS = { ux: TILE_W / 2, uy: TILE_H / 2, vx: -TILE_W / 2, vy: TILE_H / 2 };
+export const WALL_L_BASIS = { ux: TILE_W * 0.3, uy: TILE_H * 0.3, vx: 0, vy: -0.42 };
+export const WALL_R_BASIS = { ux: TILE_W * 0.3, uy: -TILE_H * 0.3, vx: 0, vy: -0.42 };
 
 let atlas = null;              // { img, cells, cols, rows, cellW, cellH }
 let state = 'idle';            // idle | loading | ready | failed

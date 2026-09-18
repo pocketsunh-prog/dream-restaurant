@@ -45,37 +45,61 @@ export function createNewGame(seed = newSeed(), opts = {}) {
   layout.rev = 1;
   layout.items = [];
 
-  // 頂級開局：最大桌（六人宴會桌）、頂級裝潢、全套防治設備
+  // 頂級開局：16 張桌子（2／4／6 人混合，共 70 個座位）、頂級裝潢、全套防治設備
+  // 座標以 26×17 網格為準（GRID_W / GRID_H）。格局：廚房左上（x1–8, y1–4）、
+  // 出餐口 y=5（x=3/6）、廁所右上（x23–24, y1–2）、大門南牆 x=12。
+  //
+  // 桌子分三排（y=6–7 / 9–10 / 13–14），排與排之間留 1 格走道並共用椅子列。
+  // 排椅子的順序是「北→東→南→西」，所以：
+  //   - 2×2 的桌子下方那一排必須是「沒有其他桌子腳印」的走廊（否則只坐得到 2 人）；
+  //   - 6 人桌要坐滿 6 人，正上方那一排還必須沒有別的桌子的椅子（否則只剩 4 人），
+  //     因此兩張六人桌放在第 2 排、且正上方（x=1–2 / x=21–22）刻意留空。
   const premiumStarterItems = [
+    // 廚房設備（左上）
     { typeId: 'kitchen_stove', x: 1, y: 1 },
     { typeId: 'kitchen_worktable', x: 3, y: 1 },
-    { typeId: 'kitchen_dishwasher', x: 5, y: 1 },
-    { typeId: 'fridge', x: 6, y: 1 },
+    { typeId: 'kitchen_dishwasher', x: 5, y: 2 },
+    { typeId: 'fridge', x: 6, y: 2 },
+    // 設備（牆面；equipment 可與其他壁掛裝飾共用牆格）
     { typeId: 'ac_unit', x: 0, y: 4 },
     { typeId: 'ceiling_lamp', x: 10, y: 0 },
     { typeId: 'stereo', x: 15, y: 0 },
-    { typeId: 'cctv', x: 19, y: 4 },
-    { typeId: 'infrared_sensor', x: 19, y: 5 },
+    { typeId: 'cctv', x: 25, y: 4 },
+    { typeId: 'infrared_sensor', x: 25, y: 5 },
     { typeId: 'fire_extinguisher', x: 0, y: 8 },
-    { typeId: 'fire_system', x: 19, y: 8 },
+    { typeId: 'fire_system', x: 25, y: 8 },
     { typeId: 'security_host', x: 0, y: 9 },
-    { typeId: 'table_6b', x: 1, y: 5 },
-    { typeId: 'table_6b', x: 4, y: 5 },
-    { typeId: 'table_6b', x: 7, y: 5 },
-    { typeId: 'table_6b', x: 10, y: 5 },
-    { typeId: 'table_6b', x: 1, y: 9 },
-    { typeId: 'table_6b', x: 4, y: 9 },
-    { typeId: 'table_6b', x: 7, y: 9 },
-    { typeId: 'table_6b', x: 10, y: 9 },
-    { typeId: 'counter_bar', x: 14, y: 10 },
-    { typeId: 'restroom_toilet', x: 16, y: 1 },
-    { typeId: 'restroom_sink', x: 17, y: 1 },
-    { typeId: 'fountain_small', x: 13, y: 5 },
-    { typeId: 'jukebox', x: 14, y: 7 },
-    { typeId: 'neon_sign', x: 0, y: 6 },
+    // 第 1 排：六人宴會桌 ×2（左右各一，正上方／正下方刻意留空以坐滿 6 人）＋4 人雅桌 ×4
+    { typeId: 'table_6b', x: 1, y: 6 },
+    { typeId: 'table_4b', x: 5, y: 6 },
+    { typeId: 'table_4b', x: 9, y: 6 },
+    { typeId: 'table_4b', x: 13, y: 6 },
+    { typeId: 'table_4b', x: 17, y: 6 },
+    { typeId: 'table_6b', x: 21, y: 6 },
+    // 第 2 排：4 人雅桌 ×5、二人雅座 ×1
+    { typeId: 'table_4b', x: 5, y: 9 },
+    { typeId: 'table_4b', x: 9, y: 9 },
+    { typeId: 'table_4b', x: 13, y: 9 },
+    { typeId: 'table_4b', x: 17, y: 9 },
+    { typeId: 'table_4b', x: 21, y: 9 },
+    { typeId: 'table_2b', x: 23, y: 9 },
+    // 第 3 排：4 人雅桌 ×4、二人雅座 ×2
+    { typeId: 'table_4b', x: 5, y: 13 },
+    { typeId: 'table_4b', x: 9, y: 13 },
+    { typeId: 'table_4b', x: 13, y: 13 },
+    { typeId: 'table_4b', x: 17, y: 13 },
+    { typeId: 'table_2b', x: 23, y: 13 },
+    // 櫃台與大型裝飾（避開桌椅腳印）
+    { typeId: 'counter_bar', x: 21, y: 15 },
+    { typeId: 'restroom_toilet', x: 23, y: 1 },
+    { typeId: 'restroom_sink', x: 24, y: 1 },
+    { typeId: 'fountain_small', x: 23, y: 6 },
+    { typeId: 'jukebox', x: 3, y: 15 },
+    { typeId: 'neon_sign', x: 0, y: 12 },
     { typeId: 'painting_landscape', x: 0, y: 2 },
-    { typeId: 'photo_wall', x: 19, y: 2 },
-    { typeId: 'lantern_row', x: 13, y: 10 }
+    { typeId: 'photo_wall', x: 25, y: 2 },
+    { typeId: 'lantern_row', x: 17, y: 15 },
+    { typeId: 'carpet_red', x: 18, y: 11 }
   ];
 
   const state = {

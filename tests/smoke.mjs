@@ -70,13 +70,16 @@ let totalAngry = 0;
 const dayLog = [];
 
 /** 模擬一位「稱職的老闆」：修繕、清潔、叫貨、擴桌、補人、買防護設備 */
+// 擴桌位置以 26×17 的開局平面圖為準：挑桌椅腳印以外的空格（走道／沒有放桌子的區域）。
 const EXPANSION_TABLES = [
-  { x: 3, y: 8 }, { x: 3, y: 10 }, { x: 8, y: 10 }, { x: 12, y: 10 },
-  { x: 16, y: 6 }, { x: 16, y: 8 }, { x: 9, y: 3 }, { x: 12, y: 3 }
+  { x: 23, y: 6 }, { x: 3, y: 10 }, { x: 6, y: 10 }, { x: 20, y: 10 },
+  { x: 24, y: 6 }, { x: 24, y: 10 }, { x: 2, y: 12 }, { x: 4, y: 12 },
+  { x: 6, y: 12 }, { x: 8, y: 12 }
 ];
 const EXPANSION_CHAIRS = [
-  { x: 3, y: 7 }, { x: 3, y: 9 }, { x: 8, y: 9 }, { x: 12, y: 9 },
-  { x: 16, y: 5 }, { x: 16, y: 7 }, { x: 9, y: 2 }, { x: 12, y: 2 }
+  { x: 23, y: 5 }, { x: 3, y: 11 }, { x: 6, y: 11 }, { x: 20, y: 11 },
+  { x: 24, y: 5 }, { x: 24, y: 11 }, { x: 2, y: 11 }, { x: 4, y: 11 },
+  { x: 6, y: 11 }, { x: 8, y: 11 }
 ];
 
 function morningRoutine(day) {
@@ -165,11 +168,9 @@ function morningRoutine(day) {
 
 /** 開局佈置：桌椅、裝飾、人手 */
 function setupFirstDay() {
+  // 26×17 平面圖上的空位（在開局桌椅腳印之外）；椅子由 autoPlaceChairs 自動配
   const plan = [
-    { id: 'table_2a', x: 5, y: 7 }, { id: 'table_2a', x: 5, y: 9 },
-    { id: 'table_2a', x: 15, y: 6 }, { id: 'table_2a', x: 15, y: 8 },
-    { id: 'chair_wood', x: 5, y: 6 }, { id: 'chair_wood', x: 5, y: 8 },
-    { id: 'chair_wood', x: 15, y: 5 }, { id: 'chair_wood', x: 15, y: 7 }
+    { id: 'table_2a', x: 3, y: 10 }, { id: 'table_2a', x: 20, y: 10 }
   ];
   for (const p of plan) {
     const res = reduce(state, { type: 'PLACE_FURNITURE', typeId: p.id, x: p.x, y: p.y });
@@ -188,7 +189,7 @@ for (let d = 0; d < DAYS; d++) {
   if (!open.ok) {
     check(false, `第 ${state.day} 天無法開店`, open.error);
     // 嘗試補救：加桌椅
-    reduce(state, { type: 'PLACE_FURNITURE', typeId: 'table_2a', x: 5, y: 9 });
+    reduce(state, { type: 'PLACE_FURNITURE', typeId: 'table_2a', x: 3, y: 10 });
     const retry = reduce(state, { type: 'START_DAY' });
     if (!retry.ok) break;
   }

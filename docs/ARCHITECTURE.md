@@ -59,9 +59,9 @@ tests/smoke.mjs                無 DOM 7 天模擬煙霧測試（我）
 
 ## 1. 座標與幾何
 
-- 等角（isometric）菱形網格：`TILE_W = 56`、`TILE_H = 28`，邏輯畫布 `1280 × 800`。
+- 等角（isometric）菱形網格：`TILE_W = 64`、`TILE_H = 32`，邏輯畫布 `1600 × 1000`。
   （像素尺寸的單一來源是 `src/render/iso.js`；`src/core/balance.js` 鏡射一份，`main.js` 啟動時用常數覆寫 canvas 尺寸）
-- 網格尺寸 `20 × 13`（`GRID_W=20, GRID_H=13`）。
+- 網格尺寸 `26 × 17`（`GRID_W=26, GRID_H=17`）。每個地點的 `gridW/gridH`（`src/data/locations.js`）也必須一致。
 - 螢幕座標換算（`src/render/iso.js` 概念，統一由 `floor.js` 出口提供）：
 
 ```js
@@ -69,8 +69,8 @@ tileToScreen(x, y) => {
   px = ORIGIN_X + (x - y) * (TILE_W / 2);
   py = ORIGIN_Y + (x + y) * (TILE_H / 2);
 }
-// ORIGIN_X = LOGICAL_W / 2 - (GRID_W - GRID_H) * TILE_W / 4   // 置中
-// ORIGIN_Y = 96
+// ORIGIN_X = LOGICAL_W / 2 - (GRID_W - GRID_H) * TILE_W / 4   // 置中 → 656
+// ORIGIN_Y = 240
 screenToTile(px, py) => 上述反解，四捨五入。
 ```
 
@@ -143,7 +143,7 @@ export const LOCATIONS = [{
   rentPerDay: 1800,
   baseTraffic: 1.0,          // 人/遊戲分鐘 基準（0.6 ~ 2.4）
   moveCost: 0,
-  gridW: 20, gridH: 13,      // 可用網格（實際格局見 §3.5）
+  gridW: 26, gridH: 17,
   customerMix: { student: 0.4, office: 0.15, family: 0.3, tourist: 0.1, critic: 0.03, vip: 0.02 },
   tastePrefs: ['cheap','fried','local','meat','quick'],
   weatherWeights: { sunny: 0.4, cloudy: 0.25, rain: 0.2, storm: 0.05, cold: 0.05, heat: 0.05 },
@@ -241,7 +241,7 @@ export * from './furniture.js'; export * from './events.js';
   staff: [ /* HiredStaff */ ],
   candidates: [ /* {candidateId, staffId, askWage} */ ],
   layout: {
-    gridW: 20, gridH: 13,
+    gridW: 26, gridH: 17,
     tiles: [ /* gridW*gridH 的字串，索引 y*gridW+x */ ],
     items: [ {uid, typeId, x, y, w, h, rot, durability, broken} ],
     entrances: [{x,y}], passTiles: [{x,y}], restroom: {x,y}
@@ -293,12 +293,14 @@ WeeklyStat = { week, startDay, endDay, revenue, profit, guests, served, angry,
 ```
 
 ### 3.5 餐廳格局 `layout.tiles`
-- 每個地點由 `src/sim/build.js#defaultLayout(location)` 產生預設格局：
+- 每個地點由 `src/sim/build.js#defaultLayout(location)` 產生預設格局（全部地點都是 26×17 網格）：
   - 外圍一圈 `'wall'`；
   - 南牆 1 格 `'door'`（顧客入口，位置依地點而異）；
-  - 西／北側為 `'kitchen'` 區，與用餐區之間有 `'pass'`（出餐口）1–2 格；
-  - 東南角 `'restroom'` 2 格；
+  - 西／北側為 `'kitchen'` 區（左上、約 8×3～11×5），下緣一排 `'pass'`（出餐口，每 3 格一個）；
+  - 東北／東南／西北角 `'restroom'` 2×2 格；
   - 其餘 `'floor'`。
+- 開局平面圖（`src/core/state.js` 的 `premiumStarterItems`）固定在 26×17 上排版：17 張桌子／68 個座位，
+  桌子分三排（y=6–7 / 9–10 / 13–14），每一排的北／南各留一列可通行地板給椅子（見 `tools/_layout-check.mjs` 的自動檢查）。
 
 ---
 
@@ -442,7 +444,7 @@ export function drawWeather(ctx, weather, w, h, tick)    // 雨/雪/熱浪濾鏡
 
 // src/render/floor.js
 export class FloorRenderer {
-  constructor(canvas, { tileW=28, tileH=14, originX, originY })
+  constructor(canvas, { tileW=64, tileH=32, originX, originY, width, height, wallHeight })
   setLayout(layout)                     // 更新 tiles/items 快取
   tileToScreen(x, y)                    // -> {px, py}
   screenToTile(px, py)                  // -> {x, y}

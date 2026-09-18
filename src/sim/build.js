@@ -7,14 +7,18 @@ import { GRID_W, GRID_H } from '../core/balance.js';
 
 export const TILE_TYPES = ['floor', 'wall', 'door', 'kitchen', 'pass', 'restroom', 'void'];
 
-/** 各地點的格局差異（門的位置、廚房大小、隔間牆） */
+/**
+ * 各地點的格局差異（門的位置、廚房大小、隔間牆）。
+ * 座標以 26×17 的網格為準（GRID_W / GRID_H）；廚房一律從 (1,1) 起，
+ * 出餐口在廚房下緣，廁所在東北／東南／西北角，大門在南牆。
+ */
 const LAYOUT_VARIANTS = {
-  zhongli_xinming: { doorX: 9, kitchen: { x0: 1, y0: 1, x1: 6, y1: 3 }, restroom: 'NE', partitions: [] },
-  keelung_miaokou: { doorX: 11, kitchen: { x0: 1, y0: 1, x1: 7, y1: 3 }, restroom: 'NW', partitions: [] },
-  taipei_nanyang: { doorX: 6, kitchen: { x0: 1, y0: 1, x1: 5, y1: 4 }, restroom: 'SE', partitions: [[13, 6], [13, 7], [13, 8]] },
-  taichung_zhonghua: { doorX: 13, kitchen: { x0: 1, y0: 1, x1: 8, y1: 2 }, restroom: 'NE', partitions: [[10, 8], [10, 9]] },
-  tainan_dongdi: { doorX: 8, kitchen: { x0: 1, y0: 1, x1: 6, y1: 4 }, restroom: 'SE', partitions: [] },
-  kaohsiung_xinkujiang: { doorX: 14, kitchen: { x0: 1, y0: 1, x1: 7, y1: 3 }, restroom: 'NW', partitions: [[12, 4], [12, 5]] }
+  zhongli_xinming: { doorX: 12, kitchen: { x0: 1, y0: 1, x1: 8, y1: 4 }, restroom: 'NE', partitions: [] },
+  keelung_miaokou: { doorX: 14, kitchen: { x0: 1, y0: 1, x1: 9, y1: 4 }, restroom: 'NW', partitions: [] },
+  taipei_nanyang: { doorX: 8, kitchen: { x0: 1, y0: 1, x1: 7, y1: 5 }, restroom: 'SE', partitions: [[18, 8], [18, 9], [18, 10]] },
+  taichung_zhonghua: { doorX: 17, kitchen: { x0: 1, y0: 1, x1: 11, y1: 3 }, restroom: 'NE', partitions: [[14, 10], [14, 11]] },
+  tainan_dongdi: { doorX: 10, kitchen: { x0: 1, y0: 1, x1: 8, y1: 5 }, restroom: 'SE', partitions: [] },
+  kaohsiung_xinkujiang: { doorX: 18, kitchen: { x0: 1, y0: 1, x1: 9, y1: 4 }, restroom: 'NW', partitions: [[16, 5], [16, 6]] }
 };
 
 const DEFAULT_VARIANT = LAYOUT_VARIANTS.zhongli_xinming;
@@ -40,7 +44,7 @@ export function setTile(layout, x, y, type) {
 
 /**
  * 產生某地點的預設格局。
- * 全部地點都是 20×13 等角網格；差異在於大門位置、廚房大小、廁所方位與隔間牆。
+ * 全部地點都是 26×17 等角網格；差異在於大門位置、廚房大小、廁所方位與隔間牆。
  */
 export function defaultLayout(locationId) {
   const v = LAYOUT_VARIANTS[locationId] || DEFAULT_VARIANT;

@@ -7,27 +7,29 @@
 //   tileToScreen(x, y) => { px: ORIGIN_X + (x - y) * TILE_W / 2,
 //                           py: ORIGIN_Y + (x + y) * TILE_H / 2 }
 //   ORIGIN_X = LOGICAL_W / 2 - (GRID_W - GRID_H) * TILE_W / 4   // 置中
-//   ORIGIN_Y = 192
+//   ORIGIN_Y = 240
 //   screenToTile(px, py) => 上述反解，四捨五入。
 //
-// 解析度：邏輯畫布 1280×800，tile 56×28（＝640×400 / 28×14 的整數 2 倍，
-// 也就是上一版 960×600 / 42×21 的 4/3 倍），因此所有「格」為單位的運算
-// （足跡、排序、命中測試）完全等價，而 TILE_W/2 = 28、TILE_H/2 = 14 皆為整數，
+// 解析度：邏輯畫布 1600×1000，tile 64×32（＝舊版 960×600 / 42×21 的等比放大，
+// 也是再上一版 640×400 / 28×14 的整數 2 倍），因此所有「格」為單位的運算
+// （足跡、排序、命中測試）完全等價，而 TILE_W/2 = 32、TILE_H/2 = 16 皆為整數，
 // 使得整數格座標一律換算成整數像素（不會出現 .5 的半像素模糊）。
+//
+// 版圖：26×17 格（原 20×13，房間面積約 1.7 倍）。
 
-export const TILE_W = 56;
-export const TILE_H = 28;
+export const TILE_W = 64;
+export const TILE_H = 32;
 
-export const GRID_W = 20;
-export const GRID_H = 13;
+export const GRID_W = 26;
+export const GRID_H = 17;
 
-export const LOGICAL_W = 1280;
-export const LOGICAL_H = 800;
+export const LOGICAL_W = 1600;
+export const LOGICAL_H = 1000;
 
-/** 置中：640 - (20 - 13) * 56 / 4 = 542（整數）。 */
+/** 置中：800 - (26 - 17) * 64 / 4 = 656（整數）。 */
 export const ORIGIN_X = Math.round(LOGICAL_W / 2 - ((GRID_W - GRID_H) * TILE_W) / 4);
 
-/** 垂直取景：沿用舊版比例（96/400 → 192/800），房間略高於畫面中心。 */
+/** 垂直取景：沿用舊版比例（96/400 → 240/1000），房間略高於畫面中心。 */
 export const ORIGIN_Y = Math.round((96 * LOGICAL_H) / 400);
 
 /** 菱形 tile 的內接半徑（供命中測試／描邊使用）。 */

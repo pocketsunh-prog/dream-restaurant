@@ -16,13 +16,15 @@
 <h1>天氣覆蓋層裁切測試：店內（房間剪影內）不應被天氣覆蓋層影響</h1>
 <pre id="out">running…</pre>
 <div class="row">
-  <canvas id="cSunny" width="1280" height="800"></canvas>
-  <canvas id="cRain" width="1280" height="800"></canvas>
+  <canvas id="cSunny" width="1280" height="800" style="width:640px;height:400px"></canvas>
+  <canvas id="cRain" width="1280" height="800" style="width:640px;height:400px"></canvas>
 </div>
 <script type="module">
 import { createNewGame } from '../src/core/state.js';
+import { reduce } from '../src/core/actions.js';
 import { FloorRenderer } from '../src/render/floor.js';
 import { roomSilhouette, LOGICAL_W, LOGICAL_H } from '../src/render/iso.js';
+import { stepSimulation } from '../src/sim/simulation.js';
 
 const out = document.getElementById('out');
 const lines = [];
@@ -34,8 +36,13 @@ function check(name, ok, detail) {
 }
 
 const state = createNewGame(20240101);
+// 讓店裡真的有人（吐白煙只畫在場上的人身上）；沒開店就不會有人。
+reduce(state, { type: 'START_DAY' });
+for (let i = 0; i < 24; i++) stepSimulation(state, 5);
 const cSunny = document.getElementById('cSunny');
 const cRain = document.getElementById('cRain');
+// 畫布尺寸跟著邏輯解析度（iso.js 的 LOGICAL_W / LOGICAL_H）
+for (const cv of [cSunny, cRain]) { cv.width = LOGICAL_W; cv.height = LOGICAL_H; }
 const rSunny = new FloorRenderer(cSunny);
 const rRain = new FloorRenderer(cRain);
 
@@ -105,9 +112,13 @@ check('店內相異像素 < 0.5%（含邊界硬邊）', inTotal ? (inAny / inTot
 say('');
 // 寒流刻意會在店內畫「人物吐白煙」（局部、實色），不屬於全畫面覆蓋層，因此給容差；
 // 熱浪則完全不該動到店內（夜間地板暖色調是繪製在地板層之前的局部效果，晴天沒有）。
+// 白煙的像素量只跟「場上有幾個人」有關（一人一團、最大約 40px），
+// 所以容差依人數估算：一人 50px，人數變多也不會誤判。
+const peopleCount = (state.sim.customers || []).length;
+const breathLimit = Math.max(600, peopleCount * 50);
 const extra = [
   { w: 'heat', limit: 0, note: '店內完全不該被動到' },
-  { w: 'cold', limit: 600, note: '允許人物吐白煙（局部實色效果）' }
+  { w: 'cold', limit: breathLimit, note: `允許人物吐白煙（場上 ${peopleCount} 人 × 50px）` }
 ];
 for (const { w, limit, note } of extra) {
   const C = grab(rRain, cRain, w);
