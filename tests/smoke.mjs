@@ -8,9 +8,10 @@ import { createNewGame } from '../src/core/state.js';
 import { reduce } from '../src/core/actions.js';
 import { stepSimulation } from '../src/sim/simulation.js';
 import { getDish, dishesForStars } from '../src/data/dishes.js';
-import { getLocation } from '../src/data/locations.js';
-import { rebuildTables, seatCount } from '../src/sim/build.js';
+import { getLocation, LOCATIONS } from '../src/data/locations.js';
+import { rebuildTables, seatCount, defaultLayout, isWalkableTile } from '../src/sim/build.js';
 import { menuLimitFor } from '../src/core/state.js';
+import { MAX_STARS, STAR_REQS } from '../src/core/balance.js';
 import { makeCustomer } from '../src/sim/customer.js';
 import { makeRng } from '../src/core/rng.js';
 import { ACTORS } from '../src/render/actors.js';
@@ -50,7 +51,7 @@ function invariants(tag) {
     `${tag}: 區外評價需在 0..500`, String(state.reputation.outside));
   check(state.minute >= 0 && state.minute < 1440, `${tag}: 時間需在 0..1439`, String(state.minute));
   check(state.day >= 1, `${tag}: 天數需 >= 1`);
-  check(state.stars >= 1 && state.stars <= 5, `${tag}: 星級需在 1..5`, String(state.stars));
+  check(state.stars >= 1 && state.stars <= MAX_STARS, `${tag}: 星級需在 1..${MAX_STARS}`, String(state.stars));
   check(state.sim.customers.length <= 400, `${tag}: 顧客人數異常`, String(state.sim.customers.length));
   check(state.sim.tasks.length <= 400, `${tag}: 任務數量異常`, String(state.sim.tasks.length));
   check(state.staff.every((s) => finite(s.wage) && s.wage >= 1), `${tag}: 員工時薪異常`);
@@ -302,6 +303,69 @@ console.log('\n--- 常連 Cherish ---');
   }
   check(seen > 0, '一般抽選也會出現 Cherish', `${seen} / 5000 組`);
   check((cher.patience || 0) > 0 && Number.isFinite(cher.patience), '耐心值有效', String(Math.round(cher.patience)));
+}
+
+/* ------------------------------------------------- 地點與星級資料不變式 */
+// NOTE: assertions below are ASCII-only on purpose (this file stays ASCII-safe).
+
+console.log('\n--- Location / star data ---');
+{
+  const ids = LOCATIONS.map((l) => l.id);
+  check(LOCATIONS.length >= 14, 'at least 14 locations', String(LOCATIONS.length));
+  check(new Set(ids).size === ids.length, 'location ids are unique', ids.join(','));
+  check(LOCATIONS[0].id === 'zhongli_xinming' && LOCATIONS[0].starsRequired === 1,
+    'the original starting location is still first and playable');
+
+  const MIX_KEYS = ['student', 'office', 'family', 'tourist', 'critic', 'vip'];
+  const WEATHER_KEYS = ['sunny', 'cloudy', 'rain', 'storm', 'cold', 'heat'];
+  for (const loc of LOCATIONS) {
+    const errs = [];
+    if (!loc.name || !loc.city || !loc.desc) errs.push('missing name/city/desc');
+    if (!(loc.rentPerDay > 0)) errs.push('rentPerDay');
+    if (!(loc.baseTraffic > 0)) errs.push('baseTraffic');
+    if (!(loc.moveCost >= 0)) errs.push('moveCost');
+    if (!(loc.gridW >= 4 && loc.gridH >= 4)) errs.push('grid');
+    if (!(loc.starsRequired >= 1 && loc.starsRequired <= MAX_STARS)) errs.push('starsRequired');
+    const mixSum = MIX_KEYS.reduce((a, k) => a + (Number(loc.customerMix?.[k]) || 0), 0);
+    if (Math.abs(mixSum - 1) > 1e-9) errs.push('customerMix sum ' + mixSum);
+    const wSum = WEATHER_KEYS.reduce((a, k) => a + (Number(loc.weatherWeights?.[k]) || 0), 0);
+    if (Math.abs(wSum - 1) > 1e-9) errs.push('weatherWeights sum ' + wSum);
+    if (!Array.isArray(loc.tastePrefs) || !loc.tastePrefs.length) errs.push('tastePrefs');
+    if (!loc.decorStyle || !loc.skyline) errs.push('decorStyle/skyline');
+    if (!loc.palette?.sky || !loc.palette?.wall || !loc.palette?.floor || !loc.palette?.accent) errs.push('palette');
+    check(errs.length === 0, 'location field check: ' + loc.id, errs.join(' / '));
+
+    // Every location needs its own walkable layout (door + pass reachable, door tile is a door).
+    const L = defaultLayout(loc.id);
+    const layoutErrs = [];
+    if (L.gridW !== loc.gridW || L.gridH !== loc.gridH) layoutErrs.push('grid mismatch');
+    if (L.tiles[L.door.y * L.gridW + L.door.x] !== 'door') layoutErrs.push('door tile');
+    if (!L.passTiles.length) layoutErrs.push('no pass tile');
+    if (!isWalkableTile(L, L.door.x, L.door.y)) layoutErrs.push('door not walkable');
+    if (!isWalkableTile(L, L.door.x, L.door.y - 1)) layoutErrs.push('tile inside the door blocked');
+    for (const p of L.passTiles) {
+      if (!isWalkableTile(L, p.x, p.y)) layoutErrs.push('pass blocked @' + p.x + ',' + p.y);
+      else if (!L.reachFromPass[p.y * L.gridW + p.x]) layoutErrs.push('pass unreachable @' + p.x + ',' + p.y);
+    }
+    const seatsFree = L.tiles.filter((t, i) => t === 'floor' && isWalkableTile(L, i % L.gridW, Math.floor(i / L.gridW))).length;
+    if (seatsFree < 40) layoutErrs.push('only ' + seatsFree + ' walkable floor tiles');
+    check(layoutErrs.length === 0, 'layout check: ' + loc.id, layoutErrs.join(' / '));
+  }
+
+  // Star tables must cover 1..MAX_STARS with a strictly growing shape.
+  check(STAR_REQS.length === MAX_STARS + 1, 'STAR_REQS has ' + (MAX_STARS + 1) + ' entries', String(STAR_REQS.length));
+  for (let s = 2; s <= MAX_STARS; s++) {
+    const prev = STAR_REQS[s - 1];
+    const cur = STAR_REQS[s];
+    check(!!cur && cur.star === s, 'STAR_REQS[' + s + '].star === ' + s);
+    check(cur.community > prev.community, 'community grows at ' + s + ' star', `${prev.community} -> ${cur.community}`);
+    check(cur.outside > prev.outside, 'outside grows at ' + s + ' star', `${prev.outside} -> ${cur.outside}`);
+    check(cur.days >= prev.days, 'days never shrink at ' + s + ' star', `${prev.days} -> ${cur.days}`);
+    check(cur.community <= 500 && cur.outside <= 500, 'star ' + s + ' thresholds within the 0..500 rating range');
+    check(menuLimitFor(s) >= menuLimitFor(s - 1), 'menu limit never shrinks at ' + s + ' star', `${menuLimitFor(s - 1)} -> ${menuLimitFor(s)}`);
+  }
+  check(LOCATIONS.filter((l) => l.starsRequired === MAX_STARS).length > 0,
+    'at least one location is gated behind the top star');
 }
 
 /* ---------------------------------------------------------- 最終不變式 */

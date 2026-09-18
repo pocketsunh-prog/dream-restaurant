@@ -5,11 +5,11 @@ import { DISHES, getDish } from '../data/dishes.js';
 import { STAFF_POOL, staffById, makeCandidateList } from '../data/staff.js';
 import { LOCATIONS, getLocation } from '../data/locations.js';
 import { FURNITURE, furnitureById } from '../data/furniture.js';
-import { defaultLayout, rebuildTables, findAutoPlace, autoPlaceChairs } from '../sim/build.js';
+import { defaultLayout, rebuildTables, findAutoPlace, autoPlaceChairs, syncFootprints } from '../sim/build.js';
 import { makeRng, newSeed } from './rng.js';
-import { START_CASH, RATING_START, GRID_W, GRID_H, MENU_LIMIT, STAR_REQS } from './balance.js';
+import { START_CASH, RATING_START, GRID_W, GRID_H, MENU_LIMIT, STAR_REQS, MAX_STARS } from './balance.js';
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 let uidCounter = 1;
 export function nextUid(state) {
@@ -45,7 +45,7 @@ export function createNewGame(seed = newSeed(), opts = {}) {
   layout.rev = 1;
   layout.items = [];
 
-  // 頂級開局：16 張桌子（2／4／6 人混合，共 70 個座位）、頂級裝潢、全套防治設備
+  // 頂級開局：17 張桌子（2／4／6／8 人混合，共 72 個座位）、頂級裝潢、全套防治設備
   // 座標以 26×17 網格為準（GRID_W / GRID_H）。格局：廚房左上（x1–8, y1–4）、
   // 出餐口 y=5（x=3/6）、廁所右上（x23–24, y1–2）、大門南牆 x=12。
   //
@@ -83,11 +83,15 @@ export function createNewGame(seed = newSeed(), opts = {}) {
     { typeId: 'table_4b', x: 17, y: 9 },
     { typeId: 'table_4b', x: 21, y: 9 },
     { typeId: 'table_2b', x: 23, y: 9 },
-    // 第 3 排：4 人雅桌 ×4、二人雅座 ×2
+    // 第 3 排：八人宴會長桌 1（原四人雅桌的位置）＋ 4 人雅桌 ×3、二人雅座 ×2
+    // table_8b 的腳印是 2 寬 × 3 高（x17–18, y13–15），椅子依「北 → 南 → 西 → 東」配位：
+    //   北 (17,12)(18,12)、南 (17,15)(18,15)、西 (16,13)(16,14)(16,15)、東 (19,13)(19,14)(19,15)
+    // 其中北側／西側各兩格就能坐滿 8 人；x=19 仍是走道、x=20–22 留給下方的吧台，
+    // 所以搬動這張桌子時請用 node tools/_layout-check.mjs 確認「8 個座位都連通大門與出餐口」。
     { typeId: 'table_4b', x: 5, y: 13 },
     { typeId: 'table_4b', x: 9, y: 13 },
     { typeId: 'table_4b', x: 13, y: 13 },
-    { typeId: 'table_4b', x: 17, y: 13 },
+    { typeId: 'table_8b', x: 17, y: 13 },
     { typeId: 'table_2b', x: 23, y: 13 },
     // 櫃台與大型裝飾（避開桌椅腳印）
     { typeId: 'counter_bar', x: 21, y: 15 },
@@ -98,7 +102,7 @@ export function createNewGame(seed = newSeed(), opts = {}) {
     { typeId: 'neon_sign', x: 0, y: 12 },
     { typeId: 'painting_landscape', x: 0, y: 2 },
     { typeId: 'photo_wall', x: 25, y: 2 },
-    { typeId: 'lantern_row', x: 17, y: 15 },
+    { typeId: 'lantern_row', x: 14, y: 15 },
     { typeId: 'carpet_red', x: 18, y: 11 }
   ];
 
@@ -211,12 +215,14 @@ export function createNewGame(seed = newSeed(), opts = {}) {
     });
   }
 
-  // 開局桌子自動配椅子
-  for (const it of state.layout.items) {
-    const def = furnitureById(it.typeId);
-    if (def && def.category === 'table') {
-      it.chairUids = autoPlaceChairs(state, it, nextUid);
-    }
+  // 開局桌子自動配椅子。autoPlaceChairs 會「push 進 state.layout.items」，
+  // 所以這裡必須迭代當下的桌子清單（用 filter 先取出快照），
+  // 而且 chairUids 一定要寫回 layout 裡那一筆 —— 先前寫在迭代變數上，
+  // 開局桌子的 chairUids 永遠是空的，刪除桌子時就帶不走自己的椅子（留下一堆孤兒椅）。
+  // 先同步旋轉後的腳印，否則配椅子時會用到錯誤的佔用範圍。
+  syncFootprints(state.layout);
+  for (const it of state.layout.items.filter((i) => furnitureById(i.typeId)?.category === 'table')) {
+    it.chairUids = autoPlaceChairs(state, it, nextUid);
   }
 
   // 開局基本裝潢：讓新店面看起來像間餐廳（燈具也會產生夜間光池）
@@ -359,11 +365,12 @@ function syncMenuLimitNote(state) {
 }
 
 export function menuLimitFor(stars) {
-  return MENU_LIMIT[stars] || 99;
+  return MENU_LIMIT[Math.max(1, Math.min(MAX_STARS, Math.round(Number(stars) || 1)))] || 99;
 }
 
 export function starsRequirement(star) {
-  return STAR_REQS[star] || STAR_REQS[5];
+  const s = Math.max(1, Math.min(MAX_STARS, Math.round(Number(star) || 1)));
+  return STAR_REQS[s] || STAR_REQS[MAX_STARS];
 }
 
 /** 遷移舊存檔 */
@@ -395,6 +402,9 @@ export function migrate(raw) {
   s.stats.magazine = s.stats.magazine || { rank: {}, lastSettleDay: 0 };
   s.flags = s.flags || { tutorialDone: false, annualAward: false, secretUnlocked: false, negativeCashDays: 0 };
   s.flags.negativeCashDays = s.flags.negativeCashDays || 0;
+  // v4：星級上限由 5 提高到 7（見 src/core/balance.js#MAX_STARS），
+  // 舊存檔不可能超過 5 星，這裡只做防禦性的夾取。
+  s.stars = Math.max(1, Math.min(MAX_STARS, Math.round(Number(s.stars) || 1)));
   s.uiQueue = s.uiQueue || [];
   s.log = s.log || [];
   s.suppliers = s.suppliers || [];

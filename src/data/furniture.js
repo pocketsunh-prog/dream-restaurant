@@ -10,7 +10,7 @@
 //                （EVENTS[].mitigateBy 會引用這些 id）
 
 export const FURNITURE = [
-  // ────────────────────────────── 桌子 table（6） ──────────────────────────────
+  // ────────────────────────────── 桌子 table（7） ──────────────────────────────
   {
     id: 'table_2a', name: '二人方桌', category: 'table',
     w: 1, h: 1, price: 900, seats: 2, seatFacing: ['N', 'S'],
@@ -46,6 +46,18 @@ export const FURNITURE = [
     w: 2, h: 2, price: 8800, seats: 6, seatFacing: ['N', 'S', 'E', 'W'],
     decorScore: 18, style: 'mall', blocks: true, needsAdjacentFloor: true, durability: 170,
     desc: '百貨公司等級的大桌，連轉盤都是亮晶晶的。'
+  },
+  {
+    // 八人宴會長桌：腳印 2 寬 × 3 高（沿用既有的桌椅配對規則，只是多一排）。
+    // 為什麼是 2×3 而不是 3×2：椅子依「北 → 南 → 西 → 東」的順序配位，
+    // 每個方向都沿著腳印的每一格往外找一格，所以 2×3 剛好提供
+    // 北 2＋南 2＋西 3＋東 3＝10 個候選位，扣掉牆邊／走道不足的仍能坐滿 8 人；
+    // 3×2 的候選位落在「北 3＋南 3＋西 2＋東 2」，在北側靠牆或與鄰桌太近的排法會湊不滿。
+    // 實際配置點：開局平面圖 (20,13)（第三排右側），景點格局見 src/sim/build.js#LAYOUT_VARIANTS 的 items。
+    id: 'table_8b', name: '八人宴會長桌', category: 'table',
+    w: 2, h: 3, price: 12500, seats: 8, seatFacing: ['N', 'S', 'E', 'W'],
+    decorScore: 20, style: 'mall', blocks: true, needsAdjacentFloor: true, durability: 190,
+    desc: '兩排長桌併起來的氣派大桌，旅行團與大家族一坐滿就是八個人。'
   },
 
   // ────────────────────────────── 椅子 chair（3） ──────────────────────────────

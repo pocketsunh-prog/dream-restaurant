@@ -62,6 +62,9 @@ tests/smoke.mjs                無 DOM 7 天模擬煙霧測試（我）
 - 等角（isometric）菱形網格：`TILE_W = 64`、`TILE_H = 32`，邏輯畫布 `1600 × 1000`。
   （像素尺寸的單一來源是 `src/render/iso.js`；`src/core/balance.js` 鏡射一份，`main.js` 啟動時用常數覆寫 canvas 尺寸）
 - 網格尺寸 `26 × 17`（`GRID_W=26, GRID_H=17`）。每個地點的 `gridW/gridH`（`src/data/locations.js`）也必須一致。
+- 傢俱的實際佔用腳印一律由 `src/sim/build.js#itemFootprint` 決定：`item.w/item.h` 優先，
+  但只寫了 `rot` 而沒同步 w/h 的傢俱（開局傢俱、`LAYOUT_VARIANTS[].items`、舊存檔）會依 def 換邊，
+  所以旋轉 90° 的矩形桌子底下不會被塞進裝潢；`rebuildTables()` 會用 `syncFootprints()` 順手修正資料。
 - 螢幕座標換算（`src/render/iso.js` 概念，統一由 `floor.js` 出口提供）：
 
 ```js
@@ -152,7 +155,7 @@ export const LOCATIONS = [{
   palette: { sky:'#1b2340', wall:'#c9a26b', floor:'#8c6a44', accent:'#e8552e' },
   desc: '一切從這個小小的夜市開始。'
 }];
-// 6 個地點，starsRequired 依序 1,2,3,4,4,5（見 GAME_PROMPT.md §3.9）
+// 14 個地點，starsRequired 依序 1,2,2,3,3,4,4,5,5,5,6,6,7,7 — 星級上限 7（core/balance.js#MAX_STARS）
 export function getLocation(id) {}
 export function locationsForStars(stars) {}
 ```
@@ -174,7 +177,15 @@ export const FURNITURE = [{
   durability: 100,            // 損壞系統
   desc: '夜市攤風格的小方桌。'
 }];
-// 至少 34 件：桌子(6)、椅子(3)、櫃台(2)、裝潢(10)、設備(8: 冷氣/音響/監視器/紅外線/滅火器/保全主機/燈具/冰箱)、廁所(2)、廚房(3)
+// 37 件：桌子(7，含 2×3 腳印的八人宴會長桌 table_8b)、椅子(3)、櫃台(2)、裝潢(11)、設備(9)、廁所(2)、廚房(3)
+//
+// 桌椅關聯的契約（刪除桌椅時靠它一次帶走整套）：
+//   桌子 item.chairUids : string[]  —— 這張桌子自己配到的椅子 uid
+//   椅子 item.chairFor  : string    —— 母桌 uid（繪圖層會用來自動轉向）
+//   椅子 item.tableUid  : string    —— 同一個母桌 uid（繪圖層用它把椅子往外推 18px 繪製）
+//   椅子 item.autoChair : true      —— 自動配來的椅子（玩家單買的椅子沒有）
+// REMOVE_FURNITURE 會同時看 chairUids 與「chairFor/tableUid 反查」，所以三種寫法都能清乾淨；
+// rebuildTables() 另有孤兒椅自我修復（clearOrphanChairs），不會留下沒有母桌的椅子。
 export function furnitureById(id) {}
 export function furnitureByCategory(cat) {}
 export function equipmentList() {}   // category === 'equipment'
@@ -187,7 +198,7 @@ export const EVENTS = [{
   id: 'tv_interview', name: '電視台採訪',
   kind: 'positive',            // positive|negative|neutral
   weight: 6,                   // 相對權重
-  minStars: 1, maxStars: 5,
+  minStars: 1, maxStars: 7,
   locations: null,             // null = 全部；否則為 id 陣列
   onlyWhileOpen: true,
   mitigateBy: null,            // 例：['cctv','infrared']
@@ -372,7 +383,7 @@ export function checkbox({label, checked, onChange})
 export function tabs(items)                     // items:[{id,label,render() -> HTMLElement}] 回傳 {el, setActive(id)}
 export function table({columns, rows, empty})   // columns:[{key,label,width,align,format(v,row)}]
 export function bar({value, max, color, label, showValue})   // 進度條
-export function stars(n, max=5)                 // 星級顯示
+export function stars(n, max=MAX_STARS)         // 星級顯示（MAX_STARS = 7，畫滿 7 顆，未達到的畫成暗色）
 export function money(n)                        // 'NT$ 12,345'
 export function toast(msg, kind)                // kind: info|good|bad|warn
 export function confirmDialog({title, message, okLabel, cancelLabel})  // Promise<boolean>

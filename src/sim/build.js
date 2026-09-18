@@ -11,14 +11,30 @@ export const TILE_TYPES = ['floor', 'wall', 'door', 'kitchen', 'pass', 'restroom
  * 各地點的格局差異（門的位置、廚房大小、隔間牆）。
  * 座標以 26×17 的網格為準（GRID_W / GRID_H）；廚房一律從 (1,1) 起，
  * 出餐口在廚房下緣，廁所在東北／東南／西北角，大門在南牆。
+ * LOCATIONS 裡的每個 id 都必須在這裡有一筆（否則會落回 DEFAULT_VARIANT）。
+ *
+ * 選用欄位 `items`：搬到這個地點時就先擺好的傢俱（例如八人宴會長桌）。
+ * 會依序用 canPlace 檢查、跳過放不下的，並自動配椅子；沒寫 items 的地點維持空店面
+ * （和原本六個地點的行為一致）。items 必須排在「玩家自己擺的桌子」之前才搶得到椅子位。
  */
 const LAYOUT_VARIANTS = {
+  // 六個原始地點：維持空店面（搬家後要自己重新規劃動線）
   zhongli_xinming: { doorX: 12, kitchen: { x0: 1, y0: 1, x1: 8, y1: 4 }, restroom: 'NE', partitions: [] },
   keelung_miaokou: { doorX: 14, kitchen: { x0: 1, y0: 1, x1: 9, y1: 4 }, restroom: 'NW', partitions: [] },
   taipei_nanyang: { doorX: 8, kitchen: { x0: 1, y0: 1, x1: 7, y1: 5 }, restroom: 'SE', partitions: [[18, 8], [18, 9], [18, 10]] },
   taichung_zhonghua: { doorX: 17, kitchen: { x0: 1, y0: 1, x1: 11, y1: 3 }, restroom: 'NE', partitions: [[14, 10], [14, 11]] },
   tainan_dongdi: { doorX: 10, kitchen: { x0: 1, y0: 1, x1: 8, y1: 5 }, restroom: 'SE', partitions: [] },
-  kaohsiung_xinkujiang: { doorX: 18, kitchen: { x0: 1, y0: 1, x1: 9, y1: 4 }, restroom: 'NW', partitions: [[16, 5], [16, 6]] }
+  kaohsiung_xinkujiang: { doorX: 18, kitchen: { x0: 1, y0: 1, x1: 9, y1: 4 }, restroom: 'NW', partitions: [[16, 5], [16, 6]] },
+
+  // 新增的城市：附一張八人宴會長桌當作「大桌餐廳」的招牌（旅行團／家族客人最愛）
+  yilan_luodong: { doorX: 5, kitchen: { x0: 1, y0: 1, x1: 8, y1: 4 }, restroom: 'SE', partitions: [[20, 9], [20, 10]], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  chiayi_wenhua: { doorX: 11, kitchen: { x0: 1, y0: 1, x1: 10, y1: 4 }, restroom: 'SE', partitions: [[13, 13], [14, 13]], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  changhua_baguashan: { doorX: 15, kitchen: { x0: 1, y0: 1, x1: 12, y1: 3 }, restroom: 'NE', partitions: [[15, 8], [15, 9]], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  hualien_dongdamen: { doorX: 19, kitchen: { x0: 1, y0: 1, x1: 9, y1: 5 }, restroom: 'SE', partitions: [], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  tainan_anping: { doorX: 21, kitchen: { x0: 1, y0: 1, x1: 11, y1: 4 }, restroom: 'NW', partitions: [[6, 8]], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  hsinchu_science_park: { doorX: 13, kitchen: { x0: 1, y0: 1, x1: 11, y1: 4 }, restroom: 'SE', partitions: [[22, 6]], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  pingtung_kenting: { doorX: 8, kitchen: { x0: 1, y0: 1, x1: 10, y1: 5 }, restroom: 'NW', partitions: [[19, 12], [19, 13]], items: [{ typeId: 'table_8b', x: 5, y: 6 }] },
+  penghu_magong: { doorX: 15, kitchen: { x0: 1, y0: 1, x1: 12, y1: 4 }, restroom: 'NE', partitions: [], items: [{ typeId: 'table_8b', x: 5, y: 6 }] }
 };
 
 const DEFAULT_VARIANT = LAYOUT_VARIANTS.zhongli_xinming;
@@ -45,8 +61,11 @@ export function setTile(layout, x, y, type) {
 /**
  * 產生某地點的預設格局。
  * 全部地點都是 26×17 等角網格；差異在於大門位置、廚房大小、廁所方位與隔間牆。
+ * 若該地點的 variant 有 `items`，會先擺好這些傢俱並自動配椅子（見 LAYOUT_VARIANTS 的說明）。
+ * @param {string} locationId
+ * @param {{nextUid?: Function}} [opts] 需要配椅子時用的 uid 產生器（預設沿用 state 的 uidSeq 風格）
  */
-export function defaultLayout(locationId) {
+export function defaultLayout(locationId, opts = {}) {
   const v = LAYOUT_VARIANTS[locationId] || DEFAULT_VARIANT;
   const gridW = GRID_W;
   const gridH = GRID_H;
@@ -110,18 +129,57 @@ export function defaultLayout(locationId) {
   // 大門（南牆）
   put(layout.door.x, layout.door.y, 'door');
 
+  // 地點專屬的開場傢俱（可選）。依序嘗試：放不下就跳過，並自動配椅子。
+  if (Array.isArray(v.items) && v.items.length) {
+    const genUid = typeof opts.nextUid === 'function'
+      ? opts.nextUid
+      : ((s) => 'lx' + (s.uidSeq = (s.uidSeq || 1) + 1));
+    const helper = { layout, uidSeq: 0 };
+    for (const spot of v.items) {
+      const def = furnitureById(spot && spot.typeId);
+      if (!def) continue;
+      const x = Math.round(spot.x); const y = Math.round(spot.y);
+      if (!canPlace(layout, def.id, x, y).ok) continue;
+      const item = {
+        uid: 'l' + (helper.uidSeq += 1) + '_' + locationId,
+        typeId: def.id, x, y,
+        w: def.w || 1, h: def.h || 1,
+        rot: spot.rot || 0, durability: 100, broken: false
+      };
+      layout.items.push(item);
+      if (def.category === 'table') item.chairUids = autoPlaceChairs(helper, item, genUid);
+    }
+  }
+
   recomputeReachability(layout);
   return layout;
 }
 
 /* ------------------------------------------------------------ 佔用與通行 */
 
+/**
+ * 一件傢俱「實際佔用」的格數。
+ * 旋轉 90°／270° 時矩形腳印會換邊（w ↔ h），而 MOVE_FURNITURE／PLACE_FURNITURE
+ * 只會寫 item.w/item.h，其他建立路徑（開局傢俱、defaultLayout 的 items、舊存檔）
+ * 可能留下沒同步的 w/h —— 這裡一律以 def 為基準算出真正的腳印，
+ * 否則 collision 判斷會用「沒旋轉」的腳印，讓桌子底下被塞進裝飾品。
+ */
+export function itemFootprint(item, def) {
+  const d = def || furnitureById(item && item.typeId);
+  let w = Math.max(1, Math.round(item?.w || d?.w || 1));
+  let h = Math.max(1, Math.round(item?.h || d?.h || 1));
+  const rot = ((Math.round(Number(item?.rot) || 0) % 4) + 4) % 4;
+  const dw = Math.max(1, Math.round(d?.w || 1));
+  const dh = Math.max(1, Math.round(d?.h || 1));
+  if (dw !== dh && rot % 2 === 1 && w === dw && h === dh) { const t = w; w = h; h = t; }
+  return { w, h };
+}
+
 /** 取得覆蓋某格的可阻擋傢俱 */
 export function blockingItemAt(layout, x, y) {
   for (const item of layout.items) {
     const def = furnitureById(item.typeId);
-    const w = item.w || def?.w || 1;
-    const h = item.h || def?.h || 1;
+    const { w, h } = itemFootprint(item, def);
     if (x >= item.x && x < item.x + w && y >= item.y && y < item.y + h) {
       if (def?.blocks) return item;
     }
@@ -132,8 +190,7 @@ export function blockingItemAt(layout, x, y) {
 export function itemAt(layout, x, y) {
   for (const item of layout.items) {
     const def = furnitureById(item.typeId);
-    const w = item.w || def?.w || 1;
-    const h = item.h || def?.h || 1;
+    const { w, h } = itemFootprint(item, def);
     if (x >= item.x && x < item.x + w && y >= item.y && y < item.y + h) return item;
   }
   return null;
@@ -143,8 +200,7 @@ export function isOccupied(layout, x, y, ignoreUid = null) {
   for (const item of layout.items) {
     if (ignoreUid && item.uid === ignoreUid) continue;
     const def = furnitureById(item.typeId);
-    const w = item.w || def?.w || 1;
-    const h = item.h || def?.h || 1;
+    const { w, h } = itemFootprint(item, def);
     if (x >= item.x && x < item.x + w && y >= item.y && y < item.y + h) return item;
   }
   return null;
@@ -464,9 +520,60 @@ export function orientChairs(layout) {
   }
 }
 
+/** 自動配來的椅子是否屬於某張桌子（相容 chairFor / tableUid / autoChair 三種寫法） */
+export function chairOwnerUid(item) {
+  if (!item || typeof item !== 'object') return null;
+  if (typeof item.tableUid === 'string' && item.tableUid) return item.tableUid;
+  if (typeof item.chairFor === 'string' && item.chairFor) return item.chairFor;
+  return null;
+}
+
+/** 這件傢俱是不是「自動配來的椅子」 */
+export function isAutoChair(item) {
+  if (!item) return false;
+  if (item.autoChair) return true;
+  return item.typeId === 'autochair' || item.typeId === 'autoChair';
+}
+
+/**
+ * 清除孤兒椅：owner 桌子已經不在 layout 裡的椅子（例如舊存檔、或外部工具直接改 items）。
+ * 每張椅子一定連著一張桌子，所以「桌子被刪 → 椅子留著」的狀態不該存在；
+ * 這裡是自我修復，正常流程（REMOVE_FURNITURE）本來就會一起刪掉。
+ * @returns {number} 清掉的椅子數
+ */
+export function clearOrphanChairs(layout) {
+  if (!layout || !Array.isArray(layout.items)) return 0;
+  const uids = new Set(layout.items.map((i) => i && i.uid));
+  const orphans = layout.items.filter((i) => isAutoChair(i) && chairOwnerUid(i) && !uids.has(chairOwnerUid(i)));
+  if (!orphans.length) return 0;
+  const drop = new Set(orphans.map((i) => i.uid));
+  layout.items = layout.items.filter((i) => !drop.has(i.uid));
+  return drop.size;
+}
+
+/** 把 item.w/item.h 同步成「旋轉後的實際腳印」（只修剛好顛倒的那種，不動手工指定的尺寸） */
+export function syncFootprints(layout) {
+  if (!layout || !Array.isArray(layout.items)) return 0;
+  let fixed = 0;
+  for (const item of layout.items) {
+    const def = furnitureById(item.typeId);
+    if (!def || def.w === def.h) continue;
+    const rot = ((Math.round(Number(item.rot) || 0) % 4) + 4) % 4;
+    if (rot % 2 === 0) continue;
+    const w = Math.max(1, Math.round(item.w || def.w || 1));
+    const h = Math.max(1, Math.round(item.h || def.h || 1));
+    if (w === def.w && h === def.h) { item.w = h; item.h = w; fixed += 1; }
+  }
+  return fixed;
+}
+
 /** 重建 state.sim.tables（保留既有桌子的執行期狀態） */
 export function rebuildTables(state) {
   const layout = state.layout;
+  // 先把孤兒椅清掉，再算座位：不然孤兒椅會憑空算進座位數／繪圖層也會畫出沒有桌子的椅子
+  clearOrphanChairs(layout);
+  // 舊資料／外部工具可能留下「轉了但 w/h 沒跟著換」的傢俱，先修正再算佔用
+  syncFootprints(layout);
   recomputeReachability(layout);
   orientChairs(layout);
   const next = computeTables(layout);
@@ -532,7 +639,12 @@ export function tableNeighborSpots(layout, item) {
   return spots;
 }
 
-/** 為一張桌子自動產生椅子（回傳新建的椅子 uid 陣列） */
+/** 為一張桌子自動產生椅子（回傳新建的椅子 uid 陣列）
+ *  每張椅子都會記下三個欄位（刪除桌子時靠它們一次帶走整套桌椅）：
+ *    chairFor  : 桌子的 uid（既有欄位，跟著桌子搬家）
+ *    tableUid  : 同一個 owner uid（繪圖層會用 `item.tableUid || item.chairFor` 把椅子往外推）
+ *    autoChair : true 代表是自動配來的椅子（玩家自己買的椅子沒有這個旗標）
+ *  刪除桌子時以 `/^auto[cC]hair$/` 比對 owner，所以三種寫法都能清掉。 */
 export function autoPlaceChairs(state, tableItem, nextUid) {
   const def = furnitureById(tableItem.typeId);
   const maxSeats = def?.seats || 2;
@@ -552,7 +664,7 @@ export function autoPlaceChairs(state, tableItem, nextUid) {
       x: spot.x, y: spot.y,
       w: 1, h: 1, rot: 0,
       durability: 100, broken: false,
-      autoChair: true, chairFor: tableItem.uid
+      autoChair: true, chairFor: tableItem.uid, tableUid: tableItem.uid
     });
     uids.push(uid);
   }

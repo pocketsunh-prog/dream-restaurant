@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>click probe</title>
+<style>body{background:#20242d;color:#cfe8d0;font:12px Consolas,monospace;margin:0;padding:8px}pre{white-space:pre-wrap}
+iframe{position:absolute;left:-4000px;top:0;width:1700px;height:1160px;border:0}</style></head>
+<body><pre id="out">running</pre>
+<iframe id="game" src="../index.html?autostart=1"></iframe>
+<script type="module">
+const out = document.getElementById('out');
+const lines = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const frame = document.getElementById('game');
+  for (let i = 0; i < 250 && !(frame.contentWindow && frame.contentWindow.DREAM && frame.contentWindow.DREAM.renderer); i++) await sleep(60);
+  const win = frame.contentWindow, doc = frame.contentDocument, D = win.DREAM;
+  const canvas = doc.getElementById('view');
+  const scale = D.logical.cssScale;
+  const store = D.store, renderer = D.renderer;
+  const st = () => store.getState();
+  store.dispatch({ type: 'SET_SPEED', value: 0 });
+  const at = (tx, ty) => {
+    const q = renderer.tileToScreen(tx, ty);
+    const r = canvas.getBoundingClientRect();
+    return { clientX: r.left + q.px * scale, clientY: r.top + q.py * scale };
+  };
+  const fire = (type, q) => {
+    canvas.dispatchEvent(new win.MouseEvent(type, { bubbles: true, cancelable: true, view: win, button: 0, buttons: type === 'mouseup' ? 0 : 1, clientX: q.clientX, clientY: q.clientY }));
+    if (type === 'mouseup') win.dispatchEvent(new win.MouseEvent('mouseup', { bubbles: true, clientX: q.clientX, clientY: q.clientY }));
+  };
+  let fails = 0;
+  function probe(label, tx, ty, wantUid) {
+    D.view.selectionUid = null;
+    const q = at(tx, ty);
+    const r = canvas.getBoundingClientRect();
+    const lx = (q.clientX - r.left) / scale, ly = (q.clientY - r.top) / scale;
+    const f = renderer.screenToTileF(lx, ly);
+    const ex = renderer.hitTestItemExact(lx, ly);
+    fire('mousedown', q); fire('mouseup', q);
+    const got = D.view.selectionUid;
+    const ok = got === wantUid;
+    if (!ok) fails++;
+    lines.push((ok ? 'PASS ' : 'FAIL ') + label + ' -> ' + got + ' (want ' + wantUid + ')' +
+      '  floatTile=(' + f.x.toFixed(2) + ',' + f.y.toFixed(2) + ') exactDiamond=' + (ex ? ex.uid : 'null'));
+  }
+  const L = () => st().layout;
+  const t4 = L().items.find((i) => i.typeId === 'table_4b');
+  const t8 = L().items.find((i) => i.typeId === 'table_8b');
+  const fount = L().items.find((i) => i.typeId === 'fountain_small');
+  const chairOnly = L().items.find((i) => String(i.typeId).startsWith('chair_') && !L().items.some((j) => j !== i && !String(j.typeId).startsWith('chair_')
+    && i.x >= j.x && i.x < j.x + (j.w || 1) && i.y >= j.y && i.y < j.y + (j.h || 1)));
+  probe('table_4b centre', t4.x, t4.y, t4.uid);
+  probe('table_8b centre', t8.x, t8.y, t8.uid);
+  if (fount) probe('fountain_small', fount.x, fount.y, fount.uid); else lines.push('SKIP fountain_small');
+  if (chairOnly) probe('chair-only tile ' + chairOnly.uid + '@' + chairOnly.x + ',' + chairOnly.y, chairOnly.x, chairOnly.y, chairOnly.uid);
+  else lines.push('SKIP chair-only tile');
+  const c0 = L().items.find((i) => String(i.typeId).startsWith('chair_'));
+  lines.push('(first chair in layout = ' + c0.uid + '@' + c0.x + ',' + c0.y + ')');
+  lines.push(fails === 0 ? 'CLICK-PROBE: ALL PASSED' : 'CLICK-PROBE: ' + fails + ' FAILED');
+  out.textContent = lines.join('\n');
+  document.title = fails === 0 ? 'CP-OK' : 'CP-FAIL';
+})().catch((e) => { out.textContent = 'ERR ' + (e && e.stack ? e.stack : e); });
+</script>
+</body></html>

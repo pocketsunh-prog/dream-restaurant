@@ -25,6 +25,7 @@ import {
   drawPartyBadge, partyBadgeSize,
   DEFAULT_FX, FX_KEYS, resolveFx, sameFx,
 } from './sprites.js';
+import { bakeStreet, shopMaskPoly, streetTheme, drawStreetLampPools, drawGroundWeather } from './streetfx.js';
 import { getDish } from '../data/dishes.js';
 import {
   materialsOf, projectedPattern, FLOOR_BASIS, WALL_L_BASIS, WALL_R_BASIS,
@@ -465,6 +466,7 @@ export class FloorRenderer {
     const fx = resolveFx(fxIn);
     this._fx = fx;
     this._pal = pal;
+    this._palSpec = paletteSpecOf(S, V);
     this._tod = tod;
     this._tt = T;
     this._tick = tick;
@@ -475,6 +477,12 @@ export class FloorRenderer {
     // 0) 背景 + 窗外街景（在牆後面）
     stage('backdrop');
     this._drawBackdrop(ctx, gw, gh, tod, skyline, fx);
+    // 0a) 夜晚路燈在地面的光池（動態層；每盞燈 2 次 drawImage，只有夜／傍晚才畫）
+    //     光池畫在騎樓上，房間範圍內不會被影響（streetfx 的燈位都在人行道外緣）
+    if (fx.pools && (tod === 'night' || tod === 'evening') && this._street && this._street.lamps) {
+      drawStreetLampPools(ctx, this._street.lamps, tick, tod, drawLightPool, drawGlow, this._streetTheme,
+        gw, gh, this.originX, this.originY);
+    }
     // 0b) 雨天：騎樓水窪 + 漣漪（水窪是天氣，不受光影開關影響）
     if (weather === 'rain' || weather === 'storm') this._drawPavementPuddles(ctx, gw, gh, tick);
     // 0c) 候位隊伍地墊／腳印（只在店外的人行道上，室內地板一定不會被蓋到）
@@ -515,6 +523,10 @@ export class FloorRenderer {
     // 5) 天氣覆蓋層：只作用在店外（天空／街景／騎樓），房間剪影內完全不覆蓋
     //    （玩家回報雨天／熱浪時店內糊掉 → 用 even-odd clip 把店內挖掉）
     if (weather && weather !== 'none') {
+      // 5a) 地面上的天氣痕跡（積雪堆／路面反光／熱霧）——一樣只畫在店外
+      drawGroundWeather(ctx, weather, tick, {
+        gw, gh, originX: this.originX, originY: this.originY, wallHeight: this.wallHeight,
+      });
       drawWeather(ctx, weather, this.w, this.h, tick, {
         shafts: fx.shafts,
         excludePoly: roomSilhouette(gw, gh, this.wallHeight, this.originX, this.originY),
@@ -849,73 +861,74 @@ export class FloorRenderer {
     return cv;
   }
 
+  // ── 店外街景（streetfx.js 烤成的靜態圖層）──────────────────────────────
+
+  /** 回傳（必要時烤一張）店外街景圖層；非 DOM 環境回 null。 */
+  _streetCanvas(gw, gh, tod, skyline) {
+    const palKey = (this._pal && this._pal.key) || '';
+    const theme = streetTheme(skyline, null, this._palSpec || null);
+    this._streetTheme = theme;
+    const key = `${this.w}x${this.h}|${gw}x${gh}|${this.wallHeight}|${tod}|${skyline}|${palKey}`;
+    if (this._street && this._streetKey === key) return this._street.canvas;
+    const ridge = backWallRidge(gw, gh, this.wallHeight, this.originX, this.originY);
+    let out = null;
+    try {
+      out = bakeStreet({
+        w: this.w, h: this.h, gw, gh, originX: this.originX, originY: this.originY,
+        tod, skyline, theme, ridge,
+        drawProp: drawStreetProp,
+        drawWires,
+        drawSkyline,
+      });
+    } catch (e) {
+      out = null;
+    }
+    this._street = out || { canvas: null, lamps: [] };
+    this._streetKey = out && out.canvas ? key : '';
+    return this._street.canvas;
+  }
+
   _paintBackdrop(ctx, gw, gh, tod, skyline, shade) {
     const outsideShade = shade !== false;
     const W = this.w;
     const H = this.h;
     const ox = this.originX;
     const oy = this.originY;
-    // 店外：大塊實色柏油／騎樓（玩家反映滿地細網點 → 改成實色 + 偶爾的接縫線）
-    ctx.fillStyle = color('pave_lo');
-    ctx.fillRect(0, 0, W, H);
-    // 柏油：每 4 格一道長接縫 ＋ 幾塊實色修補面（有結構但不是雜點）
-    ctx.strokeStyle = color('pave_joint');
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = -8; i <= gw + 8; i += 4) {
-      const a = tileToScreen(i, -8, ox, oy);
-      const b = tileToScreen(i, gh + 8, ox, oy);
-      ctx.moveTo(a.px, a.py);
-      ctx.lineTo(b.px, b.py);
-    }
-    for (let j = -8; j <= gh + 8; j += 4) {
-      const a = tileToScreen(-8, j, ox, oy);
-      const b = tileToScreen(gw + 8, j, ox, oy);
-      ctx.moveTo(a.px, a.py);
-      ctx.lineTo(b.px, b.py);
-    }
-    ctx.stroke();
-    ctx.fillStyle = color('pave');
-    for (let i = 0; i < 6; i++) {
-      const px = ((i * 373) % (W - 120)) - 20;
-      const py = ((i * 211) % (H - 90)) - 20;
-      ctx.fillRect(px, py, 90 + (i % 3) * 30, 34 + (i % 2) * 16);
+
+    // 0) 店外街景：柏油 → 標線 → 騎樓鋪面／路緣石／導盲磚 → 排水溝蓋 → 對街建築
+    //    → 天際線 → 鄰居店面 → 街具＋接觸陰影（全部烤成一張圖層，每影格 1 次 drawImage）
+    const street = this._streetCanvas(gw, gh, tod, skyline);
+    if (street) {
+      ctx.drawImage(street, 0, 0);
+    } else {
+      this._paintBackdropFallback(ctx, gw, gh, tod, skyline, outsideShade);
     }
 
-    const pad = 3; // 店外留 3 格騎樓／柏油
-    const pw = gw + pad * 2;
-    const ph = gh + pad * 2;
-    const stall = footprintCenter(-pad, -pad, pw, ph, ox, oy);
-    const halfW = ((pw + ph) / 2) * HALF_W;
-    const halfH = ((pw + ph) / 2) * HALF_H;
-    // 騎樓本體：一整塊實色鋪面（亮一階），外圈才是較暗的柏油
-    this._ditherDiamond(ctx, stall.px, stall.py - halfH, halfW * 2, halfH * 2, 'pave', DITHER.solid);
-    // 騎樓地磚接縫：每 2 格一道（乾淨的等角格線，不是密集網點）
-    ctx.strokeStyle = color('pave_lo');
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = -pad; i <= gw + pad; i += 2) {
-      const a = tileToScreen(i, -pad, ox, oy);
-      const b = tileToScreen(i, gh + pad - 1, ox, oy);
-      ctx.moveTo(a.px, a.py);
-      ctx.lineTo(b.px, b.py);
-    }
-    for (let j = -pad; j <= gh + pad; j += 2) {
-      const a = tileToScreen(-pad, j, ox, oy);
-      const b = tileToScreen(gw + pad - 1, j, ox, oy);
-      ctx.moveTo(a.px, a.py);
-      ctx.lineTo(b.px, b.py);
-    }
-    ctx.stroke();
-    // 建物落在地面的硬邊影子：用「實色陰影舖面」而不是大面積網點 → view.fx.outsideShade
+    // 1) 建物落在地面的硬邊影子（fx.outsideShade；預設關閉）
     if (outsideShade) {
-      const sp = 3; // 影子比建物外擴 3 格（店外鋪面暗 ≥ 2 的幅度）
+      const sp = 3;
       const pws = gw + sp * 2;
       const phs = gh + sp * 2;
       const s2 = footprintCenter(-sp, -sp, pws, phs, ox, oy);
       this._ditherDiamond(ctx, s2.px, s2.py - ((pws + phs) / 2) * HALF_H + 5, ((pws + phs) / 2) * HALF_W * 2, ((pws + phs) / 2) * HALF_H * 2, 'pave_shade', DITHER.solid);
     }
-    // 路緣：外圈深色 + 上緣亮一階
+  }
+
+  /** 無離屏 canvas（非 DOM 環境）時的簡化店面：單色柏油 + 騎樓菱形。 */
+  _paintBackdropFallback(ctx, gw, gh, tod, skyline, outsideShade) {
+    const W = this.w;
+    const H = this.h;
+    const ox = this.originX;
+    const oy = this.originY;
+    ctx.fillStyle = color('pave_lo');
+    ctx.fillRect(0, 0, W, H);
+    const pad = 3;
+    const pw = gw + pad * 2;
+    const ph = gh + pad * 2;
+    const stall = footprintCenter(-pad, -pad, pw, ph, ox, oy);
+    const halfW = ((pw + ph) / 2) * HALF_W;
+    const halfH = ((pw + ph) / 2) * HALF_H;
+    this._ditherDiamond(ctx, stall.px, stall.py - halfH, halfW * 2, halfH * 2, 'pave', DITHER.solid);
     ctx.strokeStyle = color('pave_curb');
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -925,74 +938,29 @@ export class FloorRenderer {
     ctx.lineTo(Math.round(stall.px - halfW), Math.round(stall.py));
     ctx.closePath();
     ctx.stroke();
-    ctx.strokeStyle = color('pave_hi');
-    ctx.beginPath();
-    ctx.moveTo(Math.round(stall.px - halfW + 2), Math.round(stall.py + 1));
-    ctx.lineTo(Math.round(stall.px), Math.round(stall.py - halfH + 2));
-    ctx.lineTo(Math.round(stall.px + halfW - 2), Math.round(stall.py + 1));
-    ctx.stroke();
-
-    // 街景：只在後牆屋脊以上可見（用多邊形裁切）
-    const ridge = backWallRidge(gw, gh, this.wallHeight, ox, oy);
-    const x0 = Math.floor(ridge[0].x) - 4;
-    const x1 = Math.ceil(ridge[2].x) + 4;
-    const yBot = Math.ceil(Math.max(ridge[0].y, ridge[2].y)) + 16;
-    const sw = Math.max(16, x1 - x0);
-    const sh = Math.max(16, yBot);
-    const poly = skyPolygon(gw, gh, this.wallHeight, ox, oy);
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(poly[0].x, poly[0].y);
-    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
-    ctx.closePath();
-    ctx.clip();
-    drawSkyline(ctx, skyline, x0, 0, sw, sh, tod, { horizon: Math.round(ridge[1].y) });
-    ctx.restore();
-
-    // 店外靜態街景道具（烤進 backdrop，每影格零成本）
-    this._paintStreetProps(ctx, gw, gh, skyline, tod);
-  }
-
-  /**
-   * 店外街景道具：依 skyline 種類擺放路燈、電線桿＋電線、機車／腳踏車、
-   * 垃圾桶、水溝蓋、變電箱、盆栽。位置以固定表決定（決定性、不影響路人走道）。
-   */
-  _paintStreetProps(ctx, gw, gh, skyline, tod) {
-    const kind = typeof skyline === 'string' ? skyline : 'nightmarket';
-    const night = tod === 'night' || tod === 'evening';
-    const put = (prop, tx, ty, opts) => {
-      const p = this.tileToScreen(tx, ty);
-      drawStreetProp(ctx, prop, p.px, p.py + 2, Object.assign({ glowing: night }, opts || {}));
-      return p;
-    };
-    // 南側（畫面下方）騎樓：路燈整排 + 機車／腳踏車 + 垃圾桶
-    const lampXs = [1, 6, 11, 16];
-    const lampPts = [];
-    for (let i = 0; i < lampXs.length; i++) lampPts.push(put('lamp', lampXs[i], gh + 2));
-    // 電線桿（左右各兩根）＋電線
-    const poleA = put('pole', -1, 3);
-    const poleB = put('pole', -1, 9);
-    const poleC = put('pole', gw + 1, 1);
-    const poleD = put('pole', gw + 1, 7);
-    drawWires(ctx, poleA.px + 2, poleA.py - 42, poleB.px + 2, poleB.py - 42, 5);
-    drawWires(ctx, poleC.px + 2, poleC.py - 42, poleD.px + 2, poleD.py - 42, 5);
-    // 停放載具（靠近門口，但不在走道上）
-    put('scooter', 8, gh + 1, { bodyCol: 'teal_md' });
-    put('scooter', 14, gh + 1, { bodyCol: 'red_md' });
-    put('bike', 4, gh + 1);
-    put('bike', 18, gh + 2);
-    // 街道家具
-    put('bin', 2, gh + 1);
-    put('bin', 17, gh + 3);
-    put('transformer', gw + 2, 10, { boxCol: kind === 'harbor' ? 'teal_lo' : 'leaf_lo' });
-    put('pot', 0, gh + 2);
-    put('pot', gw - 1, gh + 3);
-    put('pot', gw + 2, 4);
-    put('manhole', 7, gh + 2);
-    put('manhole', 12, gh + 3);
-    put('manhole', 5, 15);
-    put('manhole', 15, 15);
+    if (outsideShade) {
+      const sp = 3;
+      const pws = gw + sp * 2;
+      const phs = gh + sp * 2;
+      const s2 = footprintCenter(-sp, -sp, pws, phs, ox, oy);
+      this._ditherDiamond(ctx, s2.px, s2.py - ((pws + phs) / 2) * HALF_H + 5, ((pws + phs) / 2) * HALF_W * 2, ((pws + phs) / 2) * HALF_H * 2, 'pave_shade', DITHER.solid);
+    }
+    if (typeof drawSkyline === 'function') {
+      const ridge = backWallRidge(gw, gh, this.wallHeight, ox, oy);
+      const poly = skyPolygon(gw, gh, this.wallHeight, ox, oy);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+      ctx.closePath();
+      ctx.clip();
+      const x0 = Math.floor(ridge[0].x) - 4;
+      const x1 = Math.ceil(ridge[2].x) + 4;
+      drawSkyline(ctx, skyline, x0, 0, Math.max(16, x1 - x0), Math.ceil(Math.max(ridge[0].y, ridge[2].y)) + 16, tod, {
+        horizon: Math.round(ridge[1].y),
+      });
+      ctx.restore();
+    }
   }
 
   // ── 地板 ────────────────────────────────────────────────────────────────
@@ -1409,7 +1377,7 @@ export class FloorRenderer {
   _rec(pool, idx) {
     let r = pool[idx];
     if (!r) {
-      r = { item: null, ref: null, kind: 0, box: { x: 0, y: 0, w: 0, h: 0, art: '', cx: 0, gy: 0, dir: 'S' } };
+      r = { item: null, ref: null, kind: 0, dx: 0, dy: 0, dxW: 0, dyW: 0, box: { x: 0, y: 0, w: 0, h: 0, art: '', cx: 0, gy: 0, dir: 'S' } };
       pool[idx] = r;
     }
     return r;
@@ -1473,6 +1441,8 @@ export class FloorRenderer {
     void S;
     if (box && this._hitItemsN < 512) {
       rec.item = item;
+      rec.dxW = chairDx;
+      rec.dyW = chairDy;
       this._hitItems[this._hitItemsN] = rec;
       this._hitItemsN++;
     }
@@ -1956,15 +1926,69 @@ export class FloorRenderer {
 
   // ── 命中測試 ────────────────────────────────────────────────────────────
 
+  /**
+   * 指標位置「精確」落在哪一件傢俱上（以每一件自己的格腳印反推，不看視覺位移）。
+   * 由螢幕點反解浮點格座標，再用點是否落在該件的菱形腳印內判斷（與 iso.js 的
+   * pointInFootprint 同一個測試），取 x+y 最大者（最靠鏡頭）＝畫面上最上層的那件。
+   * 用途：main.js 的 itemAtPointer 要用「指標真的在哪一件的腳印上」決定選取，
+   * 才不會被椅子被推開 18px 的視覺位移騙到。
+   */
+  hitTestItemExact(px, py) {
+    const t = this.screenToTileF(px, py);
+    const items = this._sortedItems;
+    let best = null;
+    let bestD = -Infinity;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const x = num(it.x, 0);
+      const y = num(it.y, 0);
+      const w = Math.max(1, Math.round(num(it.w, 1)));
+      const h = Math.max(1, Math.round(num(it.h, 1)));
+      // 命中範圍＝「物件自己佔用的格數」在 (u,s) = (x−y, x+y) 平面上形成的菱形：
+      // 以腳印中心為原點，|du| ≤ (w+h)/2 且 |ds| ≤ (w+h)/2。
+      // 注意不要用 footprintCorners() 的內接菱形 —— 它的形狀和實際佔用格對不起來。
+      const du = (t.x - t.y) - (x + (w - 1) / 2 - (y + (h - 1) / 2));
+      const ds = (t.x + t.y) - (x + (w - 1) / 2 + y + (h - 1) / 2);
+      const rad = (w + h) / 2;
+      if (Math.abs(du) > rad || Math.abs(ds) > rad) continue;
+      const d = x + y;
+      if (d > bestD) { bestD = d; best = it; }
+    }
+    return best;
+  }
+  /** 診斷用：目前命中共取清單（含視覺位移）；可用 filterUid 只看某一件。 */
+  debugHitList(filterUid) {
+    const out = [];
+    for (let i = 0; i < this._hitItemsN; i++) {
+      if (filterUid && this._hitItems[i] && this._hitItems[i].item && this._hitItems[i].item.uid !== filterUid) continue;
+      const r = this._hitItems[i];
+      if (r && r.item) out.push({ uid: r.item.uid, type: r.item.typeId, dx: r.dxW, dy: r.dyW, x: r.item.x, y: r.item.y });
+    }
+    return out;
+  }
+
   /** 螢幕座標 → 傢俱（找不到回 null）。 */
   hitTestItem(px, py) {
+    const hit = this.hitTestItemAt(px, py);
+    return hit ? hit.item : null;
+  }
+
+  /**
+   * 螢幕座標 → { item, dx, dy }。
+   * dx/dy 是「命中盒中心 − 物件格腳印中心」的位移（目前只有椅子會有：
+   * 椅子為了坐進桌邊，貼圖與命中盒被往外推約 18px）。
+   * 呼叫端可以用它判斷視覺命中是不是落在物件真正的腳印上。
+   */
+  hitTestItemAt(px, py) {
     const x = num(px, -1e9);
     const y = num(py, -1e9);
     for (let i = this._hitItemsN - 1; i >= 0; i--) {
       const rec = this._hitItems[i];
       if (!rec) continue;
       const b = rec.box;
-      if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) return rec.item;
+      if (x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) {
+        return { item: rec.item, dx: num(rec.dxW, 0), dy: num(rec.dyW, 0) };
+      }
     }
     // 後備：用格座標反查腳印
     const t = this.screenToTile(x, y);
@@ -1973,7 +1997,9 @@ export class FloorRenderer {
       const it = items[i];
       const w = Math.max(1, Math.round(num(it.w, 1)));
       const h = Math.max(1, Math.round(num(it.h, 1)));
-      if (t.x >= it.x && t.x < num(it.x, 0) + w && t.y >= it.y && t.y < num(it.y, 0) + h) return it;
+      if (t.x >= it.x && t.x < num(it.x, 0) + w && t.y >= it.y && t.y < num(it.y, 0) + h) {
+        return { item: it, dx: 0, dy: 0 };
+      }
     }
     return null;
   }

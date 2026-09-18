@@ -21,14 +21,23 @@ export const WEEKLY_BONUS = 20000000;            // 每週一社區獎金（原�
 export const START_CASH = 90000000;
 export const BANKRUPT_DAYS = 7;                // 現金為負超過 7 天 → 破產
 
-/** 星級門檻（兩桶評價都必須達標） */
+/** 星級上限（★1 ～ ★7）。所有星級表都要有 1..MAX_STARS 這麼多筆。 */
+export const MAX_STARS = 7;
+
+/**
+ * 星級門檻（兩桶評價都必須達標）。
+ * 1～5 星是原作的曲線；6、7 星由同一條曲線延伸（社區 +25／+10、區外 +25／+5、
+ * 天數 +15／+15、週排名維持「連 N 週總排名第一」），所以越後面的星越吃「穩定度」而不是爆發。
+ */
 export const STAR_REQS = [
   null,
-  { star: 1, community: 0, outside: 0, days: 0, rank: null, bestRank1: false, firstTwice: false, text: '開業即可' },
-  { star: 2, community: 380, outside: 360, days: 7, rank: null, bestRank1: false, firstTwice: false, text: '營業滿 7 天' },
-  { star: 3, community: 410, outside: 385, days: 14, rank: 8, bestRank1: false, firstTwice: false, text: '週排名進前 8 名' },
-  { star: 4, community: 435, outside: 410, days: 21, rank: 3, bestRank1: true, firstTwice: false, text: '週排名進前 3 名且曾拿第一' },
-  { star: 5, community: 460, outside: 435, days: 35, rank: 1, bestRank1: true, firstTwice: true, text: '連兩週雜誌總排名第一' }
+  { star: 1, community: 0, outside: 0, days: 0, rank: null, bestRank1: false, firstTwice: false, firstThrice: false, text: '開業即可' },
+  { star: 2, community: 380, outside: 360, days: 7, rank: null, bestRank1: false, firstTwice: false, firstThrice: false, text: '營業滿 7 天' },
+  { star: 3, community: 410, outside: 385, days: 14, rank: 8, bestRank1: false, firstTwice: false, firstThrice: false, text: '週排名進前 8 名' },
+  { star: 4, community: 435, outside: 410, days: 21, rank: 3, bestRank1: true, firstTwice: false, firstThrice: false, text: '週排名進前 3 名且曾拿第一' },
+  { star: 5, community: 460, outside: 435, days: 35, rank: 1, bestRank1: true, firstTwice: true, firstThrice: false, text: '連兩週雜誌總排名第一' },
+  { star: 6, community: 485, outside: 460, days: 50, rank: 2, bestRank1: true, firstTwice: true, firstThrice: false, text: '營業滿 50 天、連兩週第一，且本週排名仍在前 2 名' },
+  { star: 7, community: 495, outside: 490, days: 65, rank: 1, bestRank1: true, firstTwice: true, firstThrice: true, text: '連三週雜誌總排名第一（全台第一的傳說小店）' }
 ];
 
 /** 換地點時區外評價的下滑量（原作實測現象） */
@@ -220,8 +229,8 @@ export const LURE_PER_CLICK = 0.005;
 export const LURE_MAX = 0.30;
 export const LURE_HALF_LIFE_MIN = 20;
 
-/** 上架料理上限（依星級） */
-export const MENU_LIMIT = { 1: 8, 2: 14, 3: 22, 4: 99, 5: 99 };
+/** 上架料理上限（依星級）：★4 之後全菜單開放，上限固定 99 道 */
+export const MENU_LIMIT = { 1: 8, 2: 14, 3: 22, 4: 34, 5: 99, 6: 99, 7: 99 };
 
 /** 移動速度：每遊戲分鐘走幾格（餐廳只有 20 格寬，走太慢會讓出餐永遠來不及） */
 export const WALK_TILES_PER_MIN = 4.2;

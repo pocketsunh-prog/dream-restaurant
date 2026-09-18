@@ -4,6 +4,7 @@
 import { EVENTS } from '../data/events.js';
 import { pushLog } from '../core/state.js';
 import { clamp } from './economy.js';
+import { MAX_STARS } from '../core/balance.js';
 
 /** 事件表中負面事件對評價的影響整體調弱，
  *  否則光是隨機事件就足以抵銷玩家認真經營累積的評價（原作裡評價主要還是由顧客決定）。 */
@@ -36,7 +37,7 @@ export function eventAllowed(state, eventDef) {
 export function eventsFor(stars, locationId) {
   return EVENTS.filter((e) => {
     if ((e.minStars ?? 1) > stars) return false;
-    if ((e.maxStars ?? 5) < stars) return false;
+    if ((e.maxStars ?? MAX_STARS) < stars) return false;
     if (Array.isArray(e.locations) && e.locations.length && !e.locations.includes(locationId)) return false;
     return true;
   });

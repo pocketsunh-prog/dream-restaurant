@@ -18,7 +18,8 @@
 <div id="log"></div>
 <iframe id="game" src="/?autostart=1&open=1"></iframe>
 <script type="module">
-import { canPlace } from '/src/sim/build.js';
+import { canPlace, itemAt } from '/src/sim/build.js';
+import { FURNITURE } from '/src/data/furniture.js';
 
 const results = [];
 const logEl = document.getElementById('log');
@@ -67,6 +68,23 @@ async function run() {
   ok(!!renderer && !!canvas, '遊戲載入（DREAM / renderer / canvas 都在）');
   store.dispatch({ type: 'SET_SPEED', value: 0 });
 
+  /* ---------- 0. HUD 星級格數＝MAX_STARS（★1 ～ ★7，不是寫死的 5） ---------- */
+  {
+    // HUD 的星級格是 .hud-group > .hud-label('星級') + .hud-value（沒有 id）
+    const group = [...doc.querySelectorAll('.hud-group')]
+      .find((g) => (g.querySelector('.hud-label')?.textContent || '').trim() === '星級');
+    const starsEl = group ? group.querySelector('.hud-value') : null;
+    const maxStars = (DREAM.BALANCE && DREAM.BALANCE.MAX_STARS) || null;
+    const txt = starsEl ? (starsEl.textContent || '').trim() : '';
+    const lit = (txt.match(/★/g) || []).length;
+    const empty = (txt.match(/☆/g) || []).length;
+    ok(!!starsEl, 'HUD 有星級欄位', starsEl ? `textContent="${txt}"` : '找不到 .hud-group:星級');
+    ok(maxStars === 7, 'BALANCE.MAX_STARS = 7', String(maxStars));
+    ok(lit + empty === maxStars, `HUD 畫出 ${maxStars} 格星級（目前 ${lit} 實心 / ${empty} 空心）`, txt);
+    const cur = Math.max(1, Math.min(7, Math.round(Number(store.getState().stars) || 1)));
+    ok(lit === cur, '實心星數等於目前星級', `${lit} / state.stars=${store.getState().stars}`);
+  }
+
   const st = () => store.getState();
   const rect0 = canvas.getBoundingClientRect();
   const LOGICAL = DREAM.logical;
@@ -90,11 +108,47 @@ async function run() {
   const firstTable = () => st().layout.items.find((i) => i.typeId.startsWith('table_'));
   const firstChair = () => st().layout.items.find((i) => i.typeId.startsWith('chair_'));
 
-  /** 用 App 自己的命中判定決定「畫面上那點是誰」，跟玩家看到的一致 */
+  /**
+   * 用「玩家現在真的會選到誰」來判斷畫面上那一點是誰。
+   * render 層的 hitTestItem()／hitTestItemAt() 是視覺命中盒（椅子被往外推 18px 繪製，
+   * 命中盒跟著位移），所以點桌子的座位格常常回傳隔壁的椅子 —— 這正是先前
+   * 「按了桌子卻拆到椅子」的原因。main.js#itemAtPointer 現在的規則：
+   *   視覺命中若有位移（|dx|+|dy| > 4）而且它的腳印不蓋住指標那一格，就改用
+   *   hitTestItemExact()（自己的菱形腳印真的蓋住指標）；否則照視覺命中，最後才退回格座標。
+   * 這裡照同一套規則實作，測的才是玩家實際拿到的結果。
+   */
   function pickAt(tile) {
     const p = clientOf(tile.x, tile.y);
     const rect = canvas.getBoundingClientRect();
-    return renderer.hitTestItem((p.clientX - rect.left) / scale, (p.clientY - rect.top) / scale);
+    const lx = (p.clientX - rect.left) / scale;
+    const ly = (p.clientY - rect.top) / scale;
+    const L = st().layout;
+    // 與 main.js#itemAtPointer 同一套三層解析：
+    //   1) 指標那一格上的權威傢俱（且指標真的落在它自己的腳印菱形內）
+    //   2) hitTestItemExact()（任何物件的腳印菱形）
+    //   3) hitTestItemAt()（視覺命中＋位移）、最後 itemAt()
+    const f = renderer.screenToTileF ? renderer.screenToTileF(lx, ly) : null;
+    const tx = f ? Math.round(f.x) : tile.x;
+    const ty = f ? Math.round(f.y) : tile.y;
+    const onTile = itemAt(L, tx, ty);
+    if (onTile && f && inOwnDiamond(f, onTile)) return onTile;
+    const exact = renderer.hitTestItemExact ? renderer.hitTestItemExact(lx, ly) : null;
+    if (exact) return exact;
+    const visualHit = renderer.hitTestItemAt ? renderer.hitTestItemAt(lx, ly) : null;
+    const visual = visualHit && visualHit.item ? visualHit.item : null;
+    if (visual) return visual;
+    return itemAt(L, tile.x, tile.y) || null;
+  }
+  /** 指標的浮點格座標是否落在那件傢俱自己的腳印菱形內（與 main.js 同一條公式）。 */
+  function inOwnDiamond(f, it) {
+    const x = Number(it.x) || 0;
+    const y = Number(it.y) || 0;
+    const w = Math.max(1, Math.round(Number(it.w) || 1));
+    const h = Math.max(1, Math.round(Number(it.h) || 1));
+    const du = (f.x - f.y) - (x + (w - 1) / 2 - (y + (h - 1) / 2));
+    const ds = (f.x + f.y) - (x + (w - 1) / 2 + y + (h - 1) / 2);
+    const rad = (w + h) / 2;
+    return Math.abs(du) <= rad && Math.abs(ds) <= rad;
   }
   /** 用 sim 的 canPlace 找一個合法的目的地 */
   function findFreeSpot(item, minDist = 3) {
@@ -121,38 +175,38 @@ async function run() {
   ok(!!bar(), '點擊傢俱後出現浮動工具列');
   ok(DREAM.view.selectionUid === sel.uid, '選取狀態正確', `selectionUid=${DREAM.view.selectionUid} / 期待 ${sel.uid}`);
 
-  /* ---------- 2. 拖曳搬家 ---------- */
-  const spot = findFreeSpot(sel);
-  ok(!!spot, '找到合法的新位置', spot ? `(${spot.x},${spot.y})` : '找不到');
-  if (spot) {
+  /* ---------- 2. 拖曳搬家（工具列選取後直接拖） ---------- */
+  const dragSpot = findFreeSpot(sel);
+  ok(!!dragSpot, '找到合法的新位置', dragSpot ? `(${dragSpot.x},${dragSpot.y})` : '找不到');
+  if (dragSpot) {
     const before = { x: sel.x, y: sel.y };
-    fire('mousedown', clientOf(sel.x, sel.y));
-    fire('mousemove', clientOf(spot.x, spot.y));
+    fire('mousedown', clientOf(before.x, before.y));
+    fire('mousemove', clientOf(dragSpot.x, dragSpot.y));
     await sleep(40);
-    fire('mouseup', clientOf(spot.x, spot.y));
+    fire('mouseup', clientOf(dragSpot.x, dragSpot.y));
     await sleep(140);
     const after = itemByUid(sel.uid);
-    ok(after && after.x === spot.x && after.y === spot.y, '拖曳可以搬家',
+    ok(after && after.x === dragSpot.x && after.y === dragSpot.y, '拖曳可以搬家',
       after ? `(${before.x},${before.y}) → (${after.x},${after.y})` : '找不到傢俱');
     ok(!!bar(), '搬家後工具列仍在（維持選取）');
   }
 
   /* ---------- 3. 工具列「移動」→ 點圖放置 ---------- */
   const cur = itemByUid(sel.uid);
-  const spot2 = findFreeSpot(cur, 2);
+  const moveSpot = findFreeSpot(cur, 2);
   const moveBtn = findButton(bar(), '移動');
   ok(!!moveBtn, '工具列有「移動」按鈕');
-  if (moveBtn && spot2) {
+  if (moveBtn && moveSpot) {
     moveBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
     await sleep(70);
-    fire('click', clientOf(spot2.x, spot2.y));
+    fire('click', clientOf(moveSpot.x, moveSpot.y));
     await sleep(140);
     const after = itemByUid(sel.uid);
-    ok(after && after.x === spot2.x && after.y === spot2.y, '「移動」後點圖可放置',
-      after ? `現在 (${after.x},${after.y})，目標 (${spot2.x},${spot2.y})` : '');
+    ok(after && after.x === moveSpot.x && after.y === moveSpot.y, '「移動」後點圖可放置',
+      after ? `現在 (${after.x},${after.y})，目標 (${moveSpot.x},${moveSpot.y})` : '');
   }
 
-  /* ---------- 4. 旋轉（桌子） ---------- */
+  /* ---------- 4. 旋轉（桌子，就地） ---------- */
   const r0 = itemByUid(sel.uid).rot | 0;
   const rotBtn = findButton(bar(), '旋轉');
   ok(!!rotBtn, '工具列有「旋轉」按鈕');
@@ -163,26 +217,47 @@ async function run() {
     ok(r1 !== r0, '桌子可以旋轉', `${r0} → ${r1}`);
   }
 
-  /* ---------- 5. 就地更換 ---------- */
-  const beforeType = itemByUid(sel.uid).typeId;
+  /* ---------- 5. 就地更換 ----------
+     先挑一件「在原位真的換得動」的傢俱：前面的搬遷測試會把桌子搬到牆角，
+     那裡同類傢俱會因為空間不足全部變灰（disabled），所以這裡自己找一個換得動的目標。 */
+  let repTarget = null;
+  for (const t of st().layout.items.filter((i) => String(i.typeId).startsWith('table_'))) {
+    const alt = FURNITURE.find((f) => f.category === 'table' && f.id !== t.typeId && canPlace(st().layout, f.id, t.x, t.y, t.uid).ok);
+    if (alt) { repTarget = { item: t, alt }; break; }
+  }
   const repBtn = findButton(bar(), '更換');
   ok(!!repBtn, '工具列有「更換」按鈕');
-  if (repBtn) {
-    repBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
-    await sleep(180);
-    const modal = doc.querySelector('.modal-mask');
+  ok(!!repTarget, '找得到一件「原位換得動」的桌子', repTarget ? `${repTarget.item.typeId}@${repTarget.item.x},${repTarget.item.y} → ${repTarget.alt.name}` : '全部都換不動');
+  if (repBtn && repTarget) {
+    const target = repTarget.item;
+    // 用玩家路徑（點擊）重新選取這一件，浮動工具列才會綁到它身上
+    fire('mousedown', clientOf(target.x, target.y));
+    fire('mouseup', clientOf(target.x, target.y));
+    fire('click', clientOf(target.x, target.y));
+    await waitFor(() => (DREAM.view.selectionUid === target.uid ? true : null), 3000);
+    ok(DREAM.view.selectionUid === target.uid, '點擊會選到要更換的桌子', `${DREAM.view.selectionUid} / ${target.uid}`);
+    const beforeType = itemByUid(target.uid).typeId;
+    const repBtn2 = findButton(bar(), '更換');
+    if (repBtn2) repBtn2.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    const modal = await waitFor(() => doc.querySelector('.modal-mask'), 4000);
     ok(!!modal, '更換視窗開啟');
     if (modal) {
       const cards = [...modal.querySelectorAll('.card.clickable')];
-      ok(cards.length > 0, '更換視窗列出可換的傢俱', `${cards.length} 項`);
+      ok(cards.length > 0, '更換視窗列出可換的傢俱', `${cards.length} 項（灰色＝原位放不下）`);
       if (cards.length) {
         const label = (cards[0].querySelector('.card-title') || cards[0]).textContent.trim();
         cards[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
-        await sleep(180);
-        const afterType = itemByUid(sel.uid).typeId;
+        await waitFor(() => (itemByUid(target.uid).typeId !== beforeType ? true : null), 3000);
+        const afterType = itemByUid(target.uid).typeId;
         ok(afterType !== beforeType, '更換成功（種類改變）', `${beforeType} → ${afterType}（點了 ${label.split(' ')[0]}）`);
         ok(!doc.querySelector('.modal-mask'), '更換後視窗關閉');
         ok(!!bar(), '更換後工具列仍在');
+      } else {
+        // 不讓對話框卡住後面的測試（replaceBusy 會擋掉工具列操作）
+        for (const b of modal.querySelectorAll('button,.btn')) {
+          if ((b.textContent || '').trim() === '✕') b.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+        }
+        await sleep(150);
       }
     }
   }
@@ -233,7 +308,7 @@ async function run() {
     const probe = clientOf(escItem.x, escItem.y);
     const rect = canvas.getBoundingClientRect();
     const logical = { x: (probe.clientX - rect.left) / scale, y: (probe.clientY - rect.top) / scale };
-    const hitNow = renderer.hitTestItem(logical.x, logical.y);
+    const hitNow = renderer.hitTestItemExact(logical.x, logical.y);
     info(`Esc 測試：escItem=${escItem.typeId}@${escItem.x},${escItem.y} hitAt=${hitNow ? hitNow.typeId + '@' + hitNow.x + ',' + hitNow.y : 'null'} 邏輯點=(${logical.x.toFixed(1)},${logical.y.toFixed(1)})`);
     const before = DREAM.view.selectionUid;
     fire('mousedown', probe);
@@ -246,6 +321,256 @@ async function run() {
     await sleep(130);
     ok(hadBar && !bar() && !DREAM.view.selectionUid, 'Esc 可取消選取並關閉工具列',
       hadBar ? '' : `點 (${escItem.x},${escItem.y}) 沒有選到東西`);
+  }
+
+  /* ---------- 9. 刪除桌子要把自己的椅子一起帶走（桌椅是一組） ---------- */
+  // 已知道的落差：render 層的家具命中盒會把椅子往外推 18px，點桌子的座位格常常先命中椅子
+  // （見檔尾「已知落差」），所以桌子本身用權威的 layout 資料來刪；
+  // 浮動工具列「拆除」→ 確認視窗那條路徑則用椅子（可精準命中）另外驗一次（見 9b）。
+  const pickAnyTable = (typeId) => (st().layout.items.find((i) => (typeId ? i.typeId === typeId : String(i.typeId).startsWith('table_'))) || null);
+  /** 這一格與周圍 3×3 有沒有任何傢俱（純用 footprint，不碰繪圖層的命中盒） */
+  const tileAreaFree = (tile) => {
+    const L = st().layout;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = tile.x + dx, y = tile.y + dy;
+      if (x < 0 || y < 0 || x >= L.gridW || y >= L.gridH) continue;
+      if (L.items.some((i) => x >= i.x && x < i.x + (i.w || 1) && y >= i.y && y < i.y + (i.h || 1))) return false;
+    }
+    return true;
+  };
+  /** 點一張桌子的原點格，走玩家路徑：mousedown → mouseup → click */
+  function clickTable(item) {
+    const pt = clientOf(item.x, item.y);
+    fire('mousedown', pt);
+    fire('mouseup', pt);
+    fire('click', pt);
+  }
+  /** 用浮動工具列的「拆除」走完整玩家路徑（選取 → 工具列 → 確認視窗 → reducer） */
+  async function deleteViaToolbar(item, label) {
+    const pt = clientOf(item.x, item.y);
+    fire('mousedown', pt);
+    fire('mouseup', pt);
+    fire('click', pt);
+    await waitFor(() => (DREAM.view.selectionUid === item.uid ? true : null), 3000);
+    ok(DREAM.view.selectionUid === item.uid, `點擊會選到 ${label}`, `${DREAM.view.selectionUid} / ${item.uid}`);
+    const btn = findButton(bar(), '拆除');
+    ok(!!btn, `浮動工具列有「拆除」（${label}）`);
+    if (!btn) return false;
+    btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    // ui.confirm 是非同步的：等對話框真的出現（headless 的排程比真實瀏覽器慢），不要用固定 sleep
+    const mask = await waitFor(() => doc.querySelector('.modal-mask'), 4000);
+    ok(!!mask, `拆除前會跳確認視窗（${label}）`);
+    if (!mask) return false;
+    const okBtn = findButton(mask, '拆除並退款');
+    if (!okBtn) return false;
+    okBtn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await waitFor(() => (st().layout.items.some((i) => i.uid === item.uid) ? null : true), 4000);
+    return true;
+  }
+  const chairStats = () => {
+    const L = st().layout;
+    const chairs = L.items.filter((i) => String(i.typeId).startsWith('chair_'));
+    const uids = new Set(L.items.map((i) => i.uid));
+    return {
+      chairs: chairs.length,
+      linked: chairs.filter((c) => c.tableUid || c.chairFor).length,
+      orphans: chairs.filter((c) => { const o = c.tableUid || c.chairFor; return !!o && !uids.has(o); }).length
+    };
+  };
+  const seatCountNow = () => st().sim.tables.reduce((a, t) => a + t.seats.length, 0);
+  const furniturePrice = (typeId) => { try { return FURNITURE.find((f) => f.id === typeId)?.price || 0; } catch { return 0; } };
+  /** 這一格上面有沒有任何傢俱（用 footprint 判斷，不碰繪圖層的命中盒） */
+  const tileHasFurniture = (tile) => st().layout.items.some((i) => tile.x >= i.x && tile.x < i.x + (i.w || 1) && tile.y >= i.y && tile.y < i.y + (i.h || 1));
+
+  async function deleteGroupTest(typeId, wantChairs) {
+    const t = pickAnyTable(typeId);
+    ok(!!t, `店裡找得到 ${typeId}`, t ? `${st().layout.items.filter((i) => i.typeId === typeId).length} 張` : '0 張');
+    if (!t) return;
+    const before = st().layout.items.length;
+    const chairsBefore = chairStats().chairs;
+    const seatsBefore = seatCountNow();
+    const cashBefore = st().cash;
+    const chairPos = (t.chairUids || []).map((u) => itemByUid(u)).filter(Boolean).map((c) => ({ x: c.x, y: c.y }));
+    const group = [t.uid, ...(t.chairUids || [])];
+
+    // 診斷：這張桌子的每個腳印格，繪圖層的命中盒判給誰（已知落差，見檔尾）
+    let stolen = 0;
+    for (let i = 0; i < (t.w || 1); i++) for (let j = 0; j < (t.h || 1); j++) {
+      const pt = clientOf(t.x + i, t.y + j);
+      const r0 = canvas.getBoundingClientRect();
+      const hit = renderer.hitTestItemExact((pt.clientX - r0.left) / scale, (pt.clientY - r0.top) / scale);
+      if (!hit || hit.uid !== t.uid) stolen += 1;
+    }
+    info(`診斷：${typeId} 的 ${(t.w || 1) * (t.h || 1)} 個腳印格中，有 ${stolen} 格的命中盒不是它自己（椅子被往外推 18px 的視覺位移）`);
+
+    const res = store.dispatch({ type: 'REMOVE_FURNITURE', uid: t.uid });
+    await sleep(220);
+    ok(res.ok === true, `REMOVE_FURNITURE 可以拆掉 ${typeId}`, String(res.info || res.error));
+
+    const after = st().layout.items.length;
+    ok(!st().layout.items.some((i) => i.uid === t.uid), `${typeId} 已從 layout 移除`);
+    ok(group.every((u) => !st().layout.items.some((i) => i.uid === u)), `${typeId} 的桌椅全部一起移除`, `一組 ${group.length} 件`);
+    ok(after === before - group.length, `一次操作移除了 ${group.length} 件傢俱`, `${before} → ${after}`);
+    const st2 = chairStats();
+    ok(st2.chairs === chairsBefore - wantChairs, `椅子數少了 ${wantChairs} 張`, `${chairsBefore} → ${st2.chairs}`);
+    ok(seatCountNow() === seatsBefore - wantChairs, `座位數少了 ${wantChairs} 席`, `${seatsBefore} → ${seatCountNow()}`);
+    ok(st2.orphans === 0, `刪除後沒有孤兒椅（${typeId}）`, String(st2.orphans));
+
+    const L2 = st().layout;
+    const rep = canPlace(L2, typeId, t.x, t.y);
+    ok(rep.ok, `${typeId} 的腳印立刻可以再放一張（佔用已釋放）`, rep.ok ? '' : rep.error);
+    const footprint = [];
+    for (let i = 0; i < (t.w || 1); i++) for (let j = 0; j < (t.h || 1); j++) footprint.push({ x: t.x + i, y: t.y + j });
+    const blocked = footprint.filter((c) => L2.items.some((i) => c.x >= i.x && c.x < i.x + (i.w || 1) && c.y >= i.y && c.y < i.y + (i.h || 1)));
+    ok(blocked.length === 0, '桌子腳印上沒有任何殘留傢俱', blocked.slice(0, 3).map((c) => `${c.x},${c.y}`).join(' '));
+    const chairBlocked = chairPos.filter((c) => L2.items.some((i) => c.x >= i.x && c.x < i.x + (i.w || 1) && c.y >= i.y && c.y < i.y + (i.h || 1)));
+    ok(chairBlocked.length === 0, '椅子格也都空出來了', chairBlocked.length ? `${chairBlocked.length} 格仍有東西` : `${chairPos.length} 格`);
+    const placeable = [];
+    for (const c of chairPos) if (canPlace(L2, 'chair_wood', c.x, c.y).ok) placeable.push(c);
+    ok(placeable.length === chairPos.length, '每一個椅子格都立刻可以再擺東西', `${placeable.length}/${chairPos.length}`);
+
+    const refund = Math.round(furniturePrice(typeId) / 2);
+    ok(st().cash === cashBefore + refund, `退款只退一次（${typeId} 半價 NT$ ${refund}）`, `cash ${cashBefore} → ${st().cash}`);
+    const again = store.dispatch({ type: 'REMOVE_FURNITURE', uid: t.uid });
+    ok(again.ok === false, '再刪一次同一張桌子是安全 no-op', String(again.error || again.ok));
+    ok(st().cash === cashBefore + refund, '重複刪除不會重複退款');
+    ok(seatCountNow() === seatsBefore - wantChairs, '重複刪除不會再動座位數', String(seatCountNow()));
+  }
+
+  await deleteGroupTest('table_4b', 4);
+  await deleteGroupTest('table_8b', 8);
+
+  // 這兩項測試會把桌子拆掉，先重開一局再驗「起始平面圖」的完整性
+  store.dispatch({ type: 'NEW_GAME', seed: 20240101 });
+  await sleep(340);
+
+  /* ---------- 9a. 桌椅關聯與其他傢俱不重疊（旋轉腳印同步的迴歸） ---------- */
+  {
+    const L = st().layout;
+    const solid = L.items.filter((i) => { const d = FURNITURE.find((f) => f.id === i.typeId); return d && d.category !== 'chair'; });
+    const bad = [];
+    for (let a = 0; a < solid.length; a++) for (let b = a + 1; b < solid.length; b++) {
+      const A = solid[a], B = solid[b];
+      const ox = Math.max(A.x, B.x), oy = Math.max(A.y, B.y);
+      const ex = Math.min(A.x + (A.w || 1), B.x + (B.w || 1)), ey = Math.min(A.y + (A.h || 1), B.y + (B.h || 1));
+      if (ox < ex && oy < ey) bad.push(`${A.typeId}#${A.uid} × ${B.typeId}#${B.uid}`);
+    }
+    ok(bad.length === 0, '非椅子的傢俱彼此不重疊（含旋轉後的腳印）', bad.slice(0, 3).join(' / '));
+    // 桌子腳印不能被「別的」傢俱佔用
+    const intruders = [];
+    for (const t of L.items.filter((i) => String(i.typeId).startsWith('table_'))) {
+      for (let i = 0; i < (t.w || 1); i++) for (let j = 0; j < (t.h || 1); j++) {
+        const x = t.x + i, y = t.y + j;
+        for (const o of L.items) {
+          if (o.uid === t.uid || String(o.typeId).startsWith('chair_')) continue;
+          if (x >= o.x && x < o.x + (o.w || 1) && y >= o.y && y < o.y + (o.h || 1)) intruders.push(`${o.typeId}@${x},${y} 在 ${t.typeId} 底下`);
+        }
+      }
+    }
+    ok(intruders.length === 0, '沒有任何傢俱被壓在桌子底下', intruders.slice(0, 3).join(' / '));
+    // 每張桌子的座位數要等於定義值（自動配椅子配滿）
+    const short = [];
+    for (const t of L.items.filter((i) => String(i.typeId).startsWith('table_'))) {
+      const def = FURNITURE.find((f) => f.id === t.typeId);
+      const rec = st().sim.tables.find((x) => x.uid === t.uid);
+      const usable = rec ? rec.seats.filter((s) => s.reachDoor && s.reachPass).length : 0;
+      if (!rec || rec.seats.length < (def?.seats || 2) || usable < (def?.seats || 2)) {
+        short.push(`${t.typeId}@${t.x},${t.y} ${rec ? rec.seats.length : 0}/${def ? def.seats : '?'} usable=${usable}`);
+      }
+    }
+    ok(short.length === 0, '每張桌子都配滿座位且全部连通大門與出餐口', short.slice(0, 4).join(' / '));
+    const t8item = L.items.find((i) => i.typeId === 'table_8b');
+    ok(!!t8item, '起始平面圖有一張 table_8b');
+    if (t8item) {
+      const rec = st().sim.tables.find((x) => x.uid === t8item.uid);
+      ok(!!rec && rec.seats.length === 8 && rec.seats.filter((s) => s.reachDoor && s.reachPass).length === 8,
+        'table_8b 有 8 個可用座位', rec ? `${rec.seats.length} 席／可用 ${rec.seats.filter((s) => s.reachDoor && s.reachPass).length}` : '找不到座位紀錄');
+    }
+  }
+
+  /* ---------- 9b. 浮動工具列「拆除」→ 確認視窗：完整玩家路徑 ---------- */
+  // 已知落差：render 層的命中盒會把椅子往外推 18px，所以點「某一張特定的椅子」不一定命中它，
+  // 這裡改成：真的用滑鼠點一格 → 看選到誰 → 對那個選到的東西走完拆除流程並驗證它的契約。
+  {
+    win.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(140);
+    const coords = [...doc.querySelectorAll('#log .info')].length; // 只是保底，不影響判定
+    void coords;
+    const cand = st().layout.items.filter((i) => { const d = FURNITURE.find((f) => f.id === i.typeId); return d && (d.category === 'chair' || d.category === 'decor' || d.category === 'table'); });
+    let picked = null; let clickedTile = null;
+    for (const item of cand) {
+      const pt = clientOf(item.x, item.y);
+      const r0 = canvas.getBoundingClientRect();
+      const hit = renderer.hitTestItemExact((pt.clientX - r0.left) / scale, (pt.clientY - r0.top) / scale);
+      if (hit && hit.uid === item.uid) { picked = item; clickedTile = { x: item.x, y: item.y, pt }; break; }
+    }
+    ok(!!picked, '找得到一個「點下去會命中自己」的傢俱', picked ? `${picked.typeId}@${picked.x},${picked.y}` : '全部都被命中盒位移影響');
+    if (picked) {
+      const def = FURNITURE.find((f) => f.id === picked.typeId);
+      const cashBefore = st().cash;
+      const itemsBefore = st().layout.items.length;
+      const group = [picked.uid, ...(picked.chairUids || [])];
+      const done = await deleteViaToolbar(picked, def ? def.name : picked.typeId);
+      ok(done, '工具列拆除流程走完（含確認視窗）');
+      ok(!st().layout.items.some((i) => i.uid === picked.uid), '被點到的傢俱真的從 layout 消失');
+      ok(group.every((u) => !st().layout.items.some((i) => i.uid === u)), '它連同自己的椅子一起被移除（一組）', `一組 ${group.length} 件`);
+      ok(st().layout.items.length === itemsBefore - group.length, `一次操作移除 ${group.length} 件`, `${itemsBefore} → ${st().layout.items.length}`);
+      ok(st().cash === cashBefore + Math.round((def ? def.price : 0) / 2), '退款只退一次（半價）', `${cashBefore} → ${st().cash}`);
+      ok(chairStats().orphans === 0, '走完玩家刪除流程後仍然沒有孤兒椅', String(chairStats().orphans));
+    }
+  }
+
+  // 重新開一局，讓後面的檢查從乾淨狀態開始
+  store.dispatch({ type: 'NEW_GAME', seed: 12345 });
+  await sleep(340);
+  ok(pickAnyTable() !== null, '新開一局仍有桌子');
+
+  /* ---------- 10. 刪除空白格／不存在的傢俱：安全 no-op ---------- */
+  {
+    const before = st().layout.items.length;
+    const cashB = st().cash;
+    const L = st().layout;
+    let empty = null;
+    for (let y = 2; y < L.gridH - 2 && !empty; y++) for (let x = 2; x < L.gridW - 2 && !empty; x++) {
+      if (L.tiles[y * L.gridW + x] !== 'floor') continue;
+      if (!tileAreaFree({ x, y })) continue;
+      empty = { x, y };
+    }
+    ok(!!empty, '找得到一個點不到傢俱的空白地板格', empty ? `(${empty.x},${empty.y})` : '');
+    if (empty) {
+      const pt = clientOf(empty.x, empty.y);
+      fire('mousedown', pt); fire('mouseup', pt); fire('click', pt);
+      await sleep(160);
+      ok(!DREAM.view.selectionUid, '點空白地板不會選到傢俱', `selection=${DREAM.view.selectionUid}`);
+      const r1 = store.dispatch({ type: 'REMOVE_FURNITURE', uid: 'no_such_uid_9999' });
+      ok(r1.ok === false && !!r1.error, '刪除不存在的 uid 會回報錯誤而不是拋例外', String(r1.error));
+      const r2 = store.dispatch({ type: 'REMOVE_FURNITURE', uid: null });
+      ok(r2.ok === false, '刪除 null uid 是安全 no-op');
+      const r3 = store.dispatch({ type: 'REMOVE_FURNITURE' });
+      ok(r3.ok === false, 'REMOVE_FURNITURE 不帶 uid 也是安全 no-op');
+      ok(st().layout.items.length === before && st().cash === cashB, 'no-op 不會改動傢俱或退款', `${before} → ${st().layout.items.length}`);
+    }
+  }
+
+  /* ---------- 11. 全場沒有孤兒椅（桌子被刪、椅子留著） ---------- */
+  {
+    const s = chairStats();
+    ok(s.chairs > 0, '場上有自動配來的椅子', String(s.chairs));
+    ok(s.linked === s.chairs, '每張椅子都有歸屬（tableUid / chairFor）', `${s.linked}/${s.chairs}`);
+    ok(s.orphans === 0, '全場沒有孤兒椅', String(s.orphans));
+    const t = pickAnyTable();
+    const r = store.dispatch({ type: 'REMOVE_FURNITURE', uid: t.uid });
+    await sleep(200);
+    const s2 = chairStats();
+    ok(r.ok && s2.orphans === 0, '刪除桌子後全場仍然沒有孤兒椅', `orphans=${s2.orphans}`);
+    const L2 = st().layout;
+    const bad = L2.items.filter((i) => /^chair/.test(String(i.typeId)) && (i.tableUid || i.chairFor)
+      && !L2.items.some((j) => j.uid === (i.tableUid || i.chairFor)));
+    ok(bad.length === 0, '沒有任何椅子指向不存在的桌子', bad.slice(0, 3).map((i) => i.uid).join(','));
+    // 存檔／讀檔後歸屬關係仍在（桌椅關聯是資料欄位，不是執行期暫時狀態）
+    const serial = JSON.parse(JSON.stringify(L2.items));
+    const lost = serial.filter((i) => /^chair/.test(String(i.typeId)) && !(i.tableUid || i.chairFor));
+    ok(lost.length === 0, '序列化後椅子的歸屬欄位還在（存讀檔安全）', String(lost.length));
   }
 
   finish();

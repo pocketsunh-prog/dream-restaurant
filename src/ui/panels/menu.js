@@ -10,7 +10,7 @@
 //     BUY_STOCK    { dishId, servings }
 //   本面板不直接修改 state，也不 import 任何 CSS。
 // ============================================================================
-import { DELIVERY_MINUTES, MENU_LIMIT } from '../../core/balance.js';
+import { DELIVERY_MINUTES, MENU_LIMIT, MAX_STARS } from '../../core/balance.js';
 import { DISHES, dishesForStars } from '../../data/index.js';
 import {
   button, card, clear, emptyState, h, hintbox, money, numberField,
@@ -20,7 +20,7 @@ import {
 /* ------------------------------------------------------------------ 常數 */
 
 /**
- * 同時上架料理上限（原作：一星 8 道 → 五星全開）。
+ * 同時上架料理上限（原作：一星 8 道 → 四星之後全開）。
  * 直接沿用 src/core/balance.js 的 MENU_LIMIT，不自行改數字（reducer 也用同一份）。
  */
 const MENU_CAP = MENU_LIMIT;
@@ -44,7 +44,8 @@ const TAG_LABEL = {
 /* ------------------------------------------------------------------ 工具 */
 
 export function menuCapForStars(stars) {
-  return MENU_CAP[Math.max(1, Math.min(5, Math.round(Number(stars) || 1)))] || 8;
+  const s = Math.max(1, Math.min(MAX_STARS, Math.round(Number(stars) || 1)));
+  return MENU_CAP[s] || MENU_CAP[MAX_STARS] || 99;
 }
 
 export function totalStockUnits(stock, store, suppliers) {

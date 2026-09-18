@@ -14,8 +14,48 @@ import { clickLure } from '../sim/attract.js';
 import { pushLog, emptyToday, makeStaffEntry, menuLimitFor, SAVE_VERSION, nextUid } from './state.js';
 import * as B from './balance.js';
 
-const ok = (info) => ({ ok: true, info });
-const fail = (error) => ({ ok: false, error });
+function ok(info) { return { ok: true, info }; }
+function fail(error) { return { ok: false, error }; }
+
+/**
+ * 一件傢俱的擁有物：自動配來的椅子。
+ * 椅子上有三個欄位可以證明歸屬 —— chairFor（原本就有）、tableUid（繪圖層用的）、
+ * autoChair 旗標；只要 owner uid 對得上就算，不靠座標猜。
+ */
+export function ownedItemUids(state, ownerUid) {
+  const out = [];
+  for (const it of state.layout.items) {
+    if (it.uid === ownerUid) continue;
+    const owner = it.tableUid || it.chairFor;
+    if (it.autoChair && owner === ownerUid) out.push(it.uid);
+  }
+  return out;
+}
+
+/**
+ * 刪掉一件傢俱（桌子連同自己的椅子一起走）。回傳實際刪掉的 uid 陣列。
+ * 桌椅是一組：桌子被拆掉，它的椅子就不該留在場上當孤兒。
+ */
+export function removeItemsByIds(state, uids) {
+  const drop = new Set();
+  for (const uid of uids) {
+    const item = findItem(state.layout, uid);
+    if (!item) continue;
+    drop.add(uid);
+    for (const cuid of (item.chairUids || [])) drop.add(cuid);   // 桌子記錄的椅子
+    for (const cuid of ownedItemUids(state, uid)) drop.add(cuid); // 反查（含沒有 chairUids 的舊資料）
+  }
+  if (!drop.size) return [];
+  // 被刪掉的椅子也要從母桌的 chairUids 移除，免得留下指向不存在 uid 的殘影
+  for (const it of state.layout.items) {
+    if (Array.isArray(it.chairUids) && it.chairUids.some((u) => drop.has(u))) {
+      it.chairUids = it.chairUids.filter((u) => !drop.has(u));
+    }
+  }
+  state.layout.items = state.layout.items.filter((i) => !drop.has(i.uid));
+  state.sim.tables = (state.sim.tables || []).filter((t) => !drop.has(t.uid));
+  return [...drop];
+}
 
 function withLayoutChange(state, fn) {
   const res = fn();
@@ -322,12 +362,13 @@ export function reduce(state, action) {
       const item = findItem(state.layout, action.uid);
       if (!item) return fail('找不到這件傢俱');
       const def = furnitureById(item.typeId);
+      const chairs = ownedItemUids(state, item.uid);
+      const removed = removeItemsByIds(state, [item.uid]);
+      // 只退掉「玩家當初真的花錢買的那一件」；自動配來的椅子是附贈的，不重複退錢
       const refund = Math.round((def?.price || 0) * 0.5);
       state.cash += refund;
-      const removedUids = new Set([action.uid, ...(item.chairUids || [])]);
-      state.layout.items = state.layout.items.filter((i) => !removedUids.has(i.uid));
-      state.sim.tables = state.sim.tables.filter((t) => !removedUids.has(t.uid));
-      return withLayoutChange(state, () => ok(`已拆除，退回 NT$ ${refund.toLocaleString('en-US')}`));
+      const extra = chairs.length ? `（連同 ${chairs.length} 張椅子一起拆除）` : '';
+      return withLayoutChange(state, () => ok(`已拆除 ${def?.name || item.typeId}${extra}，退回 NT$ ${refund.toLocaleString('en-US')}（共移除 ${removed.length} 件）`));
     }
     case 'CLEAR_LAYOUT': {
       const refund = Math.round(layoutValue(state.layout) * 0.5);
@@ -455,12 +496,14 @@ export function reduce(state, action) {
       state.cash += refund - cost;
       state.stats.today.spend += cost;
       state.locationId = loc.id;
-      const layout = defaultLayout(loc.id);
+      const layout = defaultLayout(loc.id, { nextUid: (s) => nextUid(s) });
       state.layout = {
         gridW: layout.gridW,
         gridH: layout.gridH,
         tiles: layout.tiles,
-        items: [],
+        // 新地點可能有開場傢俱（LAYOUT_VARIANTS[].items，例如八人宴會長桌）；
+        // 這裡必須沿用 layout.items，不然會把剛擺好的桌椅丟掉。
+        items: layout.items,
         door: layout.door,
         outside: layout.outside,
         kitchenTiles: layout.kitchenTiles,

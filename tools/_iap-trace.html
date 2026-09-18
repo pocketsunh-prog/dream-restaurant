@@ -1,0 +1,34 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>iap trace</title>
+<style>body{background:#20242d;color:#cfe8d0;font:12px Consolas,monospace;padding:8px}pre{white-space:pre-wrap}
+iframe{position:absolute;left:-4000px;top:0;width:1700px;height:1160px;border:0}</style></head>
+<body><pre id="out">running</pre><iframe id="game" src="../index.html?autostart=1"></iframe>
+<script type="module">
+const out = document.getElementById('out');
+const lines = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const frame = document.getElementById('game');
+  for (let i = 0; i < 250 && !(frame.contentWindow && frame.contentWindow.DREAM && frame.contentWindow.DREAM.renderer); i++) await sleep(60);
+  const win = frame.contentWindow, doc = frame.contentDocument, D = win.DREAM;
+  win.__IAP_TRACE = [];
+  const canvas = doc.getElementById('view');
+  const scale = D.logical.cssScale;
+  const st = () => D.store.getState();
+  D.store.dispatch({ type: 'SET_SPEED', value: 0 });
+  const t = st().layout.items.find((i) => i.typeId === 'table_6b');
+  const q = D.renderer.tileToScreen(t.x, t.y);
+  const r = canvas.getBoundingClientRect();
+  lines.push('rect=' + Math.round(r.width) + 'x' + Math.round(r.height) + ' left=' + Math.round(r.left) + ' top=' + Math.round(r.top) + ' cssScale=' + scale + ' deviceScale=' + D.logical.deviceScale);
+  lines.push('tileToScreen=' + JSON.stringify(q) + ' clientPt=' + Math.round(r.left + q.px * scale) + ',' + Math.round(r.top + q.py * scale));
+  const ev = { bubbles: true, cancelable: true, view: win, button: 0, buttons: 1, clientX: r.left + q.px * scale, clientY: r.top + q.py * scale };
+  canvas.dispatchEvent(new win.MouseEvent('mousedown', ev));
+  canvas.dispatchEvent(new win.MouseEvent('mouseup', Object.assign({}, ev, { buttons: 0 })));
+  await sleep(120);
+  lines.push('selection=' + D.view.selectionUid + ' (want ' + t.uid + ')');
+  lines.push('TRACE:');
+  lines.push(...(win.__IAP_TRACE || []).slice(0, 6));
+  out.textContent = lines.join('\n');
+  document.title = 'IAP-DONE';
+})().catch((e) => { out.textContent = 'ERR ' + (e && e.stack ? e.stack : e); });
+</script></body></html>

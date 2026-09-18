@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>tile occupancy</title>
+<style>body{background:#20242d;color:#cfe8d0;font:12px Consolas,monospace;padding:8px}pre{white-space:pre-wrap}
+iframe{position:absolute;left:-4000px;top:0;width:1700px;height:1160px;border:0}</style></head>
+<body><pre id="out">running</pre><iframe id="game" src="../index.html?autostart=1"></iframe>
+<script type="module">
+const out = document.getElementById('out');
+const lines = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  const frame = document.getElementById('game');
+  for (let i = 0; i < 250 && !(frame.contentWindow && frame.contentWindow.DREAM && frame.contentWindow.DREAM.renderer); i++) await sleep(60);
+  const D = frame.contentWindow.DREAM;
+  const L = D.store.getState().layout;
+  lines.push('items=' + L.items.length);
+  for (const [tx, ty] of [[1,6],[1,5],[5,6],[17,13],[23,6]]) {
+    const hits = L.items.filter((i) => tx >= i.x && tx < i.x + (i.w||1) && ty >= i.y && ty < i.y + (i.h||1));
+    lines.push('tile ' + tx + ',' + ty + ' -> ' + hits.map((i) => i.uid + ':' + i.typeId + ' @' + i.x + ',' + i.y + ' ' + (i.w||1) + 'x' + (i.h||1)).join(' | '));
+  }
+  const u3 = L.items.find((i) => i.uid === 'u3');
+  const t6 = L.items.find((i) => i.uid === 'init_12');
+  lines.push('u3 = ' + (u3 ? u3.typeId + '@' + u3.x + ',' + u3.y + ' idx=' + L.items.indexOf(u3) : 'none'));
+  lines.push('init_12 = ' + (t6 ? t6.typeId + '@' + t6.x + ',' + t6.y + ' idx=' + L.items.indexOf(t6) : 'none'));
+  // 模擬 pickAt 的浮點座標
+  const r = D.renderer;
+  const q = r.tileToScreen(1, 6);
+  const f = r.screenToTileF(q.px, q.py);
+  lines.push('tileToScreen(1,6) -> ' + JSON.stringify(q) + ' -> screenToTileF -> ' + JSON.stringify(f));
+  out.textContent = lines.join('\n');
+  document.title = 'TO-DONE';
+})().catch((e) => { out.textContent = 'ERR ' + (e && e.stack ? e.stack : e); });
+</script></body></html>

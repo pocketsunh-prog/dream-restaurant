@@ -20,11 +20,19 @@ const TYPE_TASTE = Object.fromEntries(Object.entries(B.CUSTOMER_TYPES).map(([k, 
 /** 各地點的額外偏好：哪些客群特別多（用來調整新類型在高雄/台北等地的比例） */
 const LOCATION_TYPE_BIAS = {
   zhongli_xinming: { student: 1.5, family: 1.2, regulars: 1.3, soldiers: 1.4, colleagues: 0.9, couple: 1.0 },
+  yilan_luodong: { family: 1.5, regulars: 1.4, elderly: 1.3, cyclists: 1.3, kids_party: 1.2, tour_group: 0.9 },
   keelung_miaokou: { tourist: 1.5, tour_group: 1.6, family: 1.3, elderly: 1.3, office: 0.7 },
+  chiayi_wenhua: { student: 1.4, family: 1.4, regulars: 1.3, elderly: 1.2, blogger: 1.2, couple: 1.1 },
   taipei_nanyang: { office: 1.9, colleagues: 1.7, student: 1.3, cyclist: 1.1, cyclists: 1.2, tour_group: 0.6 },
   taichung_zhonghua: { couple: 1.5, student: 1.3, kids_party: 1.3, blogger: 1.3, regulars: 1.2 },
   tainan_dongdi: { family: 1.6, kids_party: 1.6, elderly: 1.5, office: 0.8, couple: 1.1 },
-  kaohsiung_xinkujiang: { couple: 1.8, blogger: 1.6, colleagues: 1.4, student: 1.2, elderly: 0.7 }
+  changhua_baguashan: { family: 1.6, regulars: 1.5, elderly: 1.4, soldiers: 1.2, blogger: 1.1, tourist: 0.9 },
+  hualien_dongdamen: { tourist: 1.7, tour_group: 1.7, cyclists: 1.5, family: 1.2, office: 0.6 },
+  tainan_anping: { tourist: 1.6, family: 1.5, elderly: 1.4, blogger: 1.3, cyclists: 1.2, office: 0.7 },
+  kaohsiung_xinkujiang: { couple: 1.8, blogger: 1.6, colleagues: 1.4, student: 1.2, elderly: 0.7 },
+  hsinchu_science_park: { office: 2.0, colleagues: 1.8, vip: 1.5, critic: 1.3, blogger: 1.3, student: 0.7, elderly: 0.6 },
+  pingtung_kenting: { tourist: 1.8, couple: 1.6, tour_group: 1.5, cyclists: 1.4, kids_party: 1.2, office: 0.6 },
+  penghu_magong: { tourist: 1.9, tour_group: 1.8, vip: 1.6, critic: 1.5, blogger: 1.4, couple: 1.2, student: 0.5 }
 };
 
 export function typeName(type) { return B.CUSTOMER_TYPES[type]?.name || '顧客'; }
@@ -82,8 +90,8 @@ export function makeCustomer(state, rng, opts = {}) {
   const loc = getLocation(state.locationId);
   const patienceRange = B.PATIENCE[type] || [40, 60];
   const [pMin, pMax] = partyRange(type);
-  const starCap = 2 + clamp(state.stars || 1, 1, 5);          // 1★→3人、5★→7人
-  const partySize = clamp(rng.int(pMin, pMax), 1, Math.min(8, starCap));
+  const starCap = 2 + clamp(state.stars || 1, 1, B.MAX_STARS);   // 1★→3人 … 6★→8人、7★→9人
+  const partySize = clamp(rng.int(pMin, pMax), 1, Math.min(9, starCap));
   const outside = rollOutside(state, rng);
   const spawn = state.layout.outside || { x: state.layout.door.x, y: state.layout.gridH - 0.5 };
   const customer = {

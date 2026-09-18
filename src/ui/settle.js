@@ -15,6 +15,7 @@
 //                docs/GAME_PROMPT.md §3.7 星級、§3.8 雜誌週排名、§3.12 財務、§6 UI/UX 流程
 // ============================================================================
 import * as DATA from '../data/index.js';
+import { MAX_STARS, STAR_REQS } from '../core/balance.js';
 import {
   h, clear, button, bar, stars, money, pct, statRow, section, hintbox, tag, emptyState, confirmDialog
 } from './widgets.js';
@@ -29,15 +30,22 @@ const MAG_CATEGORIES = [
   { id: 'popularity', label: '人氣' }
 ];
 
-/** GAME_PROMPT §3.7（index = 星級） */
-const STAR_REQ = [
+/** 畫面用的「額外條件」文案（index = 目標星級）。分數門檻一律吃 core/balance.js#STAR_REQS。 */
+const STAR_EXTRA = [
   null,
-  { community: 350, outside: 350, extra: '開業即達標' },
-  { community: 380, outside: 360, extra: '營業滿 7 天' },
-  { community: 410, outside: 385, extra: '週排名進前 8 名' },
-  { community: 435, outside: 410, extra: '週排名進前 3 名，且曾拿過第一' },
-  { community: 460, outside: 435, extra: '連兩週雜誌第一，評價 460 / 435' }
+  '開業即達標',
+  '營業滿 7 天',
+  '週排名進前 8 名',
+  '週排名進前 3 名，且曾拿過第一',
+  '連兩週雜誌第一，評價 460 / 435',
+  '營業滿 50 天、連兩週第一，且本週排名仍在前 2 名',
+  '連三週雜誌總排名第一（評價 495 / 490）'
 ];
+
+/** GAME_PROMPT §3.7（index = 星級）；金額門檻直接吃 core/balance.js#STAR_REQS，避免兩份表走鐘 */
+const STAR_REQ = STAR_REQS.map((r, i) => (r
+  ? { community: r.community, outside: r.outside, extra: STAR_EXTRA[i] ?? r.text }
+  : null));
 
 const COMMUNITY_BONUS = 200000;   // 每週一發放的社區獎金（原作約 20 萬）
 
@@ -66,12 +74,12 @@ function statLine(label, text, kind) {
   return row;
 }
 
-function clampStars(n) { return Math.max(1, Math.min(5, Math.round(Number(n) || 1))); }
+function clampStars(n) { return Math.max(1, Math.min(MAX_STARS, Math.round(Number(n) || 1))); }
 
 function nextStarReq(stars0) {
   const cur = clampStars(stars0);
-  if (cur >= 5) return null;
-  return { star: cur + 1, ...(STAR_REQ[cur + 1] || STAR_REQ[5]) };
+  if (cur >= MAX_STARS) return null;
+  return { star: cur + 1, ...(STAR_REQ[cur + 1] || STAR_REQ[MAX_STARS]) };
 }
 
 function magRow(rank, name, score, isMe) {
@@ -290,7 +298,7 @@ export function showWeekSettle({ state, ui, store }) {
     thresholdNodes.push(statLine(`★${req.star} 區外門檻`, oLeft > 0 ? `${req.outside}（還差 ${oLeft.toFixed(1)} 分）` : `${req.outside}（已達標）`, oLeft > 0 ? 'warn' : 'good'));
     thresholdNodes.push(statLine('★' + req.star + ' 額外條件', req.extra ?? '—'));
   } else {
-    thresholdNodes.push(statLine('星級', '★★★★★ 已滿星，接著挑戰年度大獎', 'good'));
+    thresholdNodes.push(statLine('星級', `${'★'.repeat(MAX_STARS)} 已滿星，接著挑戰年度大獎`, 'good'));
   }
   bodyParts.push(section({
     title: '評價與星級',
@@ -403,7 +411,7 @@ export function showStarUp({ state, from, to, ui }) {
       unlockLines.push(statLine('新地點', `${loc?.name ?? loc?.id ?? '未知地點'}（★${int(loc?.starsRequired)} ／ 日租金 ${money(loc?.rentPerDay)}）`, 'good'));
     }
   } else {
-    unlockLines.push(statLine('新地點', '這次沒有新地點（四星以後主要解鎖菜單與大坪數店面）'));
+    unlockLines.push(statLine('新地點', '這次沒有新地點（高星級主要解鎖新城市與更大的客群，菜單與上限也一起提高）'));
   }
   bodyParts.push(section({ title: '本次解鎖', children: unlockLines }).el);
   bodyParts.push(hintbox('星級越高，顧客組成會越來越挑：評論家、VIP 出現的機率上升，'
@@ -453,7 +461,7 @@ export function showAnnualAward({ state, ui }) {
     h('div', { class: 'star-pop row', style: { 'justify-content': 'center' } }, stars(starsN)),
     section({ title: '得獎資料', children: [
       statLine('餐廳地點', `${loc}（${history.length} 個營業日）`),
-      statLine('星級', `★${starsN} / ★5`),
+      statLine('星級', `★${starsN} / ★${MAX_STARS}`),
       statLine('總淨利', money(totalProfit), totalProfit < 0 ? 'bad' : 'good'),
       statLine('總來客數', `${int(totalGuests)} 人`),
       statLine('知名度', `${int(S?.fame)} / 100`)
@@ -462,7 +470,7 @@ export function showAnnualAward({ state, ui }) {
       ? `兩道隱藏的歌名料理已經解鎖${secretNames.length ? `：${secretNames.join('、')}` : ''} —— 到「菜單」面板上架，讓老饕們聞香而來。`
       : '年度評比第一的獎勵是兩道隱藏的歌名料理：到「菜單」面板就能看到它們。'),
     hintbox('獎盃拿到手，遊戲還沒結束：繼續把每週排名維持在前面，'
-      + '挑戰連續年度第一，或者搬去高雄新堀江開一間最貴最時尚的店。')
+      + '挑戰連續年度第一，或者搬去澎湖馬公、墾丁大街開一間最貴最時尚的店。')
   ];
 
   openCurtain('年度大獎', bodyParts, [

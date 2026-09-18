@@ -2,6 +2,7 @@
 // widgets.js — 共用 UI 元件（90 年代米黃色視窗風格）
 // 契約見 docs/ARCHITECTURE.md §5.1。UI 面板一律使用這裡的元件，不得自建樣式。
 // ============================================================================
+import { MAX_STARS } from '../core/balance.js';
 
 /* ---------------------------------------------------------------- DOM 工具 */
 
@@ -256,7 +257,9 @@ export function bar({ value = 0, max = 100, color = null, label = '', showValue 
   return { el: node, set, fill, track };
 }
 
-export function stars(n, max = 5) {
+/** 星級顯示：預設畫到目前星級上限（★1 ～ ★7，見 core/balance.js#MAX_STARS），
+ *  未達到的部分畫成暗色的 ★（.stars .off），所以面板上永遠看得到「還差幾顆」。 */
+export function stars(n, max = MAX_STARS) {
   const on = Math.max(0, Math.min(max, Math.round(n)));
   return h('span', { class: 'stars', title: `${on} / ${max}` },
     '★'.repeat(on), h('span', { class: 'off' }, '★'.repeat(max - on)));

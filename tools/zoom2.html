@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zoom</title>
+<style>
+  body { margin:0; background:#111; }
+  img { display:block; image-rendering:pixelated; transform-origin:0 0; position:absolute; }
+</style>
+</head>
+<body>
+<img id="im" src="">
+<script>
+const p = new URLSearchParams(location.search);
+const im = document.getElementById('im');
+im.src = p.get('src') || '';
+const z = Number(p.get('z') || 2);
+const x = Number(p.get('x') || 0);
+const y = Number(p.get('y') || 0);
+im.style.transform = 'scale(' + z + ') translate(' + (-x) + 'px,' + (-y) + 'px)';
+im.style.left = '0px';
+im.style.top = '0px';
+im.onload = () => { document.title = 'zoomed ' + im.naturalWidth + 'x' + im.naturalHeight; };
+</script>
+</body>
+</html>

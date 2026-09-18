@@ -3829,12 +3829,16 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
   const o = opts || {};
   const poly = Array.isArray(o.excludePoly) ? o.excludePoly : null;
   if (poly && poly.length >= 3) {
-    // 外框矩形 ＋ 內挖房間多邊形（even-odd）→ 店內不畫任何天氣像素
+    // 外框矩形 ＋ 內挖房間多邊形（even-odd）→ 店內不畫任何天氣像素。
+    // 多邊形先往外撐開 4px：房間輪廓的最外側像素剛好壓在多邊形邊界上，
+    // 點在多邊形內外的判定（測試用的 ray casting）與 canvas 的 even-odd 填色
+    // 在那 1px 上可能不一致，撐開後就不會再沿著輪廓留下一條天氣痕跡。
+    const grown = expandPoly(poly, 4);
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, Math.round(w), Math.round(h));
-    ctx.moveTo(Math.round(poly[0].x), Math.round(poly[0].y));
-    for (let i = 1; i < poly.length; i++) ctx.lineTo(Math.round(poly[i].x), Math.round(poly[i].y));
+    ctx.moveTo(Math.round(grown[0].x), Math.round(grown[0].y));
+    for (let i = 1; i < grown.length; i++) ctx.lineTo(Math.round(grown[i].x), Math.round(grown[i].y));
     ctx.closePath();
     try {
       ctx.clip('evenodd');
@@ -3847,6 +3851,23 @@ export function drawWeather(ctx, weather, w, h, tick, opts) {
     return;
   }
   drawWeatherBody(ctx, weather, w, h, tick, o);
+}
+
+/** 把多邊形沿「中心 → 頂點」方向外推 pad 像素（回傳新陣列）。 */
+function expandPoly(pts, pad) {
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < pts.length; i++) { cx += pts[i].x; cy += pts[i].y; }
+  cx /= pts.length;
+  cy /= pts.length;
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const dx = pts[i].x - cx;
+    const dy = pts[i].y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    out.push({ x: pts[i].x + (dx / len) * pad, y: pts[i].y + (dy / len) * pad });
+  }
+  return out;
 }
 
 function drawWeatherBody(ctx, weather, w, h, tick, o) {
@@ -3886,20 +3907,157 @@ function drawWeatherBody(ctx, weather, w, h, tick, o) {
   }
   if (kind === 'rain' || kind === 'storm') {
     const storm = kind === 'storm';
-    // 靜態網點覆蓋（不再畫動態雨絲／水花）
+    // ── 1) 全畫面冷色調（雨天的低對比天光）──
     ditherPattern(ctx, 0, 0, W, H, storm ? 'outline_cool' : 'sky_lo', 'clear', storm ? DITHER.block25 : DITHER.block12);
-    if (storm && tick % 190 < 3) {
-      ditherPattern(ctx, 0, 0, W, H, 'white', 'sky_hi', DITHER.block50);
+    // ── 2) 雨絲：長度／亮度／斜率都有變化（決定性亂數；起始時間錯開＝畫面立刻佈滿雨）──
+    const wind = rainWind(t, storm);
+    const drops = storm ? 300 : 180;
+    for (let i = 0; i < drops; i++) {
+      const h1 = hash1(i * 7 + 1);
+      const h2 = hash1(i * 13 + 5);
+      const h3 = hash1(i * 29 + 11);
+      const speed = storm ? 15 + h3 * 13 : 9 + h3 * 9;
+      const len = Math.round((storm ? 14 : 8) + h3 * (storm ? 20 : 12));
+      const period = H + len * 2 + 60;
+      const T = t + i * 11.7;
+      const x0 = h1 * (W + 220) - 110;
+      const y = (((h2 * period + T * speed) % period) + period) % period - len - 20;
+      const x = x0 + ((y * wind * 0.35) % 40);
+      const br = h3 > 0.82 ? 2 : 1;
+      ctx.fillStyle = color(storm ? (h3 > 0.5 ? 'white' : 'sky_hi') : (h3 > 0.55 ? 'sky_hi' : 'steel_hi'));
+      const dx = wind * len * 1.6;
+      for (let k = 0; k < len; k += 2) {
+        const px = Math.round(x + dx * (k / len));
+        const py = Math.round(y + k);
+        ctx.fillRect(px, py, br, 2);
+      }
+      // 雨滴頭（略亮的一點，讓雨絲有方向感）
+      if (br > 1) ctx.fillRect(Math.round(x + dx), Math.round(y + len), 2, 2);
+    }
+    // ── 3) 濺起的小水花（貼近地面，週期短、位置固定）──
+    const splashN = storm ? 48 : 26;
+    for (let i = 0; i < splashN; i++) {
+      const h1 = hash1(i * 31 + 3);
+      const h2 = hash1(i * 17 + 9);
+      const ph = (t * (storm ? 0.11 : 0.075) + h2) % 1;
+      if (ph > 0.42) continue;
+      const x = h1 * W;
+      const y = H * (0.34 + h2 * 0.6);
+      const rr = Math.round(2 + ph * 9);
+      ctx.fillStyle = color('puddle_hi');
+      ctx.fillRect(Math.round(x) - rr, Math.round(y), rr * 2, 1);
+      if (rr > 3) {
+        ctx.fillRect(Math.round(x) - rr, Math.round(y) - 1, 1, 1);
+        ctx.fillRect(Math.round(x) + rr - 1, Math.round(y) - 1, 1, 1);
+      }
+    }
+    // ── 4) 累積的水窪（地面上的水膜；數量隨雨勢）──
+    const puddles = storm ? 15 : 9;
+    for (let i = 0; i < puddles; i++) {
+      const h1 = hash1(i * 53 + 7);
+      const h2 = hash1(i * 41 + 13);
+      const x = h1 * W;
+      const y = H * (0.38 + h2 * 0.56);
+      const rw = Math.round((storm ? 26 : 16) + h1 * (storm ? 40 : 26));
+      const rh = Math.max(4, Math.round(rw * 0.34));
+      const key = `wpud|${rw}x${rh}|${storm ? 1 : 0}`;
+      const cw = rw * 2 + 6;
+      const chh = rh * 2 + 6;
+      const cv = cachedSprite(key, cw, chh, (c) => {
+        ditherEllipse(c, cw / 2, chh / 2, rw, rh, 'puddle', DITHER.b50);
+        ditherEllipse(c, cw / 2, chh / 2, rw * 0.72, rh * 0.7, 'sky_lo', DITHER.b25);
+        ditherEllipse(c, cw / 2, chh / 2, rw * 0.3, rh * 0.3, 'puddle_hi', DITHER.b12);
+      });
+      if (cv) ctx.drawImage(cv, Math.round(x - cw / 2), Math.round(y - chh / 2));
+    }
+    // ── 5) 雷雨：閃電 + 打在街上的補光（每 ~3 秒一次）──
+    if (storm) {
+      const cyc = t % 190;
+      if (cyc < 12) {
+        const bolt = boltGeometry(Math.floor(t / 190), W, H);
+        const flash = cyc < 3 ? 'white' : cyc < 6 ? 'sky_hi' : 'sky_lo';
+        ditherPattern(ctx, 0, 0, W, H, flash, 'clear', cyc < 3 ? DITHER.block50 : DITHER.block25);
+        ctx.fillStyle = color('white');
+        for (let i = 0; i < bolt.pts.length - 1; i++) {
+          const a = bolt.pts[i];
+          const b = bolt.pts[i + 1];
+          const n = Math.max(1, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / 2));
+          for (let k = 0; k <= n; k++) {
+            const px = Math.round(a.x + ((b.x - a.x) * k) / n);
+            const py = Math.round(a.y + ((b.y - a.y) * k) / n);
+            ctx.fillRect(px, py, 2, 2);
+          }
+        }
+        const tip = bolt.pts[bolt.pts.length - 1];
+        ditherEllipse(ctx, tip.x, tip.y, 26, 12, 'sky_hi', DITHER.b37);
+      }
     }
     return;
   }
   if (kind === 'cold') {
+    // 寒流／下雪：冷藍暗角 ＋ 下雪時的全畫面薄雪紗 ＋ 飄雪 ＋ 地面結霜斜紋
     vignette(ctx, W, H, 'sky_lo', 'clear', 24);
-    ditherPattern(ctx, 0, H * 0.5, W, H * 0.5, 'sky_hi', 'clear', DITHER.block12);
+    ditherPattern(ctx, 0, 0, W, H, 'white', 'clear', DITHER.block12);
+    ditherPattern(ctx, 0, H * 0.55, W, H * 0.45, 'tile_hi', 'clear', DITHER.block12);
+    // 飄雪：起始時間錯開（畫面從第一格就佈滿雪，而不是全部從頂端一起掉）
+    const wind = 0.55 + 0.4 * Math.sin(t * 0.008);
+    for (let i = 0; i < 240; i++) {
+      const h1 = hash1(i * 11 + 2);
+      const h2 = hash1(i * 23 + 7);
+      const h3 = hash1(i * 37 + 13);
+      const T = t + i * 7.31;
+      const period = H + 40;
+      const y = (((h2 * period + T * (1.1 + h3 * 2.2)) % period) + period) % period - 20;
+      const sway = Math.sin(T * 0.02 + h3 * 6.283) * (6 + h3 * 16);
+      const x = h1 * (W + 40) - 20 + sway + y * wind * 0.25;
+      if (x < -6 || x > W + 6) continue;
+      const big = h3 > 0.86;
+      ctx.fillStyle = color(h3 > 0.7 ? 'white' : 'tile_hi');
+      ctx.fillRect(Math.round(x), Math.round(y), big ? 2 : 1, big ? 2 : 1);
+      if (big) ctx.fillRect(Math.round(x) + 1, Math.round(y) + 1, 1, 1);
+    }
+    // 結霜／積雪的斜紋帶（地面）
+    for (let i = 0; i < 5; i++) {
+      const x = ((i * 197 + t * 0.4) % (W + 120)) - 60;
+      ditherPattern(ctx, x, H * 0.7, 60, H * 0.3, 'tile_hi', 'clear', DITHER.block25);
+    }
     return;
   }
-  // heat：只有邊緣暖色暗角（不再畫動態熱氣帶）
+  // heat：暖色暗角 ＋ 地面熱氣帶（持續扭動）
   vignette(ctx, W, H, 'lamp_sh', 'clear', 24);
+  ditherPattern(ctx, 0, 0, W, H, 'lamp_md', 'clear', DITHER.block12);
+  for (let i = 0; i < 7; i++) {
+    const base = H * (0.45 + i * 0.075);
+    const amp = 4 + (i % 3) * 3;
+    const xo = Math.sin(t * 0.03 + i) * 26;
+    for (let k = 0; k < 3; k++) {
+      const y = Math.round(base + Math.sin(t * 0.05 + i * 1.7 + k) * amp);
+      const w = Math.round(W * (0.32 + 0.2 * ((i + k) % 3)));
+      const x = Math.round(((i * 211 + k * 97 + xo) % (W + 200)) - 100);
+      ditherPattern(ctx, x, y, w, 3, 'lamp_hi', 'clear', DITHER.sparse);
+    }
+  }
+}
+
+/** 雨的風速／斜率（storm 時風更強；隨時間正弦擺動）。 */
+function rainWind(t, storm) {
+  const base = storm ? 0.42 : 0.24;
+  return base * (0.8 + 0.45 * Math.sin(t * 0.013) + 0.15 * Math.sin(t * 0.037));
+}
+
+/** 閃電鋸齒幾何（依 seed 決定形狀；同一道閃電在整個生命週期內不變）。 */
+function boltGeometry(seed, W, H) {
+  const pts = [];
+  let x = W * (0.18 + hash1(seed * 13 + 1) * 0.64);
+  let y = -6;
+  const endY = H * (0.2 + hash1(seed * 7 + 3) * 0.3);
+  const steps = 11;
+  for (let i = 0; i <= steps; i++) {
+    pts.push({ x, y });
+    y += (endY + 6) / steps;
+    x += (hash1(seed * 31 + i * 17 + 5) - 0.5) * 34;
+  }
+  return { pts };
 }
 
 // ===========================================================================
@@ -4057,7 +4215,12 @@ export function drawContactShadow(ctx, cx, cy, w = 14, h = 5) {
 }
 
 // ── 店外街景道具（靜態；烤進 backdrop，每影格零成本）────────────────────────
-export const STREET_PROP_KINDS = ['lamp', 'pole', 'scooter', 'bike', 'bin', 'manhole', 'transformer', 'pot'];
+export const STREET_PROP_KINDS = [
+  'lamp', 'pole', 'scooter', 'bike', 'bin', 'manhole', 'transformer', 'pot',
+  // ── 街景加強版（streetfx.js 使用；全部仍是硬邊色票的程序化美術）──
+  'vending', 'vendfish', 'coffee', 'drink', 'signboard', 'bench', 'rack',
+  'hydrant', 'planter', 'traffic', 'cone', 'bollard',
+];
 
 /**
  * 畫一個店外道具（底部中心對齊 x,y）。
@@ -4155,6 +4318,126 @@ export function drawStreetProp(ctx, kind, x, y, opts = {}) {
     g.r(bx - 2, by - 16, 4, 4, 'gray_70');
     g.r(bx - 1, by - 15, 2, 2, 'hp_warn');
     g.r(bx - 8, by - 1, 16, 2, 'gray_15');
+  } else if (k === 'vending' || k === 'vendfish' || k === 'coffee' || k === 'drink') {
+    // 自動販賣機／飲料機（依主題換門面顏色與商品排）
+    const th = o.theme || null;
+    const body = (th && th.vendor) || 'red_md';
+    const glass = (th && th.glass) || 'window_dk';
+    const face = {
+      vending: [['red', 'lamp_hi'], ['shirt_blu', 'neon_yel'], ['teal', 'white']],
+      vendfish: [['teal', 'water_hi'], ['shirt_blu', 'tile_hi'], ['gray_50', 'white']],
+      coffee: [['wood_dark', 'lamp_hi'], ['shirt_brn', 'lamp_md'], ['gray_30', 'cloth_cream']],
+      drink: [['neon_cyan', 'white'], ['neon_pink', 'lamp_hi'], ['shirt_prp', 'neon_yel']],
+    }[k];
+    // 機身
+    g.r(bx - 19, by - 44, 38, 44, 'outline');
+    g.r(bx - 18, by - 43, 36, 42, body);
+    g.r(bx - 18, by - 43, 36, 2, shade(body, 'white', 0.35));
+    g.r(bx - 18, by - 3, 36, 2, shade(body, 'black', 0.4));
+    // 玻璃展示窗
+    g.r(bx - 15, by - 40, 30, 24, 'outline');
+    g.r(bx - 14, by - 39, 28, 22, glass);
+    g.dith(bx - 14, by - 39, 28, 22, 'white', 'clear', DITHER.sparse);
+    for (let i = 0; i < 3; i++) {
+      for (let j = 0; j < 3; j++) {
+        const cc = face[(i * 3 + j) % face.length];
+        g.r(bx - 12 + j * 9, by - 36 + i * 7, 7, 5, cc[0]);
+        g.r(bx - 12 + j * 9, by - 36 + i * 7, 7, 1, cc[1]);
+        g.r(bx - 12 + j * 9, by - 32 + i * 7, 7, 1, shade(cc[0], 'black', 0.4));
+      }
+    }
+    // 出貨口 + 按鈕排 + 投幣孔
+    g.r(bx - 12, by - 13, 24, 6, 'gray_15');
+    g.r(bx - 11, by - 12, 22, 4, 'gray_30');
+    g.r(bx + 10, by - 39, 5, 18, shade(body, 'black', 0.25));
+    for (let i = 0; i < 4; i++) g.r(bx + 11, by - 38 + i * 4, 3, 2, i === 1 ? 'hp_ok' : 'gray_70');
+    if (o.glowing) {
+      g.dith(bx - 16, by - 42, 32, 26, 'lamp_hi', 'clear', DITHER.block12);
+      ditherEllipse(ctx, bx, by - 26, 22, 16, 'lamp_md', DITHER.b12);
+    }
+    g.r(bx - 20, by - 1, 40, 2, 'gray_15');
+  } else if (k === 'signboard') {
+    // 立式菜單招牌（A 字板）
+    g.r(bx - 13, by - 34, 3, 34, 'wood_dark');
+    g.r(bx + 10, by - 34, 3, 34, 'wood_sh');
+    g.poly([[bx - 15, by - 34], [bx + 15, by - 34], [bx + 12, by - 52], [bx - 12, by - 52]], 'outline');
+    g.poly([[bx - 14, by - 35], [bx + 14, by - 35], [bx + 11, by - 51], [bx - 11, by - 51]], 'wood_hi');
+    // 板面：標題 + 手寫菜單線
+    g.r(bx - 10, by - 49, 20, 3, 'red');
+    for (let i = 0; i < 4; i++) g.r(bx - 9, by - 44 + i * 3, 18 - (i % 2) * 5, 1, 'wood_dark');
+    g.r(bx - 10, by - 34, 20, 1, 'wood_sh');
+    if (o.theme && o.theme.tactile) g.r(bx - 10, by - 33, 20, 1, o.theme.tactile);
+  } else if (k === 'bench') {
+    // 候位長椅（木條椅面 + 鐵腳）
+    g.r(bx - 20, by - 2, 5, 4, 'gray_15');
+    g.r(bx + 15, by - 2, 5, 4, 'gray_15');
+    g.r(bx - 22, by - 12, 44, 2, 'wood_md');
+    for (let i = 0; i < 4; i++) g.r(bx - 20, by - 10 + i * 2, 40, 1, i & 1 ? 'wood_hi' : 'wood');
+    g.r(bx - 22, by - 8, 44, 2, 'wood_sh');
+    g.r(bx - 20, by - 24, 3, 14, 'gray_30');
+    g.r(bx + 17, by - 24, 3, 14, 'gray_30');
+    for (let i = 0; i < 2; i++) g.r(bx - 21, by - 22 + i * 6, 42, 2, i & 1 ? 'wood_hi' : 'wood_md');
+    g.dith(bx - 22, by + 1, 44, 3, 'pave_shade', 'clear', DITHER.block25);
+  } else if (k === 'rack') {
+    // 自行車停放架（U 形鋼管 x3）
+    g.r(bx - 20, by - 1, 40, 2, 'pave_shade');
+    for (let i = 0; i < 3; i++) {
+      const x = bx - 14 + i * 14;
+      g.r(x - 2, by - 22, 2, 22, 'metal_md');
+      g.r(x + 4, by - 22, 2, 22, 'metal_sh');
+      g.r(x - 2, by - 24, 8, 2, 'metal_hi');
+    }
+    g.r(bx - 12, by - 30, 1, 6, 'gray_50');
+  } else if (k === 'hydrant') {
+    // 消防栓
+    g.r(bx - 5, by - 3, 10, 3, 'gray_15');
+    g.r(bx - 4, by - 18, 8, 15, 'red_md');
+    g.r(bx - 4, by - 18, 2, 15, 'red');
+    g.r(bx - 6, by - 24, 12, 7, 'red');
+    g.r(bx - 6, by - 24, 12, 2, 'red_hi');
+    g.r(bx - 7, by - 13, 14, 3, 'red_lo');
+    g.r(bx - 3, by - 28, 6, 4, 'red');
+    g.r(bx - 2, by - 29, 4, 2, 'red_hi');
+  } else if (k === 'planter') {
+    // 大型花台（水泥框 + 灌木）
+    g.poly([[bx - 22, by], [bx + 22, by], [bx + 18, by - 12], [bx - 18, by - 12]], 'outline');
+    g.poly([[bx - 20, by - 1], [bx + 20, by - 1], [bx + 17, by - 11], [bx - 17, by - 11]], 'gray_50');
+    g.poly([[bx - 16, by - 12], [bx + 16, by - 12], [bx + 14, by - 14], [bx - 14, by - 14]], 'gray_30');
+    for (let i = 0; i < 7; i++) {
+      const px = bx - 15 + i * 5;
+      const hh = 8 + ((i * 7) % 5);
+      g.r(px, by - 14 - hh, 4, hh, i & 1 ? 'leaf_lo' : 'leaf');
+      g.r(px, by - 14 - hh, 4, 2, 'leaf_hi');
+    }
+    const mid = o.theme && o.theme.awning ? o.theme.awning[0] : 'red';
+    g.r(bx - 6, by - 22, 12, 4, mid);
+    g.r(bx - 4, by - 25, 8, 3, shade(mid, 'white', 0.4));
+  } else if (k === 'traffic') {
+    // 紅綠燈
+    g.r(bx - 3, by, 6, 4, 'gray_15');
+    g.r(bx - 2, by - 46, 4, 46, 'gray_30');
+    g.r(bx - 2, by - 46, 1, 46, 'gray_50');
+    g.r(bx - 5, by - 62, 11, 18, 'outline');
+    g.r(bx - 4, by - 61, 9, 16, 'gray_15');
+    const lit = ((o.seed | 0) % 3);
+    g.r(bx - 3, by - 60, 7, 4, lit === 0 ? 'red' : 'red_lo');
+    g.r(bx - 3, by - 55, 7, 4, lit === 1 ? 'neon_yel' : 'lamp_sh');
+    g.r(bx - 3, by - 50, 7, 4, lit === 2 ? 'hp_ok' : 'leaf_lo');
+    if (o.glowing) ditherEllipse(ctx, bx, by - 57, 9, 9, lit === 0 ? 'red_hi' : lit === 1 ? 'lamp_hi' : 'leaf_hi', DITHER.b12);
+  } else if (k === 'cone') {
+    // 三角錐
+    g.poly([[bx - 8, by], [bx + 8, by], [bx + 3, by - 16], [bx - 3, by - 16]], 'outline');
+    g.poly([[bx - 7, by - 1], [bx + 7, by - 1], [bx + 3, by - 15], [bx - 3, by - 15]], 'neon_org');
+    g.r(bx - 5, by - 6, 10, 3, 'white');
+    g.r(bx - 9, by - 2, 18, 3, 'neon_org');
+    g.r(bx - 9, by - 2, 18, 1, 'lamp_hi');
+  } else if (k === 'bollard') {
+    // 車阻柱
+    g.r(bx - 4, by - 26, 8, 26, 'gray_30');
+    g.r(bx - 4, by - 26, 2, 26, 'gray_50');
+    g.r(bx - 5, by - 28, 10, 3, 'gray_70');
+    g.r(bx - 4, by - 18, 8, 3, 'white');
+    g.r(bx - 6, by - 2, 12, 3, 'gray_15');
   } else {
     // 盆栽
     g.poly([[bx - 5, by], [bx + 5, by], [bx + 4, by - 8], [bx - 4, by - 8]], 'outline');

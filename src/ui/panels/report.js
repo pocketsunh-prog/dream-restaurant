@@ -12,6 +12,7 @@
 import {
   h, clear, tabs, table, bar, stars, money, pct, statRow, section, hintbox, emptyState, tag
 } from '../widgets.js';
+import { MAX_STARS, STAR_REQS } from '../../core/balance.js';
 
 /* --------------------------------------------------------------- 共用小工具 */
 
@@ -21,15 +22,23 @@ const WEATHER_LABEL = {
 
 const WEEKDAY_LABEL = ['週一', '週二', '週三', '週四', '週五', '週六', '週日'];
 
-/** GAME_PROMPT §3.7：兩桶評價都要達標才能升星（index = 目標星級 1..5） */
-const STAR_REQ = [
+/**
+ * GAME_PROMPT §3.7：兩桶評價都要達標才能升星（index = 目標星級 1..7）。
+ * 分數直接吃 src/core/balance.js#STAR_REQS（單一來源），這裡只補上畫面用的額外條件文字。
+ */
+const STAR_EXTRA = [
   null,
-  { community: 350, outside: 350, extra: '開業即達標' },
-  { community: 380, outside: 360, extra: '營業滿 7 天' },
-  { community: 410, outside: 385, extra: '週排名進前 8 名' },
-  { community: 435, outside: 410, extra: '週排名進前 3 名，且曾拿過第一' },
-  { community: 460, outside: 435, extra: '連兩週雜誌第一，評價 460 / 435' }
+  '開業即達標',
+  '營業滿 7 天',
+  '週排名進前 8 名',
+  '週排名進前 3 名，且曾拿過第一',
+  '連兩週雜誌第一，評價 460 / 435',
+  '營業滿 50 天、連兩週第一，且本週排名仍在前 2 名',
+  '連三週雜誌總排名第一（評價 495 / 490）'
 ];
+const STAR_REQ = STAR_REQS.map((r, i) => (r
+  ? { community: r.community, outside: r.outside, extra: STAR_EXTRA[i] ?? r.text }
+  : null));
 
 const MAG_CATEGORIES = [
   { id: 'taste', label: '口味' },
@@ -131,7 +140,7 @@ function moodText(v) {
 }
 
 function starText(n) {
-  const s = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+  const s = Math.max(0, Math.min(MAX_STARS, Math.round(Number(n) || 0)));
   return s > 0 ? '★'.repeat(s) : '—';
 }
 
@@ -183,13 +192,13 @@ const repColor = (v, max) => {
 };
 
 function nextStarReq(stars) {
-  const cur = Math.max(1, Math.min(5, Math.round(Number(stars) || 1)));
-  if (cur >= 5) return null;
-  return { star: cur + 1, ...(STAR_REQ[cur + 1] || STAR_REQ[5]) };
+  const cur = Math.max(1, Math.min(MAX_STARS, Math.round(Number(stars) || 1)));
+  if (cur >= MAX_STARS) return null;
+  return { star: cur + 1, ...(STAR_REQ[cur + 1] || STAR_REQ[MAX_STARS]) };
 }
 
-/** 實作上的營業天數門檻（對應 src/core/balance.js STAR_REQS[].days），index = 目標星級 */
-const STAR_MIN_DAYS = [0, 0, 7, 14, 21, 35];
+/** 實作上的營業天數門檻（直接取 core/balance.js 的 STAR_REQS[].days，index = 目標星級） */
+const STAR_MIN_DAYS = STAR_REQS.map((r) => (r ? r.days : 0));
 
 /**
  * 下一星的「額外條件」狀態。
@@ -198,7 +207,7 @@ const STAR_MIN_DAYS = [0, 0, 7, 14, 21, 35];
  * 無法判定時回 done:null（顯示「待結算」而不是亂說已達成）。
  */
 function starExtraState(req, state) {
-  if (!req) return { text: '已達五星，改挑戰年度大獎', days: null, dayOk: null, done: true };
+  if (!req) return { text: `已達 ${MAX_STARS} 星，改挑戰年度大獎`, days: null, dayOk: null, done: true };
   const day = Number(state?.day);
   const mag = state?.stats?.magazine ?? {};
   const lastRank = Number(mag.lastTotalRank ?? mag.totalRank);
@@ -216,6 +225,10 @@ function starExtraState(req, state) {
     done = Number.isFinite(lastRank) ? (lastRank <= 3 && bestRank === 1) : null;
   } else if (req.star === 5) {
     done = bestRank === 1 ? firstWeeks >= 2 : null;
+  } else if (req.star === 6) {
+    done = Number.isFinite(lastRank) ? (lastRank <= 2 && bestRank === 1 && firstWeeks >= 2) : null;
+  } else if (req.star === 7) {
+    done = bestRank === 1 ? (firstWeeks >= 3 && lastRank === 1) : null;
   }
   if (done !== null && dayOk === false) done = false;
   return { text: req.extra, days, dayOk, done };
@@ -425,7 +438,7 @@ export function createReportPanel({ store, ui, win }) {   // eslint-disable-line
     function update(S) {
       const today = S?.stats?.today ?? {};
       const rep = S?.reputation ?? {};
-      const stars0 = Math.max(1, Math.min(5, Math.round(Number(S?.stars) || 1)));
+      const stars0 = Math.max(1, Math.min(MAX_STARS, Math.round(Number(S?.stars) || 1)));
       const req = nextStarReq(stars0);
       const key = [
         today.revenue, today.inventory, today.wages, today.rent, today.utilities, today.tips, today.spend,
@@ -506,8 +519,8 @@ export function createReportPanel({ store, ui, win }) {   // eslint-disable-line
       } else {
         commMark.style.left = '100%';
         outMark.style.left = '100%';
-        rCommNeed.set('已達五星，改挑戰年度大獎');
-        rOutNeed.set('已達五星，改挑戰年度大獎');
+        rCommNeed.set(`已達 ${MAX_STARS} 星，改挑戰年度大獎`);
+        rOutNeed.set(`已達 ${MAX_STARS} 星，改挑戰年度大獎`);
         rCommNeed.kind('good');
         rOutNeed.kind('good');
       }
@@ -753,7 +766,7 @@ export function createReportPanel({ store, ui, win }) {   // eslint-disable-line
     let lastKey = null;
     function update(S) {
       const rep = S?.reputation ?? {};
-      const stars0 = Math.max(1, Math.min(5, Math.round(Number(S?.stars) || 1)));
+      const stars0 = Math.max(1, Math.min(MAX_STARS, Math.round(Number(S?.stars) || 1)));
       const today = S?.stats?.today ?? {};
       const complaints = (today.complaints && typeof today.complaints === 'object') ? today.complaints : {};
       const log = Array.isArray(S?.sim?.complaintLog) ? S.sim.complaintLog : [];
@@ -771,16 +784,16 @@ export function createReportPanel({ store, ui, win }) {   // eslint-disable-line
       const req = nextStarReq(stars0);
 
       rComm.set(`${num(community, 1)} / 500`);
-      rComm.kind(community >= 460 ? 'good' : community < 350 ? 'bad' : undefined);
+      rComm.kind(community >= 495 ? 'good' : community < 350 ? 'bad' : undefined);
       rOut.set(`${num(outside, 1)} / 500`);
-      rOut.kind(outside >= 435 ? 'good' : outside < 350 ? 'bad' : undefined);
+      rOut.kind(outside >= 490 ? 'good' : outside < 350 ? 'bad' : undefined);
 
       clear(checklist);
       if (!req) {
-        rTarget.set('★★★★★ 已滿星');
+        rTarget.set(`${'★'.repeat(MAX_STARS)} 已滿星`);
         rTarget.kind('good');
         checklist.appendChild(h('div', { class: 'row' },
-          tag('五星達成', 'gold'),
+          tag(`${MAX_STARS} 星達成`, 'gold'),
           h('span', { class: 'muted' }, '接著把每週排名維持在前段，挑戰年度大獎 The Greatest Restaurant of the Year。')));
       } else {
         rTarget.set(`★${req.star}（社區 ${req.community} ／ 區外 ${req.outside}）`);

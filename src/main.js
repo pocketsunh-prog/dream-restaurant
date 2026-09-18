@@ -345,7 +345,8 @@ function updateHud(state) {
   hudEls.weather.textContent = B.WEATHER_NAME[state.sim.weather] || '晴天';
   hudEls.cash.textContent = money(state.cash);
   hudEls.cash.classList.toggle('debt', state.cash < 0);
-  hudEls.stars.textContent = '★'.repeat(state.stars) + '☆'.repeat(5 - state.stars);
+  hudEls.stars.textContent = '★'.repeat(Math.max(0, state.stars))
+    + '☆'.repeat(Math.max(0, (B.MAX_STARS || 5) - state.stars));
   hudEls.repC.textContent = Math.round(state.reputation.community);
   hudEls.repO.textContent = Math.round(state.reputation.outside);
   hudEls.guests.textContent = `${state.stats.today.guests} 人`;
@@ -550,22 +551,59 @@ function openReplacePicker(item) {
 
 /**
  * 指標命中的傢俱。
- * 繪圖層的命中列表是快取，可能在傢俱被移動／更換後慢一個 frame，
- * 因此若命中的 uid 已經不在目前的 layout 裡，就退回用格座標查（含四鄰，因為桌椅圖會蓋到鄰格）。
+ *
+ * 解析順序（三層，愈前面愈權威）：
+ *   1. 指標所在那一格上的權威資料：`itemAt(layout, tile)`，而且指標必須真的落在那件
+ *      物件「自己的腳印」裡（|du|,|ds| ≤ (w+h)/2，以腳印中心為原點；u = x−y、s = x+y）。
+ *      這一步讓「椅子格選到椅子、桌子中心格選到桌子」。
+ *   2. 否則用 renderer.hitTestItemExact()（任何物件的腳印菱形）。
+ *   3. 否則用 renderer.hitTestItemAt()（視覺命中＋命中盒位移），再退四鄰格。
+ *
+ * 為何不能只靠第 2 步：2×2 桌子的腳印菱形半徑是 (2+2)/2 = 2 格，菱形會伸到緊鄰的
+ * 椅子格中心（距離只有 1.5 格），於是「點椅子卻選到桌子」。第 1 步先問「這一格上是誰」，
+ * 再用同一條菱形公式確認指標真的在那件物件上，就同時滿足兩種點擊。
+ * 第 1 步用「指標反解的浮點格座標」而不是呼叫端傳進來的 tile，兩者才會一致。
  */
 function itemAtPointer(p, tile) {
-  const hit = renderer && renderer.hitTestItem ? renderer.hitTestItem(p.x, p.y) : null;
   const st = store.getState();
-  if (hit && findItem(st.layout, hit.uid)) return hit;
+  const layout = st.layout;
+  const f = renderer && renderer.screenToTileF ? renderer.screenToTileF(p.x, p.y) : null;
+  const tileX = f ? Math.round(f.x) : (tile ? tile.x : null);
+  const tileY = f ? Math.round(f.y) : (tile ? tile.y : null);
+  if (tileX !== null && tileY !== null) {
+    const onTile = itemAt(layout, tileX, tileY);
+    if (onTile && inTileDiamond(f, onTile)) return onTile;
+  }
+  const exact = renderer && renderer.hitTestItemExact ? renderer.hitTestItemExact(p.x, p.y) : null;
+  if (exact && findItem(layout, exact.uid)) return exact;
+  const visual = renderer && renderer.hitTestItemAt ? renderer.hitTestItemAt(p.x, p.y) : null;
+  if (visual && visual.item && findItem(layout, visual.item.uid)) return visual.item;
   if (tile) {
-    const direct = itemAt(st.layout, tile.x, tile.y);
+    const direct = itemAt(layout, tile.x, tile.y);
     if (direct) return direct;
     for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-      const near = itemAt(st.layout, tile.x + dx, tile.y + dy);
+      const near = itemAt(layout, tile.x + dx, tile.y + dy);
       if (near) return near;
     }
   }
   return null;
+}
+
+/** 浮點格座標 f 是否落在那件傢俱自己的腳印菱形內。 */
+function inTileDiamond(f, item) {
+  if (!f || !item) return false;
+  const x = num0(item.x);
+  const y = num0(item.y);
+  const w = Math.max(1, Math.round(num0(item.w) || 1));
+  const h = Math.max(1, Math.round(num0(item.h) || 1));
+  const du = (f.x - f.y) - (x + (w - 1) / 2 - (y + (h - 1) / 2));
+  const ds = (f.x + f.y) - (x + (w - 1) / 2 + y + (h - 1) / 2);
+  const rad = (w + h) / 2;
+  return Math.abs(du) <= rad && Math.abs(ds) <= rad;
+}
+
+function num0(v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 function setupCanvasInput() {
@@ -827,8 +865,9 @@ const cheat = {
           break;
         }
         case 'star': {
-          const n = Math.max(1, Math.min(5, Math.round(Number(arg) || 0)));
-          if (n < 1) { this.print('用法: star <1-5>', 'err'); break; }
+          const cap = B.MAX_STARS || 5;
+          const n = Math.max(1, Math.min(cap, Math.round(Number(arg) || 0)));
+          if (n < 1) { this.print(`用法: star <1-${cap}>`, 'err'); break; }
           st.stars = n;
           this.print('星級已設為 ' + n + ' 星', 'good');
           break;
@@ -1100,7 +1139,7 @@ function main() {
     if (show) {
       const s = store.getState();
       if (show === 'settle') settleUI.showWeekSettle({ state: s, ui, store });
-      else if (show === 'starup') settleUI.showStarUp({ state: s, from: s.stars, to: Math.min(5, s.stars + 1), ui });
+      else if (show === 'starup') settleUI.showStarUp({ state: s, from: s.stars, to: Math.min(B.MAX_STARS || 5, s.stars + 1), ui });
       else if (show === 'award') settleUI.showAnnualAward({ state: s, ui });
       else if (show === 'gameover') settleUI.showGameOver({ state: s, ui, store });
     }

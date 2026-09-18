@@ -2,7 +2,7 @@
 // rating.js — 社區／區外雙桶評價、知名度、星級判定
 // 考據：原作評價分「社區」與「區外」兩桶，換地點會讓區外評價大幅下滑。
 // ============================================================================
-import { RATING_MIN, RATING_MAX, TYPE_WEIGHT, STAR_REQS } from '../core/balance.js';
+import { RATING_MIN, RATING_MAX, TYPE_WEIGHT, STAR_REQS, MAX_STARS } from '../core/balance.js';
 import { locationsForStars } from '../data/locations.js';
 import { clamp } from './economy.js';
 import { pushLog } from '../core/state.js';
@@ -51,13 +51,14 @@ export function rollOutside(state, rng) {
 }
 
 export function starProgress(state) {
-  const nextStar = Math.min(5, state.stars + 1);
-  if (state.stars >= 5) {
+  const cur = Math.min(MAX_STARS, Math.max(1, Math.round(Number(state.stars) || 1)));
+  const nextStar = Math.min(MAX_STARS, cur + 1);
+  if (cur >= MAX_STARS) {
     return {
       nextStar: null,
       community: { have: state.reputation.community, need: null, ok: true },
       outside: { have: state.reputation.outside, need: null, ok: true },
-      text: '已達五星，挑戰年度大獎'
+      text: `已達 ${MAX_STARS} 星，挑戰年度大獎`
     };
   }
   const req = STAR_REQS[nextStar];
@@ -70,6 +71,7 @@ export function starProgress(state) {
     rank: req.rank ? { have: rank, need: req.rank, ok: rank !== null && rank !== undefined && rank <= req.rank } : null,
     bestRank1: req.bestRank1 ? { have: state.stats.magazine.bestTotalRank, ok: state.stats.magazine.bestTotalRank === 1 } : null,
     firstTwice: req.firstTwice ? { have: state.stats.magazine.firstPlaceWeeks || 0, need: 2, ok: (state.stats.magazine.firstPlaceWeeks || 0) >= 2 } : null,
+    firstThrice: req.firstThrice ? { have: state.stats.magazine.firstPlaceWeeks || 0, need: 3, ok: (state.stats.magazine.firstPlaceWeeks || 0) >= 3 } : null,
     text: req.text
   };
 }
@@ -79,7 +81,7 @@ export function starProgress(state) {
  * 原作需要兩個評價桶都達標，這是玩家最常卡關的地方。
  */
 export function checkStars(state) {
-  if (state.stars >= 5) return null;
+  if ((Number(state.stars) || 1) >= MAX_STARS) return null;
   const p = starProgress(state);
   const req = STAR_REQS[p.nextStar];
   if (!req) return null;
@@ -89,6 +91,7 @@ export function checkStars(state) {
   if (req.rank && (rank === null || rank === undefined || rank > req.rank)) return null;
   if (req.bestRank1 && state.stats.magazine.bestTotalRank !== 1) return null;
   if (req.firstTwice && (state.stats.magazine.firstPlaceWeeks || 0) < 2) return null;
+  if (req.firstThrice && (state.stats.magazine.firstPlaceWeeks || 0) < 3) return null;
 
   const from = state.stars;
   state.stars = p.nextStar;
@@ -132,9 +135,9 @@ export function checkDropStar(state) {
 }
 
 /** 年度大獎判定：五星後再撐滿 120 天（約四個遊戲月，實際遊玩時間考量）
- *  且年度總排名第一 */
+ *  且年度總排名第一。五星是入場券，六星／七星只是把店磨得更亮。 */
 export function checkAnnualAward(state) {
-  if (state.flags.annualAward || state.stars < 5) return false;
+  if (state.flags.annualAward || (Number(state.stars) || 1) < 5) return false;
   const start = state.flags.annualStartDay || state.day;
   if (state.day - start < 120) return false;
   const rank = state.stats.magazine.lastTotalRank;

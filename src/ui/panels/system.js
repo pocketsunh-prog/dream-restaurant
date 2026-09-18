@@ -176,7 +176,7 @@ const MANUAL = [
           40～50 分掉到 68 分、超過 50 分只剩 40 分（客人等到不耐煩）。</li>
         <li><b>售價</b>：主食常見 200–300 元，飲料酒類約 200 元，成本拉到成本價的 10 倍是原作的常態。
           太貴客人覺得被坑（划算度 = 期望價 ÷ 售價），太便宜你自己賺不到錢。</li>
-        <li>同時上架有上限（一星 8 道，星級越高越多，四星全菜單解鎖）。</li>
+        <li>同時上架有上限（一星 8 道 → 三星 22 道 → 五星以後全菜單解鎖）。</li>
         <li><b>庫存賣完＝客人點不到餐＝重扣評價。</b>營業中隨時可以叫貨，外送 30 分鐘後到，雨天會更久。</li>
         <li>生鮮類隔日折損約 10%，飲料酒類不折損；進貨價會受季節、事件與通膨影響（±30%）。</li>
         <li><b>漢堡牛肉餅</b>是前期無敵招牌；炸春捲、炸豬排、墨魚義大利麵、砂鍋魚頭、蛋包飯、台灣啤酒系列都很好賣。</li>
@@ -205,7 +205,8 @@ const MANUAL = [
         <li><b>社區評價</b>看在地鄰居與老主顧；<b>區外評價</b>看外地客、觀光客與美食評論家（評論家權重 ×5）。</li>
         <li>兩桶都從 350 分上下起跑（0–500），顧客結帳時把心情灌進其中一桶。</li>
         <li>升星門檻（兩桶都要達標，外加條件）：★2 = 380／360（營業滿 7 天）、★3 = 410／385（週排名前 8）、
-          ★4 = 435／410（週排名前 3 且曾拿第一）、★5 = 460／435（連兩週雜誌第一）。</li>
+          ★4 = 435／410（週排名前 3 且曾拿第一）、★5 = 460／435（連兩週雜誌第一）、
+          ★6 = 485／460（滿 50 天、連兩週第一且本週仍在前 2）、★7 = 495／490（連三週總排名第一）。</li>
         <li><b>每週日 22:00</b> 雜誌結算五大榜（口味／服務／裝潢／價格／人氣），名次越前面知名度（fame）長越快，
           知名度又帶來更多客人 —— 這是原作最爽的正回饋。</li>
         <li><b>每週一</b>發放社區獎金 NT$ 200,000，是你最穩定的現金來源。</li>
@@ -226,7 +227,7 @@ const MANUAL = [
         <li><b>空調</b>設定在舒適帶（22–26℃，寒流熱浪會位移）：偏離每 1℃ 都在累積顧客煩躁度，太冷太熱都會被抱怨。</li>
         <li>設備壞了要修、地板廁所髒了要掃 —— 這款遊戲的錢不是只靠菜單賺的，是靠<b>不扣分</b>省下來的。</li>
         <li>五星之後還有 <b>The Greatest Restaurant of the Year 年度大獎</b>：撐滿一年且年度評比第一，
-          就能解鎖兩道隱藏的歌名料理。</li>
+          就能解鎖兩道隱藏的歌名料理；六星、七星則是傳說級的門檻，只有澎湖馬公與墾丁大街這種一級戰區撐得住。</li>
       </ul>
     </div>`
   }
@@ -468,7 +469,7 @@ export function createSystemPanel({ store, ui, win }) {   // eslint-disable-line
         rCurName.row, rCurRent.row, rCurTraffic.row, rCurNeed.row, rCurMix.row, rCurPref.row, descBox
       ] }).el,
       section({ title: '經營成績', children: [rProfit.row, rCash.row, rPhase.row] }).el,
-      section({ title: '全台灣六個地點', children: [
+      section({ title: '全台灣十四個地點', children: [
         locTable.el,
         hintbox('搬遷只能在「裝修準備」或「已打烊」階段進行，營業中不能搬家。'
           + '「搬遷費(含押金)」是實際扣款金額＝搬遷費 ＋ 3 天租金押金；搬走後店內裝潢全部清空，'
@@ -649,7 +650,7 @@ export function createSystemPanel({ store, ui, win }) {   // eslint-disable-line
       for (const [label, done] of flagRows) {
         flagBox.appendChild(tag(`${done ? '✔' : '✘'} ${label}`, done ? 'gold' : 'plain'));
       }
-      flagBox.appendChild(tag(`累計評價 ★${int(state?.stars) || 1} / 5`, 'info'));
+      flagBox.appendChild(tag(`累計評價 ★${int(state?.stars) || 1} / ${B.MAX_STARS}`, 'info'));
       flagBox.appendChild(tag(`知名度 ${int(state?.fame)} / 100`, 'info'));
     }
 
