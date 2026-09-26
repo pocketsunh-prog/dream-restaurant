@@ -5,3 +5,4 @@
 /dream-restaurant-android/keystore.properties
 *.jks
 *.keystore
+/dream-restaurant-android/tools

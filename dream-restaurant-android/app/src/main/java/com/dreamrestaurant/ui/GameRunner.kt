@@ -76,6 +76,16 @@ class GameRunner(seed: Long = 20240101L, saveDir: File? = null) {
     /** 存檔槽位清單（無存檔管理時回空） */
     fun saveSlots(): List<SlotInfo> = saveManager?.listSlots() ?: emptyList()
 
+    /**
+     * 存檔「版本號」：每次成功存檔／讀檔／開新遊戲就 +1。
+     *
+     * 存檔面板的槽位清單是 I/O（讀五個檔案＋解析 JSON），不能每 tick 重算，
+     * 但也不能只靠 frame 節流 —— 那樣「按了存檔」要等一秒才會看到槽位變成有資料，
+     * 使用者會以為按鈕沒反應。所以改用這個明確的失效訊號當 `remember` 的 key。
+     */
+    var saveRev: Int by mutableIntStateOf(0)
+        private set
+
     /* ---------------------------------------------------------- 視圖（純 UI） */
 
     /** 畫布尺寸，由 RoomCanvas 的 onSizeChanged 更新 */
@@ -176,6 +186,12 @@ class GameRunner(seed: Long = 20240101L, saveDir: File? = null) {
     fun dispatch(action: GameAction): ActionResult {
         val res = store.dispatch(action)
         if (!res.ok) lastError = res.error
+        // 存讀檔／開新遊戲會改動磁碟上的槽位，槽位清單要立刻重讀（見 saveRev）
+        if (res.ok && (action is GameAction.SaveGame ||
+                action is GameAction.LoadGame || action is GameAction.NewGame)
+        ) {
+            saveRev += 1
+        }
         GameAudio.sfx(sfxFor(action, res.ok))
         if (action is GameAction.SetMusic) GameAudio.setMusic(action.id)
         drainNotices()

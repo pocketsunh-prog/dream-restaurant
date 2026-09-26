@@ -74,7 +74,18 @@ private const val KIND_CUSTOMER = 2
 private const val KIND_STAFF = 3
 private const val KIND_WALKER = 4
 
-private class RObj(val depth: Float, val kind: Int, val idx: Int)
+private class RObj(val depth: Float, val kind: Int, val idx: Int, val chair: Boolean = false)
+
+/**
+ * 物件排序：先依深度，同深度時椅子要排在同位置的顧客前面（人疊在椅子上）。
+ */
+private fun objCompare(a: RObj, b: RObj): Int {
+    if (a.depth != b.depth) return if (a.depth < b.depth) -1 else 1
+    val ka = if (a.chair) KIND_WALKER + 1 else a.kind
+    val kb = if (b.chair) KIND_WALKER + 1 else b.kind
+    if (ka != kb) return ka - kb
+    return a.idx - b.idx
+}
 
 /* ------------------------------------------------------------------ 畫面 */
 
@@ -499,26 +510,32 @@ private fun DrawScope.drawRoom(state: GameState, frame: Long, tm: TextMeasurer) 
             if (layout.tiles[y * gw + x] == "wall") objs.add(RObj(sum.toFloat(), KIND_WALL, y * gw + x))
         }
     }
+    // 已經有客人坐著的座位（依座標比對）：椅子要張貼在桌子邊、不可再外拉，
+    // 否則人會看起來坐在椅子旁邊。同時用來決定座位是否畫成「被坐凹」。
+    val occupiedSeats = occupiedSeatPositions(state)
     for ((i, item) in layout.items.withIndex()) {
         val depth = (item.x + item.w / 2f) + (item.y + item.h / 2f)
-        objs.add(RObj(depth, KIND_ITEM, i))
+        objs.add(RObj(depth, KIND_ITEM, i, chair = isChairItem(item)))
     }
     for ((i, c) in state.sim.customers.withIndex()) objs.add(RObj((c.x + c.y).toFloat(), KIND_CUSTOMER, i))
     for ((i, s) in state.staff.withIndex()) objs.add(RObj((s.x + s.y).toFloat(), KIND_STAFF, i))
     for ((i, w) in state.sim.walkers.withIndex()) objs.add(RObj((w.x + w.y).toFloat(), KIND_WALKER, i))
-    objs.sortWith(compareBy({ it.depth }, { it.kind }))
+    objs.sortWith { a, b -> objCompare(a, b) }
 
     // 接地陰影先畫一輪，才不會蓋到別的物件
     for (o in objs) when (o.kind) {
         KIND_ITEM -> {
             val item = layout.items[o.idx]
             val cx = Iso.at(item.x - 0.5f + item.w / 2f, item.y - 0.5f + item.h / 2f)
-            val rx = (item.w + item.h) * Iso.HALF_W * 0.40f + 3f
-            contactShadow(cx, rx, rx * 0.42f, 0.30f)
+            // 椅子半張在桌下，整體外框的陰影會蓋到桌腳：改用椅腳自己的小橢圓
+            val rx = if (o.chair) 11f else (item.w + item.h) * Iso.HALF_W * 0.40f + 3f
+            val ry = if (o.chair) 4.6f else rx * 0.42f
+            contactShadow(cx, rx, ry, 0.30f)
         }
         KIND_CUSTOMER -> {
             val c = state.sim.customers[o.idx]
-            contactShadow(Iso.at(c.x, c.y), 8f + c.partySize * 0.8f, 4f, 0.34f)
+            // 坐著的人由椅子自己畫接地陰影，這裡只畫站著／走動的
+            if (!isSeatedState(c.state)) contactShadow(Iso.at(c.x, c.y), 8f + c.partySize * 0.8f, 4f, 0.34f)
         }
         KIND_STAFF -> {
             val s = state.staff[o.idx]
@@ -540,10 +557,14 @@ private fun DrawScope.drawRoom(state: GameState, frame: Long, tm: TextMeasurer) 
             KIND_ITEM -> {
                 val item = layout.items[o.idx]
                 val def = furnitureById(item.typeId)
-                val palette = paletteFor(def?.category)
-                val h = heightFor(def?.category)
-                val top = if (item.broken) Color(0xFFef5350) else palette.first
-                drawBox(item.x, item.y, item.w, item.h, h, top, palette.second, palette.third)
+                if (isChairItem(item)) {
+                    drawChair(item, occupied = occupiedSeats.contains(seatKey(item.x, item.y)))
+                } else {
+                    val palette = paletteFor(def?.category)
+                    val h = heightFor(def?.category)
+                    val top = if (item.broken) Color(0xFFef5350) else palette.first
+                    drawBox(item.x, item.y, item.w, item.h, h, top, palette.second, palette.third)
+                }
             }
             KIND_CUSTOMER -> drawCustomer(state.sim.customers[o.idx], o.idx, frame, tm)
             KIND_STAFF -> drawStaff(state.staff[o.idx], o.idx, frame)
@@ -774,6 +795,150 @@ private fun DrawScope.drawPuddles(layout: com.dreamrestaurant.sim.Layout, frame:
     }
 }
 
+/* ------------------------------------------------------- 椅子（等角小件） */
+
+/** 椅子尺寸（邏輯像素）：和 `table` 的 15 高同一組基準，只是多了椅面與椅背 */
+private const val CHAIR_LEG = 3.2f      // 椅腳粗
+private const val CHAIR_LEG_H = 11f     // 椅面高（腳長）
+private const val CHAIR_SLAB = 3.2f     // 椅面厚度
+private const val CHAIR_PAD = 0.22f     // 椅腳離格子邊界的內縮（0.5 = 貼滿整格）
+private const val CHAIR_BACK_H = 12f    // 椅柱從椅面再往上
+private const val CHAIR_INSET = 0.28f   // 椅背離格子外緣的距離
+
+private fun isChairItem(item: com.dreamrestaurant.sim.Item): Boolean =
+    furnitureById(item.typeId)?.category == "chair"
+
+/** 座標 → 座位 key（與 [occupiedSeatPositions] 對齊） */
+private fun seatKey(x: Int, y: Int): Long = x.toLong() shl 32 or (y.toLong() and 0xFFFFFFFFL)
+
+/** 正在「坐著」的顧客狀態 → 應該畫成坐姿並坐在椅子上 */
+private fun isSeatedState(state: String): Boolean =
+    state == "ordering" || state == "waitingFood" || state == "eating" || state == "paying"
+
+/** 這一幀有哪些椅子上坐了人（顧客座標 ≈ 椅子座標） */
+private fun occupiedSeatPositions(state: GameState): HashSet<Long> {
+    val out = HashSet<Long>()
+    for (c in state.sim.customers) {
+        if (!isSeatedState(c.state)) continue
+        out.add(seatKey(Math.round(c.x).toInt(), Math.round(c.y).toInt()))
+    }
+    return out
+}
+
+/**
+ * 椅子朝向：`rotAuto`（由 `orientChairs` 依相鄰桌子算出來）優先，
+ * 沒有的話退回手動的 `rot`。回傳 "S"/"E"/"N"/"W"，代表「椅子面向哪一邊」（＝桌子在那一側）。
+ */
+private fun chairFacingOf(item: com.dreamrestaurant.sim.Item): String =
+    when ((item.rotAuto ?: item.rot) and 3) {
+        0 -> "S"; 1 -> "E"; 2 -> "N"; else -> "W"
+    }
+
+/**
+ * 畫一張等角椅子：四支腳 → 椅面厚板（木框＋坐墊）→ 背側的椅柱與橫桿。
+ *
+ * 朝向 [chairFacingOf] 決定椅背立在哪一側（桌子在的那一側），
+ * 因此同一張桌子四周的椅子會自動圍成一圈；椅腳採 iso 內縮，和桌腳同一種畫法。
+ */
+private fun DrawScope.drawChair(
+    item: com.dreamrestaurant.sim.Item,
+    occupied: Boolean
+) {
+    val facing = chairFacingOf(item)
+    val pal = paletteFor("chair")
+    val seatCol = pal.first
+    val frameHi = multiply(pal.first, 1.16f)
+    val frameLo = pal.second
+    val frameSh = pal.third
+    val ns = facing == "S" || facing == "N"   // 椅背沿東西向（南北向的椅子）？
+
+    // 1x1 格子的四個角（內縮 CHAIR_PAD）
+    val gx0 = item.x - 0.5f + CHAIR_PAD
+    val gx1 = item.x + item.w - 0.5f - CHAIR_PAD
+    val gy0 = item.y - 0.5f + CHAIR_PAD
+    val gy1 = item.y + item.h - 0.5f - CHAIR_PAD
+    val cW = Iso.at(gx0, gy0)   // 西角（畫面左）
+    val cS = Iso.at(gx1, gy0)   // 南角（畫面下）
+    val cE = Iso.at(gx1, gy1)   // 東角（畫面右）
+    val cN = Iso.at(gx0, gy1)   // 北角（畫面上）
+
+    // 椅背立在哪條邊、前側是哪條邊
+    val s0 = if (ns) cN else cE
+    val s1 = if (ns) cE else cS
+    val f0 = if (ns) cW else cN
+    val f1 = if (ns) cS else cW
+
+    // 椅腳：四個角各一支，離鏡頭近（螢幕 y 大）的先畫
+    for ((b, t) in arrayOf(cW, cS, cE, cN).map { it to Offset(it.x, it.y - CHAIR_LEG_H) }
+        .sortedBy { it.first.y }) {
+        drawLine(frameSh, b, t, strokeWidth = CHAIR_LEG, cap = StrokeCap.Round)
+    }
+    // 前側橫撐：讓四支腳看起來是一張椅子而不是四根棍子
+    val stretcherY = -CHAIR_LEG_H * 0.42f
+    drawLine(
+        frameLo, Offset(f0.x, f0.y + stretcherY), Offset(f1.x, f1.y + stretcherY),
+        strokeWidth = CHAIR_LEG * 0.62f, cap = StrokeCap.Round
+    )
+
+    // 椅面：iso 菱形厚板（側面 → 木框 → 內縮的坐墊）
+    val slabTop = -CHAIR_LEG_H
+    val quadTop = arrayOf(cW, cS, cE, cN).map { Offset(it.x, it.y + slabTop) }
+    for (i in intArrayOf(if (ns) 1 else 2, if (ns) 2 else 3)) {
+        val p0 = quadTop[i]
+        val p1 = quadTop[(i + 1) % 4]
+        drawPath(
+            poly(p0, p1, Offset(p1.x, p1.y - CHAIR_SLAB), Offset(p0.x, p0.y - CHAIR_SLAB)),
+            frameSh
+        )
+    }
+    drawPath(poly(quadTop[0], quadTop[1], quadTop[2], quadTop[3]), multiply(seatCol, 0.78f))
+    val ccx = (cW.x + cE.x) / 2f
+    val ccy = (cW.y + cE.y) / 2f
+    val inner = quadTop.map { Offset(ccx + (it.x - ccx) * 0.80f, ccy + (it.y - ccy) * 0.80f) }
+    drawPath(poly(inner[0], inner[1], inner[2], inner[3]), seatCol)
+    drawPath(poly(inner[0], inner[1], inner[2], inner[3]), multiply(seatCol, 0.62f), style = Stroke(1f))
+    // 坐墊高光（靠畫面上緣的兩邊）與暗面（下方兩邊）
+    drawLine(multiply(seatCol, 1.20f), inner[0], inner[1], strokeWidth = 1.4f)
+    drawLine(multiply(seatCol, 1.10f), inner[0], inner[3], strokeWidth = 1.2f)
+    drawLine(multiply(seatCol, 0.74f), inner[1], inner[2], strokeWidth = 1.2f)
+    drawLine(multiply(seatCol, 0.74f), inner[2], inner[3], strokeWidth = 1.2f)
+    drawPath(poly(quadTop[0], quadTop[1], quadTop[2], quadTop[3]), multiply(frameSh, 0.62f), style = Stroke(1f))
+    if (occupied) {
+        // 坐凹：兩道短橫線暗示重量壓在坐墊上
+        drawLine(
+            multiply(seatCol, 0.55f),
+            Offset(ccx - 5f, ccy + 1.5f), Offset(ccx + 5f, ccy + 1.5f), strokeWidth = 1.6f
+        )
+        drawLine(
+            multiply(seatCol, 0.70f),
+            Offset(ccx - 3.5f, ccy + 3.2f), Offset(ccx + 3.5f, ccy + 3.2f), strokeWidth = 1.2f
+        )
+    }
+
+    // 椅背：兩根柱 + 三根橫桿，立在背側（桌子在的那一側）
+    val pad = CHAIR_INSET
+    val postA0 = if (ns) Iso.at(gx0 + pad, gy1 - pad) else Iso.at(gx1 - pad, gy0 + pad)
+    val postB0 = if (ns) Iso.at(gx1 - pad, gy1 - pad) else Iso.at(gx1 - pad, gy1 - pad)
+    val pa = Offset(postA0.x, postA0.y + slabTop)
+    val pb = Offset(postB0.x, postB0.y + slabTop)
+    val paTop = Offset(pa.x, pa.y - CHAIR_BACK_H)
+    val pbTop = Offset(pb.x, pb.y - CHAIR_BACK_H)
+    // 背柱擺在椅面的背側角落，往畫面外偏一點，才不會和坐墊糊在一起
+    val outA = if (ns) Offset(0f, -1.2f) else Offset(1.2f, 0f)
+    val outB = if (ns) Offset(0f, -1.2f) else Offset(1.2f, 0f)
+    drawLine(frameSh, pa + outA, paTop + outA, strokeWidth = CHAIR_LEG, cap = StrokeCap.Round)
+    drawLine(frameSh, pb + outB, pbTop + outB, strokeWidth = CHAIR_LEG, cap = StrokeCap.Round)
+    val railOffsets = floatArrayOf(-CHAIR_BACK_H + 3.0f, -CHAIR_BACK_H * 0.58f, -1.6f)
+    for ((ri, dy) in railOffsets.withIndex()) {
+        val a = Offset(pa.x + outA.x, pa.y + outA.y + dy)
+        val b = Offset(pb.x + outB.x, pb.y + outB.y + dy)
+        val col = if (ri == 1) frameHi else frameLo
+        drawLine(multiply(frameSh, 0.66f), a, b, strokeWidth = CHAIR_LEG + 1.8f, cap = StrokeCap.Round)
+        drawLine(col, a, b, strokeWidth = CHAIR_LEG, cap = StrokeCap.Round)
+    }
+    drawLine(multiply(frameHi, 1.08f), paTop + outA, pbTop + outB, strokeWidth = 1.3f, cap = StrokeCap.Round)
+}
+
 private fun DrawScope.drawBox(
     x: Int, y: Int, w: Int, h: Int, height: Float,
     top: Color, left: Color, right: Color
@@ -797,15 +962,19 @@ private fun DrawScope.drawBox(
 private fun DrawScope.drawCustomer(
     c: com.dreamrestaurant.core.Customer, idx: Int, frame: Long, tm: TextMeasurer
 ) {
+    // 坐著的人畫在椅子位置上：椅子先畫，人疊上去看起來就是坐在椅子上
+    val seated = isSeatedState(c.state)
     val p = Iso.at(c.x, c.y)
     val walking = c.state == "arriving" || c.state == "leaving" ||
-        c.state == "angry" || c.state == "toSeat" || c.state == "paying"
-    val scale = (6.5f + c.partySize * 0.7f) / 7f
+        c.state == "angry" || c.state == "toSeat"
+    // 客人和桌椅同一個尺度（0.95），才不會像小人國；同行人數用頭頂徽章表示
+    val scale = 0.95f
     drawFigure(
         px = p.x, py = p.y, scale = scale, frame = frame, seed = idx, walking = walking,
         torso = moodColor(c.mood),
         skin = Color(SKINS[idx % SKINS.size]),
-        hair = Color(HAIRS[(idx * 7) % HAIRS.size])
+        hair = Color(HAIRS[(idx * 7) % HAIRS.size]),
+        seated = seated
     )
     if (c.bubble != null) {
         drawCircle(
@@ -816,8 +985,8 @@ private fun DrawScope.drawCustomer(
         )
     }
 
-    // 頭頂資訊：由下往上堆疊（訂單 → 同伴人數）
-    var top = p.y - 33f * scale
+    // 頭頂資訊：由下往上堆疊（訂單 → 同伴人數）；坐姿的頭比較低，標籤跟著降
+    var top = p.y - (if (seated) 28f else 33f) * scale
     if (c.state in ORDER_LABEL_STATES && c.order.isNotEmpty()) {
         val label = orderLabel(c)
         if (label.isNotEmpty()) {
@@ -907,26 +1076,44 @@ private fun DrawScope.drawWalker(w: com.dreamrestaurant.core.Walker) {
 /**
  * 通用小人：腿（走路擺動）＋身軀＋手臂＋頭＋頭髮（＋可選帽子）。
  * 座標以腳底 [py] 為地面基準，尺寸隨 [scale] 縮放。
+ *
+ * [seated] = true 時畫成坐姿（對應 `sprites.js` 的 `off = 9` 坐姿下移）：
+ * 大腿水平往前、小腿在椅面邊緣垂下、腳掌踩在地板上，
+ * 髖部高度對齊椅面（[CHAIR_LEG_H]），所以人看起來是「坐在椅子上」而不是浮在半空中。
  */
 private fun DrawScope.drawFigure(
     px: Float, py: Float, scale: Float, frame: Long, seed: Int, walking: Boolean,
     torso: Color, skin: Color, hair: Color,
-    hat: Color? = null, dim: Boolean = false
+    hat: Color? = null, dim: Boolean = false, seated: Boolean = false
 ) {
     val ph = frame * 0.42 + seed * 1.7
-    val swing = if (walking) kotlin.math.sin(ph).toFloat() * 4.5f * scale else 0f
-    val bob = if (walking) kotlin.math.abs(kotlin.math.sin(ph * 2)).toFloat() * 1.3f * scale else 0f
-    val hipY = py - 10f * scale - bob
-    val shoY = py - 20f * scale - bob
-    val headY = py - 25.5f * scale - bob
+    val swing = if (walking && !seated) kotlin.math.sin(ph).toFloat() * 4.5f * scale else 0f
+    val bob = if (walking && !seated) kotlin.math.abs(kotlin.math.sin(ph * 2)).toFloat() * 1.3f * scale else 0f
+
+    // 坐姿：髖部抬到椅面上方一點點（坐墊會壓出凹陷），肩線與頭跟著上移
+    val hipY = py - (if (seated) CHAIR_LEG_H + 5.0f else 10f) * scale - bob
+    val shoY = py - (if (seated) CHAIR_LEG_H + 15.0f else 20f) * scale - bob
+    val headY = py - (if (seated) CHAIR_LEG_H + 20.5f else 25.5f) * scale - bob
     val headR = 5.2f * scale
     val outline = Color(0xFF0e1426)
     val legC = multiply(torso, 0.66f)
     val footY = py - kotlin.math.abs(swing) * 0.3f
 
-    // 腳
-    drawLine(legC, Offset(px, hipY), Offset(px - 3.2f * scale + swing, footY), strokeWidth = 3.4f * scale, cap = StrokeCap.Round)
-    drawLine(legC, Offset(px, hipY), Offset(px + 3.2f * scale - swing, footY), strokeWidth = 3.4f * scale, cap = StrokeCap.Round)
+    if (seated) {
+        // 大腿：從髖部往前伸（螢幕左上→右下＝畫面裡的「前方」），末端當膝蓋
+        val kneeY = py - 4.6f * scale
+        val lkx = px - 4.6f * scale
+        val rkx = px + 4.6f * scale
+        drawLine(legC, Offset(px - 1.2f * scale, hipY), Offset(lkx, kneeY), strokeWidth = 4.0f * scale, cap = StrokeCap.Round)
+        drawLine(legC, Offset(px + 1.2f * scale, hipY), Offset(rkx, kneeY), strokeWidth = 4.0f * scale, cap = StrokeCap.Round)
+        // 小腿：膝蓋 → 腳掌（幾乎垂直落地，才像坐在椅子上）
+        drawLine(legC, Offset(lkx, kneeY), Offset(lkx - 0.5f * scale, py - 0.8f * scale), strokeWidth = 3.2f * scale, cap = StrokeCap.Round)
+        drawLine(legC, Offset(rkx, kneeY), Offset(rkx + 0.5f * scale, py - 0.8f * scale), strokeWidth = 3.2f * scale, cap = StrokeCap.Round)
+    } else {
+        // 腳
+        drawLine(legC, Offset(px, hipY), Offset(px - 3.2f * scale + swing, footY), strokeWidth = 3.4f * scale, cap = StrokeCap.Round)
+        drawLine(legC, Offset(px, hipY), Offset(px + 3.2f * scale - swing, footY), strokeWidth = 3.4f * scale, cap = StrokeCap.Round)
+    }
 
     // 手臂（在身軀底下）
     val armC = multiply(torso, 0.82f)
@@ -935,7 +1122,7 @@ private fun DrawScope.drawFigure(
 
     // 身軀
     val bw = 11f * scale
-    val bh = (hipY - shoY) + 4f * scale
+    val bh = (hipY - shoY) + if (seated) 6.5f * scale else 4f * scale
     val bodyTop = Offset(px - bw / 2f, shoY)
     val bodySize = Size(bw, bh)
     val rad = CornerRadius(bw * 0.45f, bw * 0.45f)

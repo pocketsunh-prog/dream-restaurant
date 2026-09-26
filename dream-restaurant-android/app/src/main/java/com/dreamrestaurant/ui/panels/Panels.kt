@@ -1005,7 +1005,11 @@ private fun EnvColorTab(runner: GameRunner, state: GameState) {
 
 @Composable
 private fun SystemSaveTab(runner: GameRunner, frame: Long) {
-    val slots = remember(runner.openPanel, frame / 20) { runner.saveSlots() }
+    // 槽位清單是 I/O + JSON 解析，用「存檔版本號」當 key：只有真的存／讀／開新遊戲才重讀。
+    // （先前用 frame/20 節流 → 按了「存檔」要等一秒畫面才更新，看起來像按鈕沒反應。）
+    @Suppress("UNUSED_VARIABLE")
+    val rev = runner.saveRev
+    val slots = remember(runner.openPanel, rev) { runner.saveSlots() }
     CardBox("手動存檔") {
         Text(
             "存檔只存在這台裝置上；卸載 App 會一併刪除。",
