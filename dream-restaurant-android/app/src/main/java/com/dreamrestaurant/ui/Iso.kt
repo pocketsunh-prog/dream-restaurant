@@ -46,6 +46,27 @@ object Iso {
         return Rect(left - margin, top - margin, right + margin, bottom + margin)
     }
 
+    /**
+     * 房間剪影（地板菱形 ∪ 牆面）6 邊形，供燈光／天氣裁切使用 — 對應 `iso.js` 的 `roomSilhouette`。
+     * 順序：左角（牆頂）→ 屋脊 → 右角（牆頂）→ 地板東角 → 地板南角 → 地板西角。
+     */
+    fun roomSilhouette(gw: Int, gh: Int): List<Offset> {
+        val w = gw.coerceAtLeast(1)
+        val h = gh.coerceAtLeast(1)
+        val r0 = Offset(ORIGIN_X - h * HALF_W, ORIGIN_Y + (h - 1) * HALF_H - WALL_H)
+        val r1 = Offset(ORIGIN_X, ORIGIN_Y - HALF_H - WALL_H)
+        val r2 = Offset(ORIGIN_X + w * HALF_W, ORIGIN_Y + (w - 1) * HALF_H - WALL_H)
+        val e = at((w - 1).toFloat(), 0f)
+        val s = at((w - 1).toFloat(), (h - 1).toFloat())
+        val wv = at(0f, (h - 1).toFloat())
+        return listOf(
+            r0, r1, r2,
+            Offset(e.x + HALF_W, e.y),
+            Offset(s.x, s.y + HALF_H),
+            Offset(wv.x - HALF_W, wv.y)
+        )
+    }
+
     /** 把邏輯外框塞進畫布：回傳 (scale, translate) */
     fun fit(box: Rect, canvasW: Float, canvasH: Float, pad: Float = 8f): Pair<Float, Offset> {
         val w = box.width

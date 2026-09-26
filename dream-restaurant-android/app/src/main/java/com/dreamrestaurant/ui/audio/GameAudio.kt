@@ -1,8 +1,15 @@
 package com.dreamrestaurant.ui.audio
 
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.SystemClock
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.util.Log
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.pow
 
 /**
@@ -13,6 +20,7 @@ import kotlin.math.pow
  */
 object GameAudio {
 
+    private const val TAG = "DreamVoice"
     private const val CHUNK = 2048
     /** SFX 提前量：確保事件發生時該音符還在待處理佇列裡（約 140ms） */
     private const val LEAD = 6144
@@ -36,6 +44,114 @@ object GameAudio {
 
     /** 已知的 BGM 樣式（同 `B.MUSIC_NAME` 的鍵） */
     val musicIds: List<String> = listOf("lazy", "tropical", "classic1", "classic2", "pop", "off")
+
+    /* ------------------------------------------------------------- 日語語音 */
+
+    /** 模擬事件 → 日語台詞（TTS 播出） */
+    private val PHRASES: Map<String, String> = mapOf(
+        "welcome" to "いらっしゃいませ",
+        "order" to "かしこまりました",
+        "cash" to "ありがとうございます",
+        "thanks" to "ごちそうさまでした"
+    )
+
+    /** TTS 不可用（沒引擎／沒日語語音檔）時的替代音效 */
+    private val VOICE_FALLBACK: Map<String, String> = mapOf(
+        "welcome" to "bell",
+        "order" to "open",
+        "cash" to "cash",
+        "thanks" to "close"
+    )
+
+    /** 同一種語音的最小間隔（毫秒）：客人多時才不會連珠炮 */
+    private val VOICE_GAP: Map<String, Long> = mapOf(
+        "welcome" to 2000L,
+        "order" to 1600L,
+        "cash" to 1400L,
+        "thanks" to 2000L
+    )
+
+    private var tts: TextToSpeech? = null
+    @Volatile private var ttsReady = false
+    @Volatile private var voiceEnabled = true
+    private val speaking = AtomicInteger(0)
+    private val lastSaid = HashMap<String, Long>()
+
+    /** 由 Activity 呼叫一次；TTS 初始化非同步，失敗自動退回音效 */
+    fun attach(context: Context) {
+        if (tts != null) return
+        try {
+            var engine: TextToSpeech? = null
+            engine = TextToSpeech(context.applicationContext) { status ->
+                val t = engine ?: tts
+                if (status != TextToSpeech.SUCCESS || t == null) {
+                    ttsReady = false
+                    return@TextToSpeech
+                }
+                val lang = t.setLanguage(Locale.JAPANESE)
+                ttsReady = lang != TextToSpeech.LANG_MISSING_DATA && lang != TextToSpeech.LANG_NOT_SUPPORTED
+                Log.d(TAG, "TTS 初始化 status=$status ja=$ttsReady lang=$lang")
+                if (!ttsReady) return@TextToSpeech
+                t.setSpeechRate(1.05f)
+                t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) = releaseSlot()
+                    override fun onError(utteranceId: String?) = releaseSlot()
+                    override fun onError(utteranceId: String?, errorCode: Int) = releaseSlot()
+                })
+            }
+            tts = engine
+        } catch (_: Throwable) {
+            tts = null
+            ttsReady = false
+        }
+    }
+
+    private fun releaseSlot() {
+        speaking.updateAndGet { n -> if (n > 0) n - 1 else 0 }
+    }
+
+    fun isVoiceEnabled(): Boolean = voiceEnabled
+
+    fun setVoiceEnabled(v: Boolean) {
+        voiceEnabled = v
+        Log.d(TAG, "voiceEnabled=$v")
+        if (!v) stopSpeech()
+    }
+
+    private fun stopSpeech() {
+        speaking.set(0)
+        try {
+            tts?.stop()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** 播一句日語；TTS 不可用時改播替代音效 */
+    fun speak(event: String) {
+        if (!enabled || !voiceEnabled || !active) return
+        val text = PHRASES[event] ?: return
+        val t = tts
+        if (!ttsReady || t == null) {
+            Log.d(TAG, "TTS 不可用，$event 退回音效")
+            sfx(VOICE_FALLBACK[event] ?: "click")
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        synchronized(lastSaid) {
+            val last = lastSaid[event] ?: 0L
+            if (now - last < (VOICE_GAP[event] ?: 1600L)) return
+            lastSaid[event] = now
+        }
+        if (speaking.get() >= 2) return
+        speaking.incrementAndGet()
+        val r = t.speak(text, TextToSpeech.QUEUE_ADD, null, "dream-$event-$now")
+        Log.d(TAG, "speak $event -> $r")
+        if (r != TextToSpeech.SUCCESS) {
+            releaseSlot()
+            sfx(VOICE_FALLBACK[event] ?: "click")
+        }
+    }
 
     fun isStarted(): Boolean = started
     fun isEnabled(): Boolean = enabled
@@ -104,12 +220,26 @@ object GameAudio {
             tr?.release()
         } catch (_: Throwable) {
         }
+        shutdownSpeech()
+    }
+
+    private fun shutdownSpeech() {
+        val engine = tts
+        tts = null
+        ttsReady = false
+        speaking.set(0)
+        try {
+            engine?.stop()
+            engine?.shutdown()
+        } catch (_: Throwable) {
+        }
     }
 
     /** Activity 切到背景時暫停（音樂會停在原處，回來再續播） */
     fun setActive(v: Boolean) {
         if (active == v) return
         active = v
+        if (!v) stopSpeech()
         synchronized(lock) {
             pending.clear()
             musicNext = -1L
@@ -124,6 +254,7 @@ object GameAudio {
 
     fun setEnabled(v: Boolean) {
         enabled = v
+        if (!v) stopSpeech()
         synchronized(lock) {
             if (v) musicNext = -1L
         }

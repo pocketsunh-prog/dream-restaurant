@@ -16,10 +16,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        GameAudio.attach(applicationContext)
         setContent {
             MaterialTheme {
                 Surface(color = Color(0xFF0e1426)) {
-                    val runner = remember { GameRunner() }
+                    val runner = remember {
+                        GameRunner(saveDir = java.io.File(filesDir, "saves"))
+                    }
                     GameScreen(runner)
                 }
             }

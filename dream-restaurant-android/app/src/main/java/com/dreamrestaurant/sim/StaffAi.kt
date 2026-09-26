@@ -6,6 +6,7 @@ import com.dreamrestaurant.core.HiredStaff
 import com.dreamrestaurant.core.KitchenJob
 import com.dreamrestaurant.core.PassItem
 import com.dreamrestaurant.core.Rng
+import com.dreamrestaurant.core.SoundBus
 import com.dreamrestaurant.core.Task
 import com.dreamrestaurant.core.pushLog
 import kotlin.math.abs
@@ -354,6 +355,7 @@ private fun doOrder(state: GameState, st: HiredStaff, task: Task, rng: Rng) {
         state.stock[item.dishId] = max(0, (state.stock[item.dishId] ?: 0) - 1)
         enqueueKitchen(state, c, table, item)
     }
+    SoundBus.emit("order")
     finishTask(state, st, task)
 }
 
@@ -480,6 +482,7 @@ fun collectPayment(state: GameState, c: com.dreamrestaurant.core.Customer): Paym
         )
     )
     if (state.sim.servedLog.size > 200) state.sim.servedLog.removeAt(0)
+    if (c.spent > 0) SoundBus.emit("cash")
     customerLeaves(state, c, null)
     return Payment(c.spent, c.tip)
 }

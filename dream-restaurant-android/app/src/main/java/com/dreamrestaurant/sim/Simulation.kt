@@ -7,6 +7,7 @@ import com.dreamrestaurant.core.Customer
 import com.dreamrestaurant.core.DailyRecord
 import com.dreamrestaurant.core.GameState
 import com.dreamrestaurant.core.Rng
+import com.dreamrestaurant.core.SoundBus
 import com.dreamrestaurant.core.UiMsg
 import com.dreamrestaurant.core.emptyToday
 import com.dreamrestaurant.core.pushLog
@@ -309,7 +310,10 @@ private fun updateCustomers(state: GameState, dtMin: Double, rng: Rng) {
         if (c.departing) {
             moveEntity(state.layout, c, dtMin)
             if (c.path.isEmpty()) c.done = true
-            if (c.done) continue
+            if (c.done) {
+                if (!c.leftAngry) SoundBus.emit("thanks")
+                continue
+            }
             keep.add(c)
             continue
         }
@@ -430,6 +434,7 @@ private fun updateCustomers(state: GameState, dtMin: Double, rng: Rng) {
         if (c.done) {
             releaseSeat(state, c)
             if (c.leftAngry) state.sim.customersLost += 1
+            else SoundBus.emit("thanks")
             continue
         }
         val absNow = absMinute(state)
@@ -452,6 +457,7 @@ private fun enterQueue(state: GameState, c: Customer, doorInside: P) {
     c.enterMinute = state.absMinute
     c.x = doorInside.x
     c.y = doorInside.y
+    SoundBus.emit("welcome")
     val stop = queueSlotAt(state, queueLength(state))
     c.queueTarget = stop
     if (!atTile(c, stop, 0.1)) setPathTo(state.layout, c, stop)
