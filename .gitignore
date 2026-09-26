@@ -1,0 +1,7 @@
+/dream-restaurant-android/.gradle
+/dream-restaurant-android/app/build
+/dream-restaurant-android/gradle
+/dream-restaurant-android/keystore
+/dream-restaurant-android/keystore.properties
+*.jks
+*.keystore

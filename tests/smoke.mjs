@@ -63,6 +63,11 @@ function invariants(tag) {
   }
   maxCustomersSeen.value = Math.max(maxCustomersSeen.value, state.sim.customers.length);
   maxTasksSeen.value = Math.max(maxTasksSeen.value, state.sim.tasks.length);
+  const tids = state.sim.tasks.map((t) => `${t.id}:${t.kind}:${t.stage || '-'}:${t.claimedBy || '-'}:${t.cleanTarget || t.tableUid || '-'}`).join(',');
+  const staffS = state.staff.map((s) => `${s.role}/${s.state}/${s.task || '-'}/${s.x.toFixed(3)},${s.y.toFixed(3)}/${s.pathIndex}/${s.path.length}`).join(' ');
+  const cmood = state.sim.customers.reduce((a, c) => a + c.mood, 0);
+  const dishSum = (state.sim.todayDishScores || []).reduce((a, v) => a + v, 0);
+  console.log(`M d=${state.day} m=${Math.floor(state.minute)} repC=${Number(state.reputation.community).toFixed(6)} repO=${Number(state.reputation.outside).toFixed(6)} cust=${state.sim.customers.length} served=${state.stats.today.served} angry=${state.stats.today.angry} guests=${state.stats.today.guests} tasks=${state.sim.tasks.length} moodSum=${Number(state.stats.today.moodSum).toFixed(6)} moodCount=${state.stats.today.moodCount} waitSum=${Number(state.stats.today.waitSum || 0).toFixed(6)} cmood=${Number(cmood).toFixed(6)} dishN=${(state.sim.todayDishScores || []).length} dishSum=${Number(dishSum).toFixed(6)} dirtF=${Number(state.sim.dirt.floor).toFixed(6)} dirtR=${Number(state.sim.dirt.restroom).toFixed(6)} rng=${state.rng} tids=[${tids}] staff=[${staffS}]`);
 }
 
 let totalGuests = 0;
@@ -184,6 +189,11 @@ function setupFirstDay() {
 }
 setupFirstDay();
 
+function dumpDayStart(s) {
+  const f = (x, n = 6) => Number(x).toFixed(n);
+  console.log(`D day=${s.day} repC=${f(s.reputation.community)} repO=${f(s.reputation.outside)} fame=${f(s.fame)} stars=${s.stars} cash=${f(s.cash, 2)} weather=${s.sim.weather} traffic=${f(s.sim.trafficMul)} spawnAcc=${f(s.sim.spawnAccumulator)} spawn=${s.sim.customersSpawned} evT=${f(s.sim.eventTimer, 4)} menu=${s.menu.length} staff=${s.staff.length} dec=${s.stats.today.decorations} supplier=${f(s.sim.supplierPriceMul)} activeEv=${s.sim.activeEvents.length} rng=${s.rng}`);
+}
+
 for (let d = 0; d < DAYS; d++) {
   morningRoutine(d + 1);
   const open = reduce(state, { type: 'START_DAY' });
@@ -194,14 +204,15 @@ for (let d = 0; d < DAYS; d++) {
     const retry = reduce(state, { type: 'START_DAY' });
     if (!retry.ok) break;
   }
+  dumpDayStart(state);
 
   let guard = 0;
   const startDay = state.day;
   while (state.phase === 'open' || state.phase === 'closing') {
     stepSimulation(state, 5);           // 每步 5 遊戲分鐘
     guard += 1;
-    if (guard % 24 === 0) {
-      invariants(`第 ${startDay} 天 / ${Math.floor(state.minute / 60)}:00`);
+    if (guard % 6 === 0) {
+      invariants(`第 ${startDay} 天 / ${Math.floor(state.minute / 60)}:${String(state.minute % 60).padStart(2, '0')}`);
       if (guard % 96 === 0) morningRoutine(startDay);
     }
     if (guard > 1200) {

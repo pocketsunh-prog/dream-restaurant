@@ -46,6 +46,114 @@ node tests/smoke.mjs 30     # 跑 30 個遊戲日
 
 ---
 
+## Android 版 `dream-restaurant-android/`
+
+Kotlin ＋ Jetpack Compose 的移植版（`applicationId com.dreamrestaurant`、minSdk 26／targetSdk 35）。
+操作介面是原生 App，但**模擬核心以 JS 版為唯一真相**：同樣的種子必須跑出逐位元一致的亂數序列、
+逐日報表、評價與週排名（包含原作的怪癖）。
+
+### 畫面（最小可玩 UI）
+
+`app/src/main/java/com/dreamrestaurant/ui/`：
+
+- `Iso.kt` — 與 `src/render/iso.js` 同一組等角常數（`TILE_W=64`、`TILE_H=32`、`ORIGIN_X=656`、`ORIGIN_Y=240`），整間店算出外框後縮放置中。
+- `GameRunner.kt` — 持有 `GameStore`；每 50ms 把 `dtReal × speed × MINUTES_PER_SECOND × demoMul` 交給 `stepSimulation`。
+  `demoMul`（×1/×5/×20）是**純畫面**的快轉倍率，不寫進 `state.speed`，模擬語意與 JS 版完全相同。
+- `GameScreen.kt` — 頂部 HUD（日期／時間／狀態／現金／評價／來客・服務・生氣／座位／候位）、
+  Canvas 等角繪製（地板 → 依深度排序的牆・傢俱・人物）、底部控制列（▶開始營業／提前打烊／⏭隔日、
+  速度 暫停・1x・2x・4x、快轉倍率）。
+
+單日流程：`build`（按 ▶開始營業）→ `open`（到 `closeMinute` 自動打烊，或按「提前打烊」）→ `closing` → `closed`（按 ⏭隔日）→ `build`。
+
+> ⚠️ `GameState` 的欄位是可變物件、**不是** Compose snapshot state，
+> 所以子畫面必須自己讀 `runner.frame`（`mutableLongStateOf`）才會每 tick 重繪；
+> 只把 `state` 傳進去的話，Compose 會因參數沒變而快取成過期畫面（HUD 會停在舊值）。
+> 同理，Canvas 畫超出邊界時要 `clipToBounds()`，否則會蓋到上方的 HUD。
+
+### 相容性驗證（逐行比對）
+
+兩邊各有一組煙霧測試，會印出可以直接 diff 的除錯線：
+
+| 範圍 | JS 參考 | Kotlin |
+|---|---|---|
+| 14 天營運（`D day=`／`M d=` ＋ 逐日・總計・週結算報表） | `node tests/smoke.mjs` | `.\gradlew.bat testDebugUnitTest --tests '*SmokeTest*'` |
+| 第 1 天逐 tick 傾印（`T` 線） | `node tools\_debug-day.mjs` | `.\gradlew.bat testDebugUnitTest --tests '*DebugDayTest*'` |
+
+> ⚠️ 抓 JS 輸出一定要用 `cmd /c "node ... > 檔名 2>&1"`。
+> PowerShell 的 `>` 會把 Node 的 UTF-8 重新編碼，中文字會損毀、甚至吞掉換行，
+> 造成根本不存在的假性 diff。
+
+Kotlin 側的輸出在 `app\build\test-results\testDebugUnitTest\TEST-com.dreamrestaurant.SmokeTest.xml`
+的 `<system-out>`（UTF-8 CDATA）。取出後用 Node 逐行比對最穩（避開任何編碼層）：
+
+```powershell
+cmd /c "node tests\smoke.mjs > `"%TEMP%\js-smoke.txt`" 2>&1"
+# 從 XML 取出 <system-out> 存成 %TEMP%\k-smoke.txt，再用 node 逐行比對
+```
+
+目前狀態：**煙霧測試 435 行全數一致**、**逐 tick 11 行全數一致**、`testDebugUnitTest` 4 個測試全過。
+
+### 建置
+
+```powershell
+cd dream-restaurant-android
+.\gradlew.bat testDebugUnitTest                 # 全部單元測試
+.\gradlew.bat assembleRelease bundleRelease     # 簽章過的 release
+```
+
+產物：
+
+- `app\build\outputs\apk\release\app-release.apk`（直接安裝，約 6.7 MB）
+- `app\build\outputs\bundle\release\app-release.aab`（上架用）
+
+### Release 簽章
+
+簽章設定放在 `dream-restaurant-android/keystore.properties`，**已 gitignore，不進版控**：
+
+```properties
+storeFile=keystore/dream-restaurant.jks
+storePassword=<自己保管>
+keyAlias=dream-restaurant
+keyPassword=<自己保管>
+```
+
+金鑰檔 `keystore/dream-restaurant.jks` 同樣被 ignore。**兩者務必另行備份**：
+遺失就無法再用同一把鑰匙更新已安裝的版本。缺少 `keystore.properties` 時
+build 仍然會過，但 release 產物會是 `app-release-unsigned.apk`（裝不上）。
+
+驗簽：
+
+```powershell
+& "$env:ANDROID_HOME\build-tools\35.0.0\apksigner.bat" verify --print-certs `
+    app\build\outputs\apk\release\app-release.apk
+```
+
+### Release Build
+The release build is configured with signing. The keystore is at the project root:
+
+```bash
+./gradlew assembleRelease
+```
+
+Output: `app/build/outputs/apk/release/app-release.apk`
+
+### Signing Configuration
+The release keystore was generated with:
+```bash
+keytool -genkeypair -v \
+  -keystore girlperiod-release-key.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -alias girlperiod-key
+```
+
+**Install on device:**
+```bash
+adb install app/build/outputs/apk/debug/app-debug.apk
+adb install app/build/outputs/apk/release/app-release.apk
+```
+
+---
+
 ## 文件
 
 | 文件 | 內容 |
@@ -160,6 +268,10 @@ tools/night-crisp-test.html   時段清晰度驗證（黃昏／夜晚店內不�
 tools/_layout-check.mjs       開局平面圖自我檢查（重疊／越界／座位數／動線；node 直接跑）
 tools/_browsertest.mjs        用 headless Chrome 批次跑上面幾個 *.html 測試並印出結果
 tools/_fit-check.mjs          畫布自動縮放檢查（各種視窗大小下都不會被裁掉；跑 tools/_fit-probe.html）
+dream-restaurant-android/     Android 移植版（Kotlin ＋ Jetpack Compose）
+  app/src/main/java/          模擬核心的 Kotlin 對照實作（core/ sim/ data/）＋ Compose UI
+  app/src/test/java/          SmokeTest（與 tests/smoke.mjs 對齊）、DebugDayTest、存讀檔往返
+  keystore/                   release 金鑰（gitignore）
 ```
 
 ### 解析度與店面大小（單一來源）
