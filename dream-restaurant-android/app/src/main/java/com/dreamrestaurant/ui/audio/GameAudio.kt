@@ -131,17 +131,17 @@ object GameAudio {
     fun speak(event: String) {
         if (!enabled || !voiceEnabled || !active) return
         val text = PHRASES[event] ?: return
-        val t = tts
-        if (!ttsReady || t == null) {
-            Log.d(TAG, "TTS 不可用，$event 退回音效")
-            sfx(VOICE_FALLBACK[event] ?: "click")
-            return
-        }
         val now = SystemClock.uptimeMillis()
         synchronized(lastSaid) {
             val last = lastSaid[event] ?: 0L
             if (now - last < (VOICE_GAP[event] ?: 1600L)) return
             lastSaid[event] = now
+        }
+        val t = tts
+        if (!ttsReady || t == null) {
+            Log.d(TAG, "TTS 不可用，$event 退回音效")
+            sfx(VOICE_FALLBACK[event] ?: "click")
+            return
         }
         if (speaking.get() >= 2) return
         speaking.incrementAndGet()

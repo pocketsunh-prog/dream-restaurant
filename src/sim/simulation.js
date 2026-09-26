@@ -10,6 +10,7 @@ import { findPath, clearPathCache } from './pathfind.js';
 import * as B from '../core/balance.js';
 import { withRng, makeRng } from '../core/rng.js';
 import { pushLog, emptyToday, rollWeather } from '../core/state.js';
+import { emitSound } from '../core/soundbus.js';
 import { finalizeDay, clamp, ingredientCost, buyCost } from './economy.js';
 import { runWeeklySettlement, weeklyBonus } from './magazine.js';
 import { checkStars, checkDropStar, checkAnnualAward, dailyFame } from './rating.js';
@@ -300,7 +301,10 @@ function updateCustomers(state, dtMin, rng) {
     if (c.departing) {
       moveEntity(state.layout, c, dtMin);
       if (!c.path.length) c.done = true;
-      if (c.done) { continue; }
+      if (c.done) {
+        if (!c.leftAngry) emitSound('thanks');
+        continue;
+      }
       keep.push(c);
       continue;
     }
@@ -426,6 +430,7 @@ function updateCustomers(state, dtMin, rng) {
     if (c.done) {
       releaseSeat(state, c);
       state.sim.customersLost += c.leftAngry ? 1 : 0;
+      if (!c.leftAngry) emitSound('thanks');
       continue;
     }
     // 全域保險：等太久（含任何異常狀況）一律請客人離開，避免時間卡住
@@ -454,6 +459,7 @@ function enterQueue(state, c, doorInside) {
   c.enterMinute = state.absMinute ?? state.minute;
   c.x = doorInside.x;
   c.y = doorInside.y;
+  emitSound('welcome');
   const stop = queueSlotAt(state, queueLength(state));
   c.queueTarget = stop;
   if (!atTile(c, stop, 0.1)) setPathTo(state.layout, c, stop);

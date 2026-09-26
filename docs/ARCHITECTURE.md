@@ -17,7 +17,8 @@ src/core/state.js              狀態建立／序列化（我）
 src/core/store.js              store / dispatch / subscribe（我）
 src/core/actions.js            reducer（我）
 src/core/save.js               localStorage 存讀檔（我）
-src/core/audio.js              WebAudio 程序化音效 + BGM（我）
+src/core/audio.js              WebAudio 程序化音效 + BGM + 日語語音（我）
+src/core/soundbus.js           模擬 → 語音事件佇列（我）
 src/sim/pathfind.js            A* 與動線（我）
 src/sim/build.js               傢俱網格、合法性、裝潢分數（我）
 src/sim/simulation.js          主模擬（我）

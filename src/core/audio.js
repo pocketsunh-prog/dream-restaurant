@@ -101,6 +101,97 @@ export function sfx(name) {
   try { fn(); } catch { /* 忽略音效失敗 */ }
 }
 
+/* ------------------------------------------------------- 日語語音（TTS） */
+
+const VOICE = {
+  welcome: 'いらっしゃいませ',
+  order: 'かしこまりました',
+  cash: 'ありがとうございます',
+  thanks: 'ごちそうさまでした'
+};
+
+/** 瀏覽器沒有日語語音（或不支援 speechSynthesis）時退回的程序化音效 */
+const VOICE_FALLBACK = { welcome: 'bell', order: 'open', cash: 'cash', thanks: 'close' };
+
+/** 同一種語音的最小間隔（毫秒）：客人多時才不會連珠炮 */
+const VOICE_GAP = { welcome: 1800, order: 1500, cash: 1200, thanks: 1800 };
+
+let voiceEnabled = true;
+let jaVoice = null;
+let voicesListened = false;
+let speaking = 0;
+const lastSaid = Object.create(null);
+
+function synth() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+  return window.speechSynthesis;
+}
+
+function pickJaVoice() {
+  const s = synth();
+  if (!s) return null;
+  const voices = s.getVoices() || [];
+  if (!voices.length) return null;
+  return voices.find((v) => /^ja[-_]JP/i.test(v.lang))
+    || voices.find((v) => /^ja/i.test(v.lang))
+    || null;
+}
+
+/** 使用者首次互動時呼叫：語音清單一開始是空的，先載入並等 voiceschanged */
+export function primeVoices() {
+  const s = synth();
+  if (!s) return;
+  jaVoice = pickJaVoice();
+  if (voicesListened) return;
+  voicesListened = true;
+  try {
+    s.addEventListener('voiceschanged', () => { jaVoice = pickJaVoice(); });
+  } catch { /* 舊瀏覽器無 addEventListener */ }
+}
+
+export function setVoiceEnabled(v) {
+  voiceEnabled = !!v;
+  if (!voiceEnabled) {
+    speaking = 0;
+    try { synth()?.cancel(); } catch { /* ignore */ }
+  }
+}
+
+export function isVoiceEnabled() { return voiceEnabled; }
+
+/** 播一句日語；沒有日語語音／不支援 TTS 時退回對應的程序化音效 */
+export function speakVoice(event) {
+  if (!enabled || !voiceEnabled) return;
+  const text = VOICE[event];
+  if (!text) return;
+  const now = Date.now();
+  const last = lastSaid[event] || 0;
+  if (now - last < (VOICE_GAP[event] || 1600)) return;
+  lastSaid[event] = now;
+  const s = synth();
+  if (!jaVoice) jaVoice = pickJaVoice();
+  if (!s || !jaVoice) {
+    // 沒有日語語音：退回程序化音效（一樣吃上面的節流，避免連珠炮）
+    sfx(VOICE_FALLBACK[event] || 'click');
+    return;
+  }
+  if (speaking >= 2) return;
+  speaking += 1;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = jaVoice;
+    u.lang = jaVoice.lang || 'ja-JP';
+    u.rate = 1.05;
+    const done = () => { speaking = Math.max(0, speaking - 1); };
+    u.onend = done;
+    u.onerror = done;
+    s.speak(u);
+  } catch {
+    speaking = Math.max(0, speaking - 1);
+    sfx(VOICE_FALLBACK[event] || 'click');
+  }
+}
+
 /* ------------------------------------------------------------------- BGM */
 
 const SCALES = {
@@ -160,5 +251,8 @@ export function stopMusic() {
   currentStyle = 'off';
 }
 
-export const audio = { initAudio, sfx, setMusic, resumeMusic, stopMusic, setEnabled, isEnabled, getMusic };
+export const audio = {
+  initAudio, sfx, setMusic, resumeMusic, stopMusic, setEnabled, isEnabled, getMusic,
+  speakVoice, setVoiceEnabled, isVoiceEnabled, primeVoices
+};
 export default audio;

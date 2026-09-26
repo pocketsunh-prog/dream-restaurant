@@ -15,7 +15,8 @@ import { createSystemPanel } from './ui/panels/system.js';
 import { stepSimulation, restaurantSummary, availability } from './sim/simulation.js';
 import { seatCount, decorScore, findItem, canPlace, itemAt } from './sim/build.js';
 import { unitCost } from './sim/economy.js';
-import { setMusic, resumeMusic, sfx, initAudio } from './core/audio.js';
+import { setMusic, resumeMusic, sfx, initAudio, speakVoice, setVoiceEnabled, isVoiceEnabled, primeVoices } from './core/audio.js';
+import { drainSounds, clearSounds } from './core/soundbus.js';
 import { hasAnySave, loadGame } from './core/save.js';
 import { loadAtlas, setAtlasLoadedHook } from './render/materials.js';
 import { clearSpriteCache } from './render/sprites.js';
@@ -261,6 +262,16 @@ function buildToolbar() {
     import('./core/audio.js').then((m) => m.setEnabled(!on));
     if (!on) sfx('click');
   }, { small: true }));
+
+  const voiceBtn = W.button('🗣 語音', () => {
+    const on = !isVoiceEnabled();
+    setVoiceEnabled(on);
+    voiceBtn.classList.toggle('is-on', on);
+    document.body.dataset.voiceMuted = on ? '' : '1';
+    if (on) sfx('click');
+  }, { small: true, title: '日語語音：客人進門／點餐／結帳／離店' });
+  voiceBtn.classList.toggle('is-on', isVoiceEnabled());
+  toolbar.appendChild(voiceBtn);
 }
 
 /* ----------------------------------------------------------------- 提示列 */
@@ -1003,6 +1014,9 @@ function loop(now) {
 
   processUiQueue(state);
 
+  // 模擬事件 → 日語語音（沒有日語語音的瀏覽器會自動退回程序化音效）
+  for (const ev of drainSounds()) speakVoice(ev);
+
   if (now - lastUiRefresh > 180) {
     lastUiRefresh = now;
     updateHud(state);
@@ -1108,7 +1122,7 @@ function main() {
   setupCanvasInput();
   fitCanvas();
 
-  window.addEventListener('pointerdown', () => { initAudio(); resumeMusic(); }, { once: true });
+  window.addEventListener('pointerdown', () => { initAudio(); resumeMusic(); primeVoices(); }, { once: true });
   const st = store.getState();
   if (st.settings.music !== 'off') setMusic(st.settings.music);
 
@@ -1185,6 +1199,8 @@ function main() {
   } else {
     showBoot();
   }
+  // 啟動期的快轉／預覽（?ff=?days=）不該累積語音事件
+  clearSounds();
   requestAnimationFrame(loop);
 
   // 除錯用（開發者工具）

@@ -41,7 +41,11 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +55,7 @@ import com.dreamrestaurant.core.GameState
 import com.dreamrestaurant.core.UiMsg
 import com.dreamrestaurant.core.round
 import com.dreamrestaurant.data.furnitureById
+import com.dreamrestaurant.data.getDish
 import com.dreamrestaurant.sim.Layout
 import com.dreamrestaurant.sim.seatCount
 import com.dreamrestaurant.sim.tileAt
@@ -413,6 +418,7 @@ private fun RoomCanvas(runner: GameRunner, state: GameState, modifier: Modifier 
     val zoom = runner.zoom
     val panX = runner.panX
     val panY = runner.panY
+    val textMeasurer = rememberTextMeasurer()
 
     Canvas(
         modifier
@@ -446,7 +452,7 @@ private fun RoomCanvas(runner: GameRunner, state: GameState, modifier: Modifier 
             translate(tx, ty)
             scale(scale, scale, Offset.Zero)
         }) {
-            drawRoom(state, frame)
+            drawRoom(state, frame, textMeasurer)
         }
         // 房間剪影（螢幕座標）：降水要繞開室內，才不會在店裡下雨
         val sil = Iso.roomSilhouette(layout.gridW, layout.gridH)
@@ -462,7 +468,7 @@ private fun RoomCanvas(runner: GameRunner, state: GameState, modifier: Modifier 
 }
 
 @Suppress("UNUSED_PARAMETER")
-private fun DrawScope.drawRoom(state: GameState, frame: Long) {
+private fun DrawScope.drawRoom(state: GameState, frame: Long, tm: TextMeasurer) {
     val layout = state.layout
     val gw = layout.gridW
     val gh = layout.gridH
@@ -539,7 +545,7 @@ private fun DrawScope.drawRoom(state: GameState, frame: Long) {
                 val top = if (item.broken) Color(0xFFef5350) else palette.first
                 drawBox(item.x, item.y, item.w, item.h, h, top, palette.second, palette.third)
             }
-            KIND_CUSTOMER -> drawCustomer(state.sim.customers[o.idx], o.idx, frame)
+            KIND_CUSTOMER -> drawCustomer(state.sim.customers[o.idx], o.idx, frame, tm)
             KIND_STAFF -> drawStaff(state.staff[o.idx], o.idx, frame)
             KIND_WALKER -> drawWalker(state.sim.walkers[o.idx])
         }
@@ -788,7 +794,9 @@ private fun DrawScope.drawBox(
     drawLine(multiply(right, 0.55f), c, c + up, strokeWidth = 1.2f)
 }
 
-private fun DrawScope.drawCustomer(c: com.dreamrestaurant.core.Customer, idx: Int, frame: Long) {
+private fun DrawScope.drawCustomer(
+    c: com.dreamrestaurant.core.Customer, idx: Int, frame: Long, tm: TextMeasurer
+) {
     val p = Iso.at(c.x, c.y)
     val walking = c.state == "arriving" || c.state == "leaving" ||
         c.state == "angry" || c.state == "toSeat" || c.state == "paying"
@@ -807,15 +815,69 @@ private fun DrawScope.drawCustomer(c: com.dreamrestaurant.core.Customer, idx: In
             style = Stroke(1.6f)
         )
     }
-    if (c.partySize > 1) {
-        // 同行人數：頭頂一排小圓點（最多 4 顆）
-        val n = c.partySize.coerceAtMost(4)
-        val base = p - Offset((n - 1) * 3f, 34f * scale)
-        for (i in 0 until n) {
-            drawCircle(Color(0xFF64B5F6), radius = 2f, center = base + Offset(i * 6f, 0f))
+
+    // 頭頂資訊：由下往上堆疊（訂單 → 同伴人數）
+    var top = p.y - 33f * scale
+    if (c.state in ORDER_LABEL_STATES && c.order.isNotEmpty()) {
+        val label = orderLabel(c)
+        if (label.isNotEmpty()) {
+            val res = tm.measure(label, orderLabelStyle())
+            val w = res.size.width + 9f
+            val h = res.size.height + 5f
+            val tl = Offset(p.x - w / 2f, top - h)
+            drawRoundRect(Color(0xF2141B2E), topLeft = tl, size = Size(w, h), cornerRadius = CornerRadius(4f, 4f))
+            drawRoundRect(
+                Color(0xFF64B5F6), topLeft = tl, size = Size(w, h),
+                cornerRadius = CornerRadius(4f, 4f), style = Stroke(1f)
+            )
+            drawText(res, topLeft = Offset(tl.x + 4.5f, tl.y + 2.5f))
+            top = tl.y - 3f
         }
     }
+    if (c.partySize > 1) {
+        // 同行客人數：頭頂徽章（2 人以上才顯示，1 人不需要）
+        val res = tm.measure("${c.partySize}", partyBadgeStyle())
+        val w = res.size.width + 7f
+        val h = res.size.height + 4f
+        val tl = Offset(p.x - w / 2f, top - h)
+        drawRoundRect(Color(0xFF64B5F6), topLeft = tl, size = Size(w, h), cornerRadius = CornerRadius(3.5f, 3.5f))
+        drawRoundRect(
+            Color(0xFF0e1426).copy(alpha = 0.55f), topLeft = tl, size = Size(w, h),
+            cornerRadius = CornerRadius(3.5f, 3.5f), style = Stroke(1f)
+        )
+        drawText(res, topLeft = Offset(tl.x + 3.5f, tl.y + 2f))
+    }
 }
+
+/** 顯示訂單的狀態（點完餐 → 用餐 → 付帳） */
+private val ORDER_LABEL_STATES = setOf("waitingFood", "eating", "paying")
+
+/**
+ * 訂單標籤內容：同名料理合併成「名字×數量」，最多 3 種（超過的用 +N 表示），
+ * 每個名字最多 6 個字，避免標籤蓋住整個畫面。
+ */
+private fun orderLabel(c: com.dreamrestaurant.core.Customer): String {
+    val counts = LinkedHashMap<String, Int>()
+    for (line in c.order) {
+        val name = getDish(line.dishId)?.name ?: continue
+        counts[name] = (counts[name] ?: 0) + 1
+    }
+    if (counts.isEmpty()) return ""
+    val lines = ArrayList<String>(4)
+    for ((name, n) in counts.entries.take(3)) {
+        val base = if (name.length > 6) name.take(6) + "…" else name
+        lines += if (n > 1) "$base×$n" else base
+    }
+    if (counts.size > 3) lines += "+${counts.size - 3}"
+    return lines.joinToString("\n")
+}
+
+// 字級用 px（toSp 把畫布像素換算成 sp），才不會被裝置密度放大成巨字
+private fun DrawScope.orderLabelStyle() =
+    TextStyle(color = Color(0xFFEDEFF7), fontSize = 9f.toSp(), fontWeight = FontWeight.Medium)
+
+private fun DrawScope.partyBadgeStyle() =
+    TextStyle(color = Color(0xFF0e1426), fontSize = 9f.toSp(), fontWeight = FontWeight.Bold)
 
 private fun DrawScope.drawStaff(s: com.dreamrestaurant.core.HiredStaff, idx: Int, frame: Long) {
     val p = Iso.at(s.x, s.y)

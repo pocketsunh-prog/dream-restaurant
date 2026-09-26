@@ -9,6 +9,7 @@ import * as B from '../core/balance.js';
 import { clamp } from './economy.js';
 import { moveEntity, setPathTo, atTile, customerLeaves, releaseSeat, setBubble, chooseOrder, seatParty, eatingMinutes } from './customer.js';
 import { pushLog } from '../core/state.js';
+import { emitSound } from '../core/soundbus.js';
 
 const TASK_PRIORITY = {
   deliver: 100,
@@ -325,6 +326,7 @@ function doOrder(state, st, task, rng) {
     state.stock[item.dishId] = Math.max(0, (state.stock[item.dishId] || 0) - 1);
     enqueueKitchen(state, c, table, item);
   }
+  emitSound('order');
   finishTask(state, st, task);
 }
 
@@ -446,6 +448,7 @@ export function collectPayment(state, c) {
   state.stats.today.served += party;
   state.sim.servedLog.push({ dishIds: c.order.map((o) => o.dishId), spent: c.spent, mood: c.mood, party });
   if (state.sim.servedLog.length > 200) state.sim.servedLog.shift();
+  if (c.spent > 0) emitSound('cash');
   customerLeaves(state, c, null);
   return { spent: c.spent, tip: c.tip };
 }
