@@ -97,14 +97,22 @@ cmd /c "node tests\smoke.mjs > `"%TEMP%\js-smoke.txt`" 2>&1"
 
 ```powershell
 cd dream-restaurant-android
+node tools/gen-data.mjs                          # 由 ../src/data/*.js 重新產生 Kotlin 資料表
 .\gradlew.bat testDebugUnitTest                 # 全部單元測試
 .\gradlew.bat assembleRelease bundleRelease     # 簽章過的 release
 ```
 
-產物：
+資料表是**產生出來的**，改了 2D 版的 `src/data/`（料理／員工／地點／傢具／事件）之後一定要先跑
+`node tools/gen-data.mjs`，它會覆寫 `app/src/main/java/com/dreamrestaurant/data/*.kt`。
+目前產出：**68 道料理、32 名員工、14 個地點、37 種傢具、51 個事件**。
 
-- `app\build\outputs\apk\release\app-release.apk`（直接安裝，約 6.7 MB）
-- `app\build\outputs\bundle\release\app-release.aab`（上架用）
+產物（最近一次 `assembleRelease` 實測）：
+
+- `app\build\outputs\apk\release\app-release.apk`（**已簽章**，直接安裝，**6.47 MB**）
+- `app\build\outputs\bundle\release\app-release.aab`（上架用，需 `bundleRelease`）
+
+APK 實際內容（`aapt2 dump badging`）：
+`package com.dreamrestaurant`、`versionCode 1` / `versionName 1.0`、`minSdk 26`、`targetSdk 35`（compileSdk 35）、App 名稱 **夢幻西餐廳**。
 
 ### Release 簽章
 
@@ -121,36 +129,24 @@ keyPassword=<自己保管>
 遺失就無法再用同一把鑰匙更新已安裝的版本。缺少 `keystore.properties` 時
 build 仍然會過，但 release 產物會是 `app-release-unsigned.apk`（裝不上）。
 
-驗簽：
+驗簽（最近一次實測輸出）：
 
 ```powershell
 & "$env:ANDROID_HOME\build-tools\35.0.0\apksigner.bat" verify --print-certs `
     app\build\outputs\apk\release\app-release.apk
+# Signer #1 certificate DN: CN=Dream Restaurant, OU=Dream Restaurant, O=Dream Restaurant, L=Taipei, ST=Taiwan, C=TW
+# Signer #1 certificate SHA-256 digest: d5f1d68451006f4a39aa2189466ac0368d1346f7b39eb80fbe561facb2c8876a
 ```
 
-### Release Build
-The release build is configured with signing. The keystore is at the project root:
+安裝到裝置（已開 USB 偵錯）：
 
-```bash
-./gradlew assembleRelease
+```powershell
+adb install -r app\build\outputs\apk\release\app-release.apk
 ```
 
-Output: `app/build/outputs/apk/release/app-release.apk`
+> 金鑰是用 `keytool -genkeypair -keystore keystore/dream-restaurant.jks -alias dream-restaurant -keyalg RSA -keysize 2048 -validity 10000` 產生的；
+> `kotlinOptions.jvmTarget` 與 `compileOptions` 都是 **Java 17**，建置需要 **JDK 17 或 21**（本機用 Microsoft JDK 21）。
 
-### Signing Configuration
-The release keystore was generated with:
-```bash
-keytool -genkeypair -v \
-  -keystore girlperiod-release-key.jks \
-  -keyalg RSA -keysize 2048 -validity 10000 \
-  -alias girlperiod-key
-```
-
-**Install on device:**
-```bash
-adb install app/build/outputs/apk/debug/app-debug.apk
-adb install app/build/outputs/apk/release/app-release.apk
-```
 
 ---
 
